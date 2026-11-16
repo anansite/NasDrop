@@ -136,7 +136,7 @@ import java.util.Locale
 
 enum class BrowserMode {
 	Browse,
-	PickFolder,
+	Pick,
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -144,11 +144,12 @@ enum class BrowserMode {
 fun BrowserScreen(
 	vm: BrowserViewModel,
 	mode: BrowserMode = BrowserMode.Browse,
+	lastDir: String = "",
 	onOpenImage: (DavEntry) -> Unit = {},
 	onOpenVideo: (DavEntry) -> Unit = {},
 	onOpenSettings: () -> Unit = {},
 	onLogin: () -> Unit = {},
-	onPickDone: (String) -> Unit = {},
+	onConfirm: (String) -> Unit = {},
 ) {
 	val context = LocalContext.current
 	val routeInfo by vm.routeInfo.collectAsState()
@@ -167,7 +168,7 @@ fun BrowserScreen(
 		contract = ActivityResultContracts.OpenMultipleDocuments(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
-			UploadService.start(context, vm.path, uris)
+			UploadService.start(context, uris, vm.path)
 			Toast.makeText(context, "已加入上传队列: ${uris.size} 个文件", Toast.LENGTH_SHORT).show()
 		}
 	}
@@ -175,7 +176,16 @@ fun BrowserScreen(
 	Scaffold(
 		containerColor = Color(0xFFF7F8FA),
 		bottomBar = {
-			if (vm.isMultiSelectMode) {
+			if (mode == BrowserMode.Pick) {
+				PickBar(
+					path = vm.path,
+					lastDir = lastDir,
+					onConfirm = {
+						vm.rememberDir(vm.path)
+						onConfirm(vm.path)
+					},
+				)
+			} else if (vm.isMultiSelectMode) {
 				// 多选批量操作浮动托盘
 				BatchActionTray(
 					selectedCount = vm.selectedEntries.size,
@@ -585,7 +595,7 @@ private fun CommercialTopBar(
 @Composable
 private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
 	val (bgColor, textColor, dotColor, label) = when {
-		!routeInfo.isTailscale && routeInfo.isDirect -> {
+		routeInfo.isDirect && routeInfo.endpoint.isEmpty() -> {
 			Quadruple(Color(0xFFE8F9F2), Color(0xFF00A870), Color(0xFF00B578), "🏡 在家直连 · 1ms")
 		}
 		routeInfo.isDirect -> {
@@ -619,6 +629,42 @@ private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
 				fontWeight = FontWeight.Bold,
 				color = textColor,
 			)
+		}
+	}
+}
+
+@Composable
+private fun PickBar(path: String, lastDir: String, onConfirm: () -> Unit) {
+	Surface(
+		shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+		color = Color.White,
+		shadowElevation = 8.dp,
+	) {
+		Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
+			Text(
+				"当前存入: /${path.ifEmpty { "根目录" }}",
+				fontSize = 14.sp,
+				fontWeight = FontWeight.Bold,
+				color = Color(0xFF1D2129),
+				maxLines = 1,
+				overflow = TextOverflow.Ellipsis,
+			)
+			if (lastDir.isNotEmpty() && lastDir != path) {
+				Text(
+					"上次存入: /$lastDir",
+					fontSize = 12.sp,
+					color = Color(0xFF86909C),
+				)
+			}
+			Spacer(Modifier.height(10.dp))
+			Button(
+				onClick = onConfirm,
+				colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
+				shape = RoundedCornerShape(12.dp),
+				modifier = Modifier.fillMaxWidth().height(44.dp),
+			) {
+				Text("存入当前目录", fontWeight = FontWeight.Bold, color = Color.White)
+			}
 		}
 	}
 }

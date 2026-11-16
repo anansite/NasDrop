@@ -533,6 +533,15 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch { app.prefs.setLastDir(dir) }
 	}
 
+	fun reloadSettings() {
+		viewModelScope.launch {
+			dirCache.clear()
+			app.repo.invalidate()
+			open(path)
+			scanGlobalMedia()
+		}
+	}
+
 	private fun mutate(action: suspend (WebDavClient) -> Unit) {
 		viewModelScope.launch {
 			try {
@@ -550,19 +559,32 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	private suspend fun pollLink() {
 		while (true) {
-			try {
-				val s = app.prefs.current()
-				if (!s.useTailscale) {
-					linkStatus = "直连 WebDAV"
-					authUrl = ""
-				} else {
-					val st = withContext(Dispatchers.IO) { TsBridge.status() }
-					linkStatus = st.summary
-					authUrl = st.authUrl
-				}
-			} catch (_: Throwable) {}
-			delay(3000)
+			pollPeerStatus()
+			delay(2500)
 		}
+	}
+
+	private fun pollPeerStatus() {
+		val embedded = TsBridge.available
+		if (embedded) {
+			app.repo.updateRouteInfo()
+			val st = TsBridge.status()
+			linkStatus = label(st)
+			authUrl = if (st == "needs-login") TsBridge.authUrl() else ""
+		} else {
+			linkStatus = "直连模式"
+			authUrl = ""
+		}
+	}
+
+	private fun label(st: String): String = when {
+		st.startsWith("running") ->
+			"内嵌 Tailscale · " + st.removePrefix("running:").removePrefix("running").trim(':')
+		st == "needs-login" -> "Tailscale 等待登录"
+		st == "stopped" -> "Tailscale 已停止"
+		st == "starting" -> "Tailscale 启动中…"
+		st.startsWith("error") -> "Tailscale 异常: " + st.removePrefix("error:").trim()
+		else -> st
 	}
 
 	private fun collectMediaFrom(items: List<DavEntry>) {
