@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.widget.Toast
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -123,6 +124,30 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	val routeInfo: StateFlow<RouteInfo> = app.repo.routeInfo
 
+	val currentVersionName: String
+		get() = runCatching {
+			val pInfo = app.packageManager.getPackageInfo(app.packageName, 0)
+			pInfo.versionName ?: "0.1.0"
+		}.getOrDefault("0.1.0")
+
+	// ========== 版本推送与一键更新状态 ==========
+	var hasUpdate by mutableStateOf(false)
+		private set
+
+	var latestUpdateInfo by mutableStateOf<UpdateInfo?>(null)
+		private set
+
+	var isDownloadingUpdate by mutableStateOf(false)
+		private set
+
+	var updateProgress by mutableStateOf(0f)
+		private set
+
+	var updateSpeedText by mutableStateOf("")
+		private set
+
+	var showUpdateDialog by mutableStateOf(false)
+
 	// ========== 批量多选状态 ==========
 	var isMultiSelectMode by mutableStateOf(false)
 		private set
@@ -185,6 +210,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch { scanGlobalMedia() }
 		viewModelScope.launch { startAutoHealing() }
 		startTransferWorker()
+		viewModelScope.launch {
+			Uploads.uploadCompletedEvent.collect {
+				refresh()
+			}
+		}
+		viewModelScope.launch {
+			checkForUpdates(silent = true)
+		}
 	}
 
 	fun urlFor(entryPath: String): String? = client?.urlFor(entryPath)?.toString()
@@ -653,5 +686,59 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val cleanA = a.trim('/')
 		val cleanB = b.trim('/')
 		return if (cleanA.isEmpty()) cleanB else "$cleanA/$cleanB"
+	}
+
+	// ==================== 版本更新检测与一键下载安装 ====================
+	fun checkForUpdates(silent: Boolean = true, onChecked: ((Boolean) -> Unit)? = null) {
+		viewModelScope.launch {
+			val info = UpdateManager.checkUpdate(currentVersionName)
+			if (info != null) {
+				latestUpdateInfo = info
+				hasUpdate = true
+				if (!silent) {
+					showUpdateDialog = true
+				}
+				onChecked?.invoke(true)
+			} else {
+				hasUpdate = false
+				onChecked?.invoke(false)
+			}
+		}
+	}
+
+	fun openUpdateDialog() {
+		if (latestUpdateInfo != null) {
+			showUpdateDialog = true
+		}
+	}
+
+	fun dismissUpdateDialog() {
+		showUpdateDialog = false
+	}
+
+	fun startDownloadUpdate(context: Context) {
+		val info = latestUpdateInfo ?: return
+		if (isDownloadingUpdate) return
+		isDownloadingUpdate = true
+		updateProgress = 0f
+		updateSpeedText = ""
+
+		viewModelScope.launch {
+			runCatching {
+				val file = UpdateManager.downloadApk(context, info.apkUrl) { sent, total, speed ->
+					if (total > 0) {
+						updateProgress = (sent.toFloat() / total).coerceIn(0f, 1f)
+					}
+					val mb = speed / (1024.0 * 1024.0)
+					updateSpeedText = if (mb >= 1.0) String.format(Locale.ROOT, "%.1f MB/s", mb) else String.format(Locale.ROOT, "%.0f KB/s", speed / 1024.0)
+				}
+				updateProgress = 1f
+				isDownloadingUpdate = false
+				UpdateManager.installApk(context, file)
+			}.onFailure {
+				isDownloadingUpdate = false
+				Toast.makeText(context, "下载更新失败: ${it.message}", Toast.LENGTH_SHORT).show()
+			}
+		}
 	}
 }

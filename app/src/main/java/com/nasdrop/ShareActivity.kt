@@ -25,7 +25,7 @@ import com.nasdrop.ui.UploadProgressScreen
  * 相册/微信/文件管理器里「分享 → 存入 NasDrop」的落地页。
  *
  * 两个要点：
- *  1. 先让用户选目标目录，默认停在上次选的那个（记在 Prefs.lastDir）；
+ *  1. 先让用户选目标目录，默认停在上次选的那个（记在 Prefs.lastDir），支持自由进入子文件夹、回退与新建目录；
  *  2. 开始上传后不要马上 finish —— ACTION_SEND 的 content:// 读取授权只在
  *     这个任务存活期间有效，提前关掉会让大文件传到一半失败。
  */
@@ -66,7 +66,14 @@ class ShareActivity : ComponentActivity() {
 				if (s.lastDir.isNotEmpty()) vm.open(s.lastDir)
 			}
 
-			BackHandler { finish() }
+			// 拦截返回键：如果已进入子目录，按返回键优先返回上级目录；在根目录时再退出
+			BackHandler {
+				if (vm.path.isNotEmpty()) {
+					vm.up()
+				} else {
+					finish()
+				}
+			}
 
 			if (started) {
 				UploadProgressScreen(count = uris.size) { finish() }

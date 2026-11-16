@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -109,13 +110,18 @@ class UploadService : Service() {
 	}
 
 	private fun finish(ok: Int, failed: Int, startId: Int) {
+		// 通知前台页面自动刷新
+		Uploads.notifyFinished()
+
 		val text = when {
 			failed == 0 -> "$ok 个文件已存入"
 			ok == 0 -> "上传失败，共 $failed 个"
 			else -> "$ok 个成功，$failed 个失败"
 		}
+		val largeIcon = runCatching { BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher) }.getOrNull()
 		val n = NotificationCompat.Builder(this, CHANNEL)
-			.setSmallIcon(android.R.drawable.stat_sys_upload_done)
+			.setSmallIcon(R.drawable.ic_notification)
+			.apply { if (largeIcon != null) setLargeIcon(largeIcon) }
 			.setContentTitle("NasDrop")
 			.setContentText(text)
 			.setAutoCancel(true)
@@ -135,8 +141,10 @@ class UploadService : Service() {
 	private fun post(n: Notification) = manager().notify(NOTIF_ID, n)
 
 	private fun build(text: String, progress: Pair<Long, Long>?, indeterminate: Boolean): Notification {
+		val largeIcon = runCatching { BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher) }.getOrNull()
 		val b = NotificationCompat.Builder(this, CHANNEL)
-			.setSmallIcon(android.R.drawable.stat_sys_upload)
+			.setSmallIcon(R.drawable.ic_notification)
+			.apply { if (largeIcon != null) setLargeIcon(largeIcon) }
 			.setContentTitle("NasDrop")
 			.setContentText(text)
 			.setOngoing(indeterminate)

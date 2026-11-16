@@ -1,6 +1,8 @@
 package com.nasdrop
 
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -28,6 +30,9 @@ object Uploads {
 	private val _tasks = MutableStateFlow<List<UploadTask>>(emptyList())
 	val tasks: StateFlow<List<UploadTask>> = _tasks
 
+	// 上传全部结束通知流（通知前台页面自动刷新）
+	val uploadCompletedEvent = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 2)
+
 	@Synchronized
 	fun begin(items: List<Pair<String, String>>) {
 		_tasks.value = items.map { UploadTask(uri = it.first, name = it.second) }
@@ -40,6 +45,10 @@ object Uploads {
 		val copy = cur.toMutableList()
 		copy[index] = block(copy[index])
 		_tasks.value = copy
+	}
+
+	fun notifyFinished() {
+		uploadCompletedEvent.tryEmit(Unit)
 	}
 
 	@Synchronized

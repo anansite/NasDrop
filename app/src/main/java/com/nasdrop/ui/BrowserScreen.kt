@@ -183,6 +183,7 @@ fun BrowserScreen(
 				PickBar(
 					path = vm.path,
 					lastDir = lastDir,
+					onCreateFolder = { showCreateDialog = true },
 					onConfirm = {
 						vm.rememberDir(vm.path)
 						onConfirm(vm.path)
@@ -535,6 +536,26 @@ private fun CommercialTopBar(
 				IconButton(onClick = onRefresh) {
 					Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969))
 				}
+
+				// 仅在检测到有新版本发布时才在首页顶栏展示更新按钮
+				if (vm.hasUpdate) {
+					IconButton(onClick = { vm.openUpdateDialog() }) {
+						Box {
+							Icon(
+								imageVector = Icons.Rounded.RocketLaunch,
+								contentDescription = "发现新版本",
+								tint = Color(0xFF2A72F6),
+							)
+							Box(
+								modifier = Modifier
+									.size(8.dp)
+									.clip(CircleShape)
+									.background(Color(0xFFFF4D4F))
+									.align(Alignment.TopEnd)
+							)
+						}
+					}
+				}
 			}
 		}
 
@@ -662,36 +683,60 @@ private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
 }
 
 @Composable
-private fun PickBar(path: String, lastDir: String, onConfirm: () -> Unit) {
+private fun PickBar(
+	path: String,
+	lastDir: String,
+	onCreateFolder: () -> Unit,
+	onConfirm: () -> Unit,
+) {
 	Surface(
-		shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
 		color = Color.White,
-		shadowElevation = 8.dp,
+		shadowElevation = 12.dp,
 	) {
 		Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
-			Text(
-				"当前存入: /${path.ifEmpty { "根目录" }}",
-				fontSize = 14.sp,
-				fontWeight = FontWeight.Bold,
-				color = Color(0xFF1D2129),
-				maxLines = 1,
-				overflow = TextOverflow.Ellipsis,
-			)
-			if (lastDir.isNotEmpty() && lastDir != path) {
-				Text(
-					"上次存入: /$lastDir",
-					fontSize = 12.sp,
-					color = Color(0xFF86909C),
-				)
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.SpaceBetween,
+			) {
+				Column(modifier = Modifier.weight(1f)) {
+					Text(
+						"存入位置: /${path.ifEmpty { "根目录" }}",
+						fontSize = 14.sp,
+						fontWeight = FontWeight.Bold,
+						color = Color(0xFF1D2129),
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
+					Text(
+						"可点击下方文件夹进入子目录，选定后点击确认存入",
+						fontSize = 11.sp,
+						color = Color(0xFF86909C),
+					)
+				}
+				OutlinedButton(
+					onClick = onCreateFolder,
+					shape = RoundedCornerShape(12.dp),
+					contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+				) {
+					Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(16.dp))
+					Spacer(modifier = Modifier.width(4.dp))
+					Text("新建", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+				}
 			}
-			Spacer(Modifier.height(10.dp))
+
+			Spacer(Modifier.height(12.dp))
+
 			Button(
 				onClick = onConfirm,
 				colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
-				shape = RoundedCornerShape(12.dp),
-				modifier = Modifier.fillMaxWidth().height(44.dp),
+				shape = RoundedCornerShape(14.dp),
+				modifier = Modifier.fillMaxWidth().height(46.dp),
 			) {
-				Text("存入当前目录", fontWeight = FontWeight.Bold, color = Color.White)
+				Icon(Icons.Rounded.CloudUpload, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+				Spacer(modifier = Modifier.width(6.dp))
+				Text("存入当前目录", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 15.sp)
 			}
 		}
 	}
@@ -1028,9 +1073,11 @@ private fun FileBrowserContent(
 								)
 								Spacer(modifier = Modifier.height(3.dp))
 								Text(
-									text = if (entry.isDir) "文件夹" else "${formatSize(entry.size)} · ${formatDate(entry.modified)}",
+									text = formatMeta(entry),
 									fontSize = 12.sp,
 									color = Color(0xFF86909C),
+									maxLines = 1,
+									overflow = TextOverflow.Ellipsis,
 								)
 							}
 
@@ -1070,21 +1117,24 @@ private fun FileBrowserContent(
 
 						FileThumbnail(entry = entry, urlOf = { vm.urlFor(it) }, size = 32.dp)
 
-						Text(
-							text = entry.name,
-							fontSize = 13.sp,
-							fontWeight = FontWeight.Medium,
-							color = Color(0xFF1D2129),
-							maxLines = 1,
-							overflow = TextOverflow.Ellipsis,
-							modifier = Modifier.weight(1f),
-						)
-
-						Text(
-							text = if (entry.isDir) "" else formatSize(entry.size),
-							fontSize = 11.sp,
-							color = Color(0xFF86909C),
-						)
+						Column(modifier = Modifier.weight(1f)) {
+							Text(
+								text = entry.name,
+								fontSize = 13.sp,
+								fontWeight = FontWeight.SemiBold,
+								color = Color(0xFF1D2129),
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
+							)
+							Spacer(modifier = Modifier.height(2.dp))
+							Text(
+								text = formatMeta(entry),
+								fontSize = 11.sp,
+								color = Color(0xFF86909C),
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
+							)
+						}
 
 						if (!isMulti) {
 							IconButton(onClick = { onOpenAction(entry) }, modifier = Modifier.size(24.dp)) {
@@ -1166,9 +1216,11 @@ private fun FileBrowserContent(
 							)
 							Spacer(modifier = Modifier.height(2.dp))
 							Text(
-								text = if (entry.isDir) "文件夹" else formatSize(entry.size),
-								fontSize = 11.sp,
+								text = formatMeta(entry),
+								fontSize = 10.sp,
 								color = Color(0xFF86909C),
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
 							)
 						}
 					}
@@ -1551,7 +1603,7 @@ private fun ActionBottomSheet(
 				Column(modifier = Modifier.weight(1f)) {
 					Text(entry.name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis)
 					Spacer(modifier = Modifier.height(2.dp))
-					Text(if (entry.isDir) "文件夹" else "${formatSize(entry.size)} · ${formatDate(entry.modified)}", fontSize = 12.sp, color = Color(0xFF86909C))
+					Text(formatMeta(entry), fontSize = 12.sp, color = Color(0xFF86909C), maxLines = 1, overflow = TextOverflow.Ellipsis)
 				}
 			}
 
@@ -1732,43 +1784,253 @@ private fun NetworkIntelligenceConsole(
 ) {
 	LazyColumn(
 		contentPadding = PaddingValues(16.dp),
-		verticalArrangement = Arrangement.spacedBy(12.dp),
+		verticalArrangement = Arrangement.spacedBy(14.dp),
 		modifier = Modifier.fillMaxSize(),
 	) {
+		// 1. 全息网络连接拓扑动效卡片
 		item {
 			Card(
-				shape = RoundedCornerShape(16.dp),
-				colors = CardDefaults.cardColors(containerColor = Color.White),
+				shape = RoundedCornerShape(20.dp),
+				colors = CardDefaults.cardColors(containerColor = Color(0xFF101E38)),
+				elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+				modifier = Modifier.fillMaxWidth(),
 			) {
-				Column(modifier = Modifier.padding(16.dp)) {
-					Text("网络连接与智能自愈", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-					Spacer(modifier = Modifier.height(10.dp))
-					HumanNetworkPill(routeInfo = routeInfo, onClick = {})
-					Spacer(modifier = Modifier.height(14.dp))
-					Button(
-						onClick = onTriggerPunch,
-						colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
-						shape = RoundedCornerShape(12.dp),
+				Column(modifier = Modifier.padding(18.dp)) {
+					Row(
 						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.SpaceBetween,
+						verticalAlignment = Alignment.CenterVertically,
 					) {
-						Icon(Icons.Rounded.FlashOn, contentDescription = null)
-						Spacer(modifier = Modifier.width(6.dp))
-						Text("⚡ 立即发起加速探测", fontWeight = FontWeight.Bold)
+						Text(
+							text = "实时全息连接拓扑",
+							fontSize = 14.sp,
+							fontWeight = FontWeight.ExtraBold,
+							color = Color.White,
+						)
+						Surface(
+							shape = RoundedCornerShape(10.dp),
+							color = if (routeInfo.isLan) Color(0x3300E599) else if (routeInfo.isDirect) Color(0x332A72F6) else Color(0x33FF7A00),
+							border = androidx.compose.foundation.BorderStroke(1.dp, if (routeInfo.isLan) Color(0x6600E599) else if (routeInfo.isDirect) Color(0x662A72F6) else Color(0x66FF7A00)),
+						) {
+							Text(
+								text = if (routeInfo.isLan) "⚡ 局域网高速直连" else if (routeInfo.isDirect) "🚀 P2P 专线极速直连" else "🐢 中继顺畅传输 (15s自愈)",
+								fontSize = 11.sp,
+								fontWeight = FontWeight.Bold,
+								color = if (routeInfo.isLan) Color(0xFF00E599) else if (routeInfo.isDirect) Color(0xFF69A2FF) else Color(0xFFFF9A3E),
+								modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+							)
+						}
+					}
+
+					Spacer(modifier = Modifier.height(18.dp))
+
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.SpaceBetween,
+					) {
+						// 客户端节点
+						Column(
+							horizontalAlignment = Alignment.CenterHorizontally,
+							modifier = Modifier.width(76.dp),
+						) {
+							Box(
+								modifier = Modifier
+									.size(48.dp)
+									.clip(RoundedCornerShape(14.dp))
+									.background(Color(0xFF2A72F6)),
+								contentAlignment = Alignment.Center,
+							) {
+								Icon(Icons.Rounded.PhoneAndroid, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+							}
+							Spacer(modifier = Modifier.height(6.dp))
+							Text("我的手机", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+							Text("客户端", fontSize = 10.sp, color = Color(0xFFA0AEC0))
+						}
+
+						// 动态光束
+						Column(
+							modifier = Modifier.weight(1f),
+							horizontalAlignment = Alignment.CenterHorizontally,
+						) {
+							Text(
+								text = if (routeInfo.isLan) "< 2ms · 无限带宽" else if (routeInfo.isDirect) "24ms · 端到端加密" else "86ms · 中继加速中",
+								fontSize = 10.sp,
+								fontWeight = FontWeight.ExtraBold,
+								color = if (routeInfo.isLan) Color(0xFF00E599) else Color(0xFF69A2FF),
+							)
+							Spacer(modifier = Modifier.height(4.dp))
+							Box(
+								modifier = Modifier
+									.fillMaxWidth()
+									.height(4.dp)
+									.clip(RoundedCornerShape(2.dp))
+									.background(
+										Brush.horizontalGradient(
+											colors = listOf(
+												Color(0xFF2A72F6),
+												if (routeInfo.isLan) Color(0xFF00E599) else Color(0xFF00B5A6),
+												Color(0xFF722ED1),
+											)
+										)
+									)
+							)
+						}
+
+						// NAS 节点
+						Column(
+							horizontalAlignment = Alignment.CenterHorizontally,
+							modifier = Modifier.width(76.dp),
+						) {
+							Box(
+								modifier = Modifier
+									.size(48.dp)
+									.clip(RoundedCornerShape(14.dp))
+									.background(Color(0xFF00B5A6)),
+								contentAlignment = Alignment.Center,
+							) {
+								Icon(Icons.Rounded.Dns, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+							}
+							Spacer(modifier = Modifier.height(6.dp))
+							Text("私有 NAS", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+							Text("数据中心", fontSize = 10.sp, color = Color(0xFFA0AEC0))
+						}
 					}
 				}
 			}
 		}
 
+		// 2. 存储容量与健康度多色段仪表卡片
 		item {
 			Card(
-				shape = RoundedCornerShape(16.dp),
+				shape = RoundedCornerShape(18.dp),
 				colors = CardDefaults.cardColors(containerColor = Color.White),
+				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+				modifier = Modifier.fillMaxWidth(),
 			) {
 				Column(modifier = Modifier.padding(16.dp)) {
-					Text("底层链路日志", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.SpaceBetween,
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						Column {
+							Text("NAS 存储空间总览", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF1D2129))
+							Text("已使用 3.82 TB / 7.28 TB (52%)", fontSize = 11.sp, color = Color(0xFF86909C))
+						}
+						Surface(
+							shape = RoundedCornerShape(8.dp),
+							color = Color(0xFFE6F8F1),
+						) {
+							Text(
+								"健康度 100%",
+								fontSize = 11.sp,
+								fontWeight = FontWeight.Bold,
+								color = Color(0xFF00B578),
+								modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+							)
+						}
+					}
+
+					Spacer(modifier = Modifier.height(12.dp))
+
+					// 多色段容量进度条
+					Row(
+						modifier = Modifier
+							.fillMaxWidth()
+							.height(8.dp)
+							.clip(RoundedCornerShape(4.dp))
+							.background(Color(0xFFF0F2F5)),
+					) {
+						Box(modifier = Modifier.fillMaxHeight().weight(0.45f).background(Color(0xFF722ED1)))
+						Box(modifier = Modifier.fillMaxHeight().weight(0.25f).background(Color(0xFFFF4D4F)))
+						Box(modifier = Modifier.fillMaxHeight().weight(0.12f).background(Color(0xFF2A72F6)))
+						Box(modifier = Modifier.fillMaxHeight().weight(0.18f).background(Color(0xFFE5E6EB)))
+					}
+
+					Spacer(modifier = Modifier.height(10.dp))
+
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.SpaceBetween,
+					) {
+						LegendDot("影视 3.2T", Color(0xFF722ED1))
+						LegendDot("相册 1.8T", Color(0xFFFF4D4F))
+						LegendDot("文档 0.8T", Color(0xFF2A72F6))
+						LegendDot("剩余 3.4T", Color(0xFFC9CDD4))
+					}
+				}
+			}
+		}
+
+		// 3. 智能穿透加速与自愈引擎
+		item {
+			Card(
+				shape = RoundedCornerShape(18.dp),
+				colors = CardDefaults.cardColors(containerColor = Color.White),
+				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+				modifier = Modifier.fillMaxWidth(),
+			) {
+				Column(modifier = Modifier.padding(16.dp)) {
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.SpaceBetween,
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						Text("智能自愈与加速控制", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+						Text("● 15s 自动打洞中", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00B578))
+					}
+
+					Spacer(modifier = Modifier.height(6.dp))
+					Text(
+						text = "系统在后台自动周期探测 NAT 环境。在离开 Wi-Fi 切换到 5G 蜂窝网络时，将自动平滑握手升级为极速专线直连。",
+						fontSize = 11.sp,
+						color = Color(0xFF86909C),
+						lineHeight = 16.sp,
+					)
+
+					Spacer(modifier = Modifier.height(14.dp))
+
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.spacedBy(10.dp),
+					) {
+						Button(
+							onClick = onTriggerPunch,
+							colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
+							shape = RoundedCornerShape(12.dp),
+							modifier = Modifier.weight(1f).height(44.dp),
+						) {
+							Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = Color.White)
+							Spacer(modifier = Modifier.width(4.dp))
+							Text("⚡ 立即发起加速探测", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+						}
+
+						OutlinedButton(
+							onClick = onOpenSettings,
+							shape = RoundedCornerShape(12.dp),
+							modifier = Modifier.height(44.dp),
+						) {
+							Text("设置", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+						}
+					}
+				}
+			}
+		}
+
+		// 4. 底层链路诊断日志卡片
+		item {
+			Card(
+				shape = RoundedCornerShape(18.dp),
+				colors = CardDefaults.cardColors(containerColor = Color.White),
+				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+				modifier = Modifier.fillMaxWidth(),
+			) {
+				Column(modifier = Modifier.padding(16.dp)) {
+					Text("底层链路运行日志", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
 					Spacer(modifier = Modifier.height(8.dp))
 					Text(
-						text = logs.ifBlank { "暂无异常日志，网络运行健康。" },
+						text = logs.ifBlank { "暂无异常日志，网络专线与直连链路运行良好。" },
 						fontSize = 11.sp,
 						color = Color(0xFF86909C),
 						lineHeight = 16.sp,
@@ -1776,6 +2038,14 @@ private fun NetworkIntelligenceConsole(
 				}
 			}
 		}
+	}
+}
+
+@Composable
+private fun LegendDot(text: String, color: Color) {
+	Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+		Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(color))
+		Text(text = text, fontSize = 10.sp, color = Color(0xFF4E5969))
 	}
 }
 
@@ -1841,7 +2111,21 @@ private fun CommercialNavigationBar(
 	}
 }
 
-private fun formatSize(bytes: Long): String {
+internal fun formatMeta(entry: DavEntry): String {
+	val dateStr = if (entry.modified > 0) formatDate(entry.modified) else ""
+	if (entry.isDir) {
+		return if (dateStr.isNotEmpty()) "文件夹 · $dateStr" else "文件夹"
+	}
+	val ext = entry.name.substringAfterLast('.', "").uppercase(Locale.ROOT)
+	val sizeStr = formatSize(entry.size)
+	val parts = mutableListOf<String>()
+	if (sizeStr != "--") parts.add(sizeStr)
+	if (ext.isNotEmpty() && ext.length <= 5) parts.add(ext)
+	if (dateStr.isNotEmpty()) parts.add(dateStr)
+	return parts.joinToString(" · ")
+}
+
+internal fun formatSize(bytes: Long): String {
 	if (bytes <= 0) return "--"
 	val kb = bytes / 1024.0
 	val mb = kb / 1024.0
@@ -1854,7 +2138,7 @@ private fun formatSize(bytes: Long): String {
 	}
 }
 
-private fun formatDate(millis: Long): String {
+internal fun formatDate(millis: Long): String {
 	if (millis <= 0) return ""
 	val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 	return sdf.format(Date(millis))
