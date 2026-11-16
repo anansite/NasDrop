@@ -299,6 +299,77 @@ func AuthURL() string {
 	return st.AuthURL
 }
 
+// PeerLinkInfo 返回对端节点名称、是否为 P2P 直连打洞、当前端点或 DERP 中继信息。
+// 返回形如: "direct|39.163.49.110:20045|istoreos" 或 "relay|hongkong|istoreos"
+func PeerLinkInfo() string {
+	mu.Lock()
+	s := srv
+	mu.Unlock()
+	if s == nil {
+		return "idle"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cl, err := s.LocalClient()
+	if err != nil {
+		return "starting"
+	}
+	st, err := cl.Status(ctx)
+	if err != nil || st.BackendState != "Running" {
+		return "connecting"
+	}
+
+	for _, p := range st.Peer {
+		name := p.HostName
+		if p.CurAddr != "" {
+			return fmt.Sprintf("direct|%s|%s", p.CurAddr, name)
+		}
+		if p.Relay != "" {
+			return fmt.Sprintf("relay|%s|%s", p.Relay, name)
+		}
+		return fmt.Sprintf("relay|DERP 中继|%s", name)
+	}
+	return "running"
+}
+
+// PunchHole 显式主动向对端 Peer 发起 Disco Ping 探测，促成 NAT 端口打洞。
+func PunchHole() string {
+	mu.Lock()
+	s := srv
+	mu.Unlock()
+	if s == nil {
+		return "节点未启动"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cl, err := s.LocalClient()
+	if err != nil {
+		return "客户端不可用: " + err.Error()
+	}
+	st, err := cl.Status(ctx)
+	if err != nil {
+		return "获取状态失败: " + err.Error()
+	}
+
+	for _, p := range st.Peer {
+		if len(p.TailscaleIPs) > 0 {
+			ip := p.TailscaleIPs[0]
+			res, err := cl.Ping(ctx, ip)
+			if err != nil {
+				return fmt.Sprintf("打洞探测失败: %v", err)
+			}
+			if res.Endpoint != "" {
+				return fmt.Sprintf("打洞成功！直连 %s (%.1f ms)", res.Endpoint, res.LatencySeconds*1000)
+			}
+			if res.DERPRegionCode != "" {
+				return fmt.Sprintf("直连受阻，当前中继至 %s (%.1f ms)", res.DERPRegionCode, res.LatencySeconds*1000)
+			}
+			return fmt.Sprintf("探测完成 (%.1f ms)", res.LatencySeconds*1000)
+		}
+	}
+	return "未发现对端 Peer"
+}
+
 // Token 返回本地代理的访问令牌。只有带着这个头的请求才会被转发，
 // 避免同机其他 App 把 127.0.0.1 上的端口当成进入 tailnet 的跳板。
 func Token() string {

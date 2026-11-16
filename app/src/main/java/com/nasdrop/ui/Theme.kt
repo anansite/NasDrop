@@ -19,27 +19,27 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 private val LightColors = lightColorScheme(
-	primary = Color(0xFF3D5AFE),
+	primary = Color(0xFF2A72F6), // 阿里云盘标志性极光蓝
 	onPrimary = Color.White,
-	primaryContainer = Color(0xFFDDE1FF),
-	onPrimaryContainer = Color(0xFF00105C),
-	secondary = Color(0xFF5B5D72),
+	primaryContainer = Color(0xFFE8F1FF),
+	onPrimaryContainer = Color(0xFF003FA4),
+	secondary = Color(0xFFFF7A00), // 阿里云盘活力橙
 	onSecondary = Color.White,
-	secondaryContainer = Color(0xFFE6E6F5),
-	onSecondaryContainer = Color(0xFF181A2C),
-	tertiary = Color(0xFF00696E),
+	secondaryContainer = Color(0xFFFFF0E5),
+	onSecondaryContainer = Color(0xFF8A3B00),
+	tertiary = Color(0xFF00B578), // 阿里云盘翡翠绿
 	onTertiary = Color.White,
-	tertiaryContainer = Color(0xFF9CF1F6),
-	onTertiaryContainer = Color(0xFF002022),
-	background = Color(0xFFFBF8FD),
-	onBackground = Color(0xFF1B1B1F),
-	surface = Color(0xFFFBF8FD),
-	onSurface = Color(0xFF1B1B1F),
-	surfaceVariant = Color(0xFFE4E1EC),
-	onSurfaceVariant = Color(0xFF46464F),
-	outline = Color(0xFF777680),
-	outlineVariant = Color(0xFFC7C5D0),
-	error = Color(0xFFBA1A1A),
+	tertiaryContainer = Color(0xFFE6F8F1),
+	onTertiaryContainer = Color(0xFF006642),
+	background = Color(0xFFF7F8FA), // 阿里云盘质感浅灰底色
+	onBackground = Color(0xFF1D2129),
+	surface = Color(0xFFFFFFFF), // 纯白卡片
+	onSurface = Color(0xFF1D2129),
+	surfaceVariant = Color(0xFFF2F3F5),
+	onSurfaceVariant = Color(0xFF86909C),
+	outline = Color(0xFFC9CDD4),
+	outlineVariant = Color(0xFFE5E6EB),
+	error = Color(0xFFF53F3F),
 )
 
 private val DarkColors = darkColorScheme(

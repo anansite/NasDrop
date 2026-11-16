@@ -82,7 +82,13 @@ class MainActivity : ComponentActivity() {
 
 			when (val r = route) {
 				Route.Browser -> {
-					BackHandler(enabled = !vm.isRoot) { vm.up() }
+					BackHandler(enabled = vm.currentTab != MainTab.Files || !vm.isRoot) {
+						if (vm.currentTab != MainTab.Files) {
+							vm.currentTab = MainTab.Files
+						} else {
+							vm.up()
+						}
+					}
 					BrowserScreen(
 						vm = vm,
 						mode = BrowserMode.Browse,

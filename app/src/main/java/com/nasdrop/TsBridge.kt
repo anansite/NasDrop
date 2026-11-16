@@ -135,6 +135,12 @@ object TsBridge {
 	/** 需要登录时返回授权链接，否则空串 */
 	fun authUrl(): String = invokeString("authurl")
 
+	/** 返回对端链路模式：direct|39.163.49.110:20045|istoreos 或 relay|hongkong|istoreos */
+	fun peerLinkInfo(): String = invokeString("peerlinkinfo")
+
+	/** 显式主动向对端 Peer 发送 Disco Ping 进行 NAT 打洞 */
+	fun punchHole(): String = invokeString("punchhole")
+
 	fun logs(): String = invokeString("logs")
 
 	fun stop() {

@@ -18,8 +18,11 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 data class RouteInfo(
-	val isDirect: Boolean,
-	val label: String,
+	val isDirect: Boolean,     // 是否为 P2P 直连打洞
+	val isRelay: Boolean,      // 是否为 DERP 中继代理模式
+	val endpoint: String,      // 对端打洞端点或中继节点（如 "39.163.49.110:20045"）
+	val peerName: String,      // 对端主机名（如 "istoreos"）
+	val label: String,         // 状态标签
 	val latencyMs: Long = -1L,
 	val isProbing: Boolean = false,
 )
@@ -27,13 +30,21 @@ data class RouteInfo(
 /**
  * 全局唯一的网络出口。
  *
- * 所有请求（WebDAV、图片缩略图、视频流）共用 OkHttpClient，
- * Basic 认证头和 bridge token 由 interceptor 统一注入。
- * 支持智能探测直连：若直连畅通则直连以获得极低延迟，失败则平滑降级到内嵌 Tailscale。
+ * 识别 Tailscale P2P 直连打洞 vs DERP 中继，并支持主动触发 NAT 打洞。
  */
 class Repository(private val context: Context) {
 
-	private val _routeInfo = MutableStateFlow(RouteInfo(false, "连接中", -1L, true))
+	private val _routeInfo = MutableStateFlow(
+		RouteInfo(
+			isDirect = false,
+			isRelay = false,
+			endpoint = "",
+			peerName = "",
+			label = "正在连接…",
+			latencyMs = -1L,
+			isProbing = true,
+		),
+	)
 	val routeInfo: StateFlow<RouteInfo> = _routeInfo
 
 	@Volatile
@@ -86,18 +97,12 @@ class Repository(private val context: Context) {
 
 	fun http(): OkHttpClient = okHttp
 
-	/**
-	 * 按当前配置准备一个 WebDavClient。
-	 *
-	 * - Direct: 强制直连
-	 * - Tailscale: 强制走本地 tsnet bridge
-	 * - Auto: 先探测直连是否畅通，畅通则直连，超时或失败则走内嵌 Tailscale
-	 */
+	/** 按当前配置准备 WebDavClient */
 	@Synchronized
 	fun client(settings: Settings): WebDavClient {
 		val key = listOf(
 			settings.baseUrl, settings.user, settings.password,
-			settings.connectionMode.name, settings.hostname, settings.authKey, settings.trustAllCerts,
+			settings.hostname, settings.authKey, settings.trustAllCerts,
 		).joinToString("|")
 		cached?.let { if (key == cachedKey) return it }
 
@@ -107,39 +112,16 @@ class Repository(private val context: Context) {
 		authHeader = Credentials.basic(settings.user, settings.password)
 		bridgeToken = ""
 
-		val shouldTryDirect = when (settings.connectionMode) {
-			ConnectionMode.Direct -> true
-			ConnectionMode.Tailscale -> false
-			ConnectionMode.Auto -> {
-				// 自动模式：探测是否能直连
-				_routeInfo.value = RouteInfo(false, "探测直连中…", -1, true)
-				val directLatency = probeDirect(root)
-				if (directLatency >= 0) {
-					Log.i("Repository", "直连探测成功，延迟 ${directLatency}ms")
-					_routeInfo.value = RouteInfo(true, "直连模式 · ${directLatency}ms", directLatency, false)
-					true
-				} else {
-					Log.i("Repository", "直连不可达，降级到内嵌 Tailscale")
-					false
-				}
-			}
-		}
-
 		var base: HttpUrl = root
-		if (!shouldTryDirect && TsBridge.available) {
+		if (TsBridge.available) {
 			val origin = root.newBuilder().encodedPath("/").query(null).fragment(null).build().toString()
 			TsBridge.setInsecureTls(settings.trustAllCerts)
 			val p = TsBridge.start(context, settings.hostname, settings.authKey, origin)
 			if (p > 0) {
 				bridgeToken = TsBridge.token
 				base = "http://127.0.0.1:$p${root.encodedPath}".toHttpUrlOrNull() ?: root
-				_routeInfo.value = RouteInfo(false, "内嵌 Tailscale 组网", -1, false)
-			} else {
-				_routeInfo.value = RouteInfo(true, "直连模式（桥未就绪）", -1, false)
+				updateRouteInfo()
 			}
-		} else {
-			val latency = if (shouldTryDirect) probeDirect(root) else -1L
-			_routeInfo.value = RouteInfo(true, if (latency >= 0) "直连模式 · ${latency}ms" else "直连模式", latency, false)
 		}
 
 		return WebDavClient(base, okHttp).also {
@@ -148,18 +130,54 @@ class Repository(private val context: Context) {
 		}
 	}
 
-	/** 探测直连连通性，返回耗时毫秒，失败返回 -1 */
-	fun probeDirect(url: HttpUrl): Long {
-		val start = System.currentTimeMillis()
-		return try {
-			val req = Request.Builder().url(url).head().build()
-			probeHttp.newCall(req).execute().use {
-				val elapsed = System.currentTimeMillis() - start
-				// 只要能够收到服务器握手或 HTTP 响应（包括 200/401/403/404/207），说明网络直连可达
-				if (it.code in 200..499) elapsed else -1L
+	/** 主动触发 NAT 打洞，促使链路从 DERP 中继切换为 P2P 直连 */
+	fun triggerHolePunch(): String {
+		val result = TsBridge.punchHole()
+		updateRouteInfo()
+		return result
+	}
+
+	/** 刷新链路状态（判断是 P2P 直连打洞还是 DERP 中继代理） */
+	fun updateRouteInfo() {
+		val info = TsBridge.peerLinkInfo()
+		// info 格式: "direct|39.163.49.110:20045|istoreos" 或 "relay|hongkong|istoreos"
+		val parts = info.split('|')
+		when {
+			parts.firstOrNull() == "direct" -> {
+				val ep = parts.getOrNull(1).orEmpty()
+				val name = parts.getOrNull(2).orEmpty()
+				_routeInfo.value = RouteInfo(
+					isDirect = true,
+					isRelay = false,
+					endpoint = ep,
+					peerName = name,
+					label = "⚡ P2P 直连 · $ep",
+					isProbing = false,
+				)
 			}
-		} catch (_: Exception) {
-			-1L
+			parts.firstOrNull() == "relay" -> {
+				val relayNode = parts.getOrNull(1).orEmpty()
+				val name = parts.getOrNull(2).orEmpty()
+				_routeInfo.value = RouteInfo(
+					isDirect = false,
+					isRelay = true,
+					endpoint = relayNode,
+					peerName = name,
+					label = "🔄 DERP 中继 · $relayNode",
+					isProbing = false,
+				)
+			}
+			else -> {
+				val st = TsBridge.status()
+				_routeInfo.value = RouteInfo(
+					isDirect = false,
+					isRelay = false,
+					endpoint = "",
+					peerName = "",
+					label = if (st.startsWith("running")) "🛡️ Tailscale 已连接" else "🛡️ Tailscale 准备中",
+					isProbing = false,
+				)
+			}
 		}
 	}
 
@@ -169,6 +187,6 @@ class Repository(private val context: Context) {
 		cached = null
 		cachedKey = ""
 		TsBridge.stop()
-		_routeInfo.value = RouteInfo(false, "待重连", -1, false)
+		_routeInfo.value = RouteInfo(false, false, "", "", "已断开", -1, false)
 	}
 }

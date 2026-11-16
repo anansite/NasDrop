@@ -16,9 +16,16 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
+enum class MainTab {
+	Files,
+	Photos,
+	Media,
+	Me,
+}
+
 enum class ViewMode {
 	List,
-	Timeline,
+	Grid,
 }
 
 data class TimelineGroup(
@@ -27,6 +34,8 @@ data class TimelineGroup(
 )
 
 class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
+
+	var currentTab by mutableStateOf(MainTab.Files)
 
 	var settings by mutableStateOf<Settings?>(null)
 		private set
@@ -39,47 +48,71 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var error by mutableStateOf<String?>(null)
 		private set
 
-	/** 形如「内嵌 Tailscale · 100.87.88.9」/「直连模式 · 12ms」 */
 	var linkStatus by mutableStateOf("")
 		private set
 
-	/** 需要登录时的一次性授权链接 */
 	var authUrl by mutableStateOf("")
 		private set
 
-	/** 分类标签筛选：全部 / 📷 图片 / 🎬 视频 / 📄 文档 / 📦 压缩包 / 🎵 音频 */
+	/** 文件筛选分类：全部 / 图片 / 视频 / 文档 / 压缩包 / 音频 */
 	var selectedCategory by mutableStateOf(FileCategory.All)
 		private set
 
-	/** 视图模式：普通列表 vs 时间线视图 */
+	/** 文件视图模式：列表 vs 宫格 */
 	var viewMode by mutableStateOf(ViewMode.List)
 		private set
 
-	/** 路由信息：当前是否直连、延迟等 */
+	/** 全局搜索关键词 */
+	var searchQuery by mutableStateOf("")
+
+	/** 全局聚合照片池（跨目录汇总所有照片，类似阿里云盘相册） */
+	var allPhotos by mutableStateOf<List<DavEntry>>(emptyList())
+		private set
+
+	/** 全局聚合视频池（跨目录汇总所有视频，类似阿里云盘影音） */
+	var allVideos by mutableStateOf<List<DavEntry>>(emptyList())
+		private set
+
 	val routeInfo: StateFlow<RouteInfo> = app.repo.routeInfo
 
 	private var client: WebDavClient? = null
 
-	/** 目录内存缓存：实现 0ms 瞬间秒开（Stale-While-Revalidate），彻底消除跳转延迟 */
+	/** 目录内存缓存：0ms 瞬间秒开（Stale-While-Revalidate） */
 	private val dirCache = ConcurrentHashMap<String, List<DavEntry>>()
 
 	val isRoot: Boolean get() = path.isEmpty()
 	val needsLogin: Boolean get() = linkStatus.contains("等待登录")
 
-	/** 经过分类筛选后的条目列表（保留文件夹，文件按分类筛选） */
+	/** 经过分类筛选与搜索后的条目列表 */
 	val filteredEntries: List<DavEntry>
 		get() {
-			if (selectedCategory == FileCategory.All) return entries
-			return entries.filter { it.isDir || it.category == selectedCategory }
+			val baseList = when (selectedCategory) {
+				FileCategory.All -> entries
+				FileCategory.Image -> {
+					val local = entries.filter { !it.isDir && it.isImage }
+					if (local.isNotEmpty()) local else allPhotos
+				}
+				FileCategory.Video -> {
+					val local = entries.filter { !it.isDir && it.isVideo }
+					if (local.isNotEmpty()) local else allVideos
+				}
+				FileCategory.Document -> entries.filter { !it.isDir && it.isDocument }
+				FileCategory.Audio -> entries.filter { !it.isDir && it.isAudio }
+				FileCategory.Archive -> entries.filter { !it.isDir && it.isArchive }
+			}
+
+			if (searchQuery.isBlank()) return baseList
+			return baseList.filter { it.name.contains(searchQuery.trim(), ignoreCase = true) }
 		}
 
-	/** 时间线分组（按文件的最后修改日期降序分组） */
-	val timelineGroups: List<TimelineGroup>
-		get() = groupEntriesForTimeline(filteredEntries)
+	/** 相册时间线分组数据（按拍摄/修改日期降序） */
+	val photoTimelineGroups: List<TimelineGroup>
+		get() = groupEntriesForTimeline(allPhotos)
 
 	init {
 		viewModelScope.launch { open("") }
 		viewModelScope.launch { pollLink() }
+		viewModelScope.launch { scanGlobalMedia() }
 	}
 
 	fun urlFor(entryPath: String): String? = client?.urlFor(entryPath)?.toString()
@@ -93,31 +126,23 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	fun toggleViewMode() {
-		viewMode = if (viewMode == ViewMode.List) ViewMode.Timeline else ViewMode.List
+		viewMode = if (viewMode == ViewMode.List) ViewMode.Grid else ViewMode.List
 	}
 
-	fun setConnectionMode(mode: ConnectionMode) {
-		viewModelScope.launch {
-			app.prefs.setConnectionMode(mode)
-			reloadSettings()
-		}
+	/** 触发 NAT 打洞直连 */
+	fun punchHole(): String {
+		val res = app.repo.triggerHolePunch()
+		pollPeerStatus()
+		return res
 	}
 
-	/**
-	 * 打开指定目录。
-	 * 采用 Stale-While-Revalidate 机制：
-	 * 1. 如果有缓存，0ms 立即渲染，页面瞬间进入，无任何等待感知；
-	 * 2. 同时在后台并发拉取最新目录数据，拉取完成平滑更新，保证数据最终一致。
-	 */
 	fun open(target: String) {
-		// 1. 命中缓存：立即呈现
 		val cached = dirCache[target]
 		if (cached != null) {
 			entries = cached
 			path = target
 			loading = false
 		} else {
-			// 未命中缓存（首次进入该目录），展示轻量加载状态
 			loading = true
 		}
 		error = null
@@ -128,11 +153,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				val c = withContext(Dispatchers.IO) { app.repo.client(s) }.also { client = it }
 				val fresh = withContext(Dispatchers.IO) { c.list(target) }
 				dirCache[target] = fresh
-				// 如果当前页面依然停留在 target 路径，则更新展示
 				if (path == target || cached == null) {
 					entries = fresh
 					path = target
 				}
+				// 异步更新全局媒体索引
+				collectMediaFrom(fresh)
 			} catch (t: Throwable) {
 				if (cached == null) {
 					error = t.message ?: t.javaClass.simpleName
@@ -146,6 +172,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	fun refresh() {
 		dirCache.remove(path)
 		open(path)
+		viewModelScope.launch { scanGlobalMedia() }
 	}
 
 	fun up() {
@@ -173,34 +200,33 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			app.repo.invalidate()
 			settings = app.prefs.current()
 			open(path)
+			scanGlobalMedia()
 		}
 	}
 
 	fun imageAlbum(entry: DavEntry): Pair<List<DavEntry>, Int> {
-		val imgs = entries.filter { it.isImage }
-		val i = imgs.indexOfFirst { it.path == entry.path }
-		return imgs to i.coerceAtLeast(0)
+		val pool = if (allPhotos.any { it.path == entry.path }) allPhotos else entries.filter { it.isImage }
+		val i = pool.indexOfFirst { it.path == entry.path }
+		return pool to i.coerceAtLeast(0)
 	}
 
 	private suspend fun pollLink() {
 		while (true) {
-			val s = settings ?: app.prefs.current().also { settings = it }
-			val currentRoute = app.repo.routeInfo.value
-			if (currentRoute.isDirect) {
-				linkStatus = currentRoute.label
-				authUrl = ""
-			} else {
-				val embedded = withContext(Dispatchers.IO) { TsBridge.available }
-				if (s.useTailscale && embedded) {
-					val st = withContext(Dispatchers.IO) { TsBridge.status() }
-					linkStatus = label(st)
-					authUrl = if (st == "needs-login") withContext(Dispatchers.IO) { TsBridge.authUrl() } else ""
-				} else {
-					linkStatus = "直连模式"
-					authUrl = ""
-				}
-			}
+			pollPeerStatus()
 			delay(2500)
+		}
+	}
+
+	private fun pollPeerStatus() {
+		val embedded = TsBridge.available
+		if (embedded) {
+			app.repo.updateRouteInfo()
+			val st = TsBridge.status()
+			linkStatus = label(st)
+			authUrl = if (st == "needs-login") TsBridge.authUrl() else ""
+		} else {
+			linkStatus = "直连模式"
+			authUrl = ""
 		}
 	}
 
@@ -215,6 +241,32 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		else -> "内嵌 Tailscale · $st"
 	}
 
+	private fun collectMediaFrom(items: List<DavEntry>) {
+		val imgs = (allPhotos + items.filter { it.isImage }).distinctBy { it.path }
+		val vids = (allVideos + items.filter { it.isVideo }).distinctBy { it.path }
+		allPhotos = imgs
+		allVideos = vids
+	}
+
+	/** 跨目录预扫描，为相册和影音提供全局聚合数据 */
+	private suspend fun scanGlobalMedia() {
+		withContext(Dispatchers.IO) {
+			try {
+				val s = settings ?: app.prefs.current().also { settings = it }
+				val c = app.repo.client(s)
+				val rootEntries = c.list("")
+				collectMediaFrom(rootEntries)
+				for (dir in rootEntries.filter { it.isDir }) {
+					runCatching {
+						val sub = c.list(dir.path)
+						dirCache[dir.path] = sub
+						collectMediaFrom(sub)
+					}
+				}
+			} catch (_: Exception) {}
+		}
+	}
+
 	private fun mutate(block: (WebDavClient) -> Unit) {
 		viewModelScope.launch {
 			loading = true
@@ -226,6 +278,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				val fresh = withContext(Dispatchers.IO) { c.list(path) }
 				dirCache[path] = fresh
 				entries = fresh
+				scanGlobalMedia()
 			} catch (t: Throwable) {
 				error = t.message ?: t.javaClass.simpleName
 			} finally {
@@ -238,7 +291,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		fun join(dir: String, name: String) =
 			listOf(dir.trim('/'), name.trim('/')).filter { it.isNotEmpty() }.joinToString("/")
 
-		private fun groupEntriesForTimeline(list: List<DavEntry>): List<TimelineGroup> {
+		fun groupEntriesForTimeline(list: List<DavEntry>): List<TimelineGroup> {
 			val files = list.filter { !it.isDir }
 			if (files.isEmpty()) return emptyList()
 
