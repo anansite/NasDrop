@@ -1,0 +1,193 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 133192568550,
+      "run_id": 43835925879,
+      "workflow_name": "build-apk",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43835925879",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOVwGdLs8AAAAfAuVO5g",
+      "head_sha": "0227c25178ac9821a290d53fcc9b20ec45086aaa",
+      "url": "https://api.github.com/repos/anansite/private_filemanager/actions/jobs/133192568550",
+      "html_url": "https://github.com/anansite/private_filemanager/actions/runs/43835925879/job/133192568550",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-11-16T09:00:53Z",
+      "started_at": "2026-11-16T09:00:56Z",
+      "completed_at": "2026-11-16T09:08:10Z",
+      "name": "内嵌 Tailscale + 打包 APK",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-11-16T09:00:57Z",
+          "completed_at": "2026-11-16T09:01:02Z"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-11-16T09:01:02Z",
+          "completed_at": "2026-11-16T09:01:13Z"
+        },
+        {
+          "name": "JDK 17",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-11-16T09:01:13Z",
+          "completed_at": "2026-11-16T09:01:13Z"
+        },
+        {
+          "name": "Android SDK",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-11-16T09:01:13Z",
+          "completed_at": "2026-11-16T09:01:30Z"
+        },
+        {
+          "name": "安装 NDK",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-11-16T09:01:30Z",
+          "completed_at": "2026-11-16T09:01:57Z"
+        },
+        {
+          "name": "Go",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-11-16T09:01:57Z",
+          "completed_at": "2026-11-16T09:02:03Z"
+        },
+        {
+          "name": "缓存 Go 模块",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-11-16T09:02:03Z",
+          "completed_at": "2026-11-16T09:02:28Z"
+        },
+        {
+          "name": "Gradle 缓存",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-11-16T09:02:28Z",
+          "completed_at": "2026-11-16T09:02:33Z"
+        },
+        {
+          "name": "编译 Tailscale 桥（gomobile → AAR）",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-11-16T09:02:33Z",
+          "completed_at": "2026-11-16T09:02:51Z"
+        },
+        {
+          "name": "锁定依赖版本",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-11-16T09:02:51Z",
+          "completed_at": "2026-11-16T09:02:52Z"
+        },
+        {
+          "name": "打包 APK",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-11-16T09:02:52Z",
+          "completed_at": "2026-11-16T09:07:22Z"
+        },
+        {
+          "name": "整理产物",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-11-16T09:07:22Z",
+          "completed_at": "2026-11-16T09:07:22Z"
+        },
+        {
+          "name": "上传 artifact",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-11-16T09:07:22Z",
+          "completed_at": "2026-11-16T09:07:26Z"
+        },
+        {
+          "name": "打 tag 时发布 Release",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 14,
+          "started_at": "2026-11-16T09:07:26Z",
+          "completed_at": "2026-11-16T09:07:26Z"
+        },
+        {
+          "name": "Post Gradle 缓存",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 24,
+          "started_at": "2026-11-16T09:07:26Z",
+          "completed_at": "2026-11-16T09:07:53Z"
+        },
+        {
+          "name": "Post 缓存 Go 模块",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 25,
+          "started_at": "2026-11-16T09:07:53Z",
+          "completed_at": "2026-11-16T09:08:07Z"
+        },
+        {
+          "name": "Post Go",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 26,
+          "started_at": "2026-11-16T09:08:07Z",
+          "completed_at": "2026-11-16T09:08:07Z"
+        },
+        {
+          "name": "Post JDK 17",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 27,
+          "started_at": "2026-11-16T09:08:07Z",
+          "completed_at": "2026-11-16T09:08:07Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 28,
+          "started_at": "2026-11-16T09:08:07Z",
+          "completed_at": "2026-11-16T09:08:07Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 29,
+          "started_at": "2026-11-16T09:08:07Z",
+          "completed_at": "2026-11-16T09:08:07Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/anansite/private_filemanager/check-runs/133192568550",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 1000000229,
+      "runner_name": "GitHub Actions 1000000229",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    }
+  ]
+}

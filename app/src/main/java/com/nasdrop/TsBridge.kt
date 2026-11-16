@@ -66,6 +66,23 @@ object TsBridge {
 	}
 
 	/**
+	 * 把网卡清单推给 Go 侧。
+	 *
+	 * Android 不允许 Go 自己枚举网卡（netlink 被禁），不推这个 tsnet 起不来。
+	 * 见 [IfaceReporter]。
+	 */
+	fun setInterfaces(json: String) {
+		val c = load() ?: return
+		find(c, "setinterfaces", 1)?.invoke(null, json)
+	}
+
+	/** 默认路由的网卡名与网关，Android 上同样取不到，由 Java 侧推给 Go */
+	fun setDefaultRoute(ifName: String, gateway: String) {
+		val c = load() ?: return
+		find(c, "setdefaultroute", 2)?.invoke(null, ifName, gateway)
+	}
+
+	/**
 	 * 启动内嵌 Tailscale 节点与本地代理，返回本地端口；失败或没有 AAR 时返回 0。
 	 *
 	 * @param targetUrl WebDAV 根地址（只取 scheme://host，路径由代理透传）
@@ -75,6 +92,10 @@ object TsBridge {
 		if (port > 0) return port
 		val c = load() ?: return 0
 		return try {
+			// 必须在 Go 侧起节点之前把网卡清单推过去，否则 netmon 会因为
+			// netlink 被禁而起不来（netlinkrib: permission denied）
+			IfaceReporter.register(context)
+
 			val stateDir = File(context.filesDir, "tsnet").apply { mkdirs() }.absolutePath
 			val m = find(c, "start", 4) ?: run {
 				Log.e(TAG, "AAR 里没有 Start(String,String,String,String)")

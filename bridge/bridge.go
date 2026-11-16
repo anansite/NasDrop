@@ -27,21 +27,10 @@ import (
 	"sync"
 	"time"
 
-	// 这一行是 Android 上能跑起来的前提，缺了它 tsnet.Up 会直接失败：
-	//
-	//	tsnet: route ip+net: netlinkrib: permission denied
-	//
-	// 原因是 Android SDK 30 起对 app UID（untrusted_app）关掉了 NETLINK_ROUTE 套接字
-	// 和 /proc/net，而 Go 标准库的 net.Interfaces() 在 linux/android 上一律走 netlink，
-	// 于是 netmon 无法启动。官方 Android App 靠 Java 侧 RegisterInterfaceGetter 绕过；
-	// 我们这种「AAR 嵌进 App、Go 侧没有 Java 可依赖」的形态，官方留的口子就是这个包：
-	// 它注册一个 netmon 回退（合成一个 android 接口，地址靠让内核给一条出站 UDP 路由
-	// 反查源地址，不发包），顺带注入 androiddns（Android 没有 /etc/resolv.conf）
-	// 并把 CA 根证书指到 /system/etc/security/cacerts。
-	// 官方包文档原话：It is not linked into tsnet by default; tsnet apps opt in
-	// with a blank import of this package.
-	_ "tailscale.com/feature/androidbin"
-
+	// 注意：这里刻意没有 _ "tailscale.com/feature/androidbin"。
+	// 那个包的注册文件构建标签是 (linux && !android) || (android && !cgo)，
+	// 而 gomobile bind 是 android + cgo，导入它等于什么都没做（.so 里不会有任何
+	// androidbin 符号）。网卡枚举的绕行方案在本包的 interfaces.go 里自己注册。
 	"tailscale.com/tsnet"
 )
 
@@ -228,7 +217,7 @@ func Start(stateDir, hostname, authKey, targetURL string) (int32, error) {
 			upErr = err
 			mu.Unlock()
 			if strings.Contains(err.Error(), "netlinkrib") {
-				logf("tsnet 上线失败: %v（Android 拒绝了 netlink，检查是否漏了 androidbin 空导入）", err)
+				logf("tsnet 上线失败: %v（Android 拒绝 netlink，检查 Java 侧是否推送了网卡清单）", err)
 			} else {
 				logf("tsnet 上线失败: %v", err)
 			}
