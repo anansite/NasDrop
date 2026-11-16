@@ -35,9 +35,12 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -251,6 +254,15 @@ fun BrowserScreen(
 				onPickFile = { filePicker.launch(arrayOf("*/*")) },
 			)
 
+			// 面包屑路径导航栏（支持点击任意层级直达与返回上一级）
+			if (vm.currentTab == MainTab.Files && !vm.isMultiSelectMode) {
+				BreadcrumbBar(
+					currentPath = vm.path,
+					onNavigate = { vm.open(it) },
+					onUp = { vm.up() },
+				)
+			}
+
 			// 分类胶囊栏（仅在文件 Tab 展示，纯矢量质感，杜绝 Emoji）
 			if (vm.currentTab == MainTab.Files && !vm.isMultiSelectMode) {
 				CategoryFilterRow(
@@ -339,6 +351,7 @@ fun BrowserScreen(
 	activeEntryForAction?.let { entry ->
 		ActionBottomSheet(
 			entry = entry,
+			urlOf = { vm.urlFor(it) },
 			onDismiss = { activeEntryForAction = null },
 			onDownload = {
 				activeEntryForAction = null
@@ -543,15 +556,30 @@ private fun CommercialTopBar(
 				Row(
 					modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
 					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(8.dp),
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
 				) {
 					Icon(Icons.Rounded.Search, contentDescription = null, tint = Color(0xFF86909C), modifier = Modifier.size(16.dp))
-					Text(
-						text = if (vm.searchQuery.isBlank()) "搜索私有云盘文件..." else vm.searchQuery,
-						fontSize = 13.sp,
-						color = if (vm.searchQuery.isBlank()) Color(0xFF86909C) else Color(0xFF1D2129),
-						maxLines = 1,
+					BasicTextField(
+						value = vm.searchQuery,
+						onValueChange = { vm.searchQuery = it },
+						singleLine = true,
+						textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF1D2129), fontSize = 13.sp),
+						modifier = Modifier.weight(1f),
+						decorationBox = { innerTextField ->
+							if (vm.searchQuery.isEmpty()) {
+								Text("搜索私有云盘文件...", fontSize = 13.sp, color = Color(0xFF86909C))
+							}
+							innerTextField()
+						},
 					)
+					if (vm.searchQuery.isNotEmpty()) {
+						IconButton(
+							onClick = { vm.searchQuery = "" },
+							modifier = Modifier.size(20.dp),
+						) {
+							Icon(Icons.Rounded.Close, contentDescription = "清除", tint = Color(0xFF86909C), modifier = Modifier.size(14.dp))
+						}
+					}
 				}
 			}
 
@@ -664,6 +692,115 @@ private fun PickBar(path: String, lastDir: String, onConfirm: () -> Unit) {
 				modifier = Modifier.fillMaxWidth().height(44.dp),
 			) {
 				Text("存入当前目录", fontWeight = FontWeight.Bold, color = Color.White)
+			}
+		}
+	}
+}
+
+/**
+ * 现代网盘面包屑导航：根目录 > 文件夹 > 子文件夹，支持点击任意层级直达及返回上一级
+ */
+@Composable
+private fun BreadcrumbBar(
+	currentPath: String,
+	onNavigate: (String) -> Unit,
+	onUp: () -> Unit,
+) {
+	val parts = remember(currentPath) {
+		if (currentPath.isBlank()) emptyList()
+		else currentPath.trim('/').split('/')
+	}
+
+	Surface(
+		color = Color.White,
+		shadowElevation = 0.5.dp,
+		modifier = Modifier.fillMaxWidth(),
+	) {
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(horizontal = 10.dp, vertical = 6.dp),
+			verticalAlignment = Alignment.CenterVertically,
+		) {
+			if (parts.isNotEmpty()) {
+				// 返回上一级按钮
+				IconButton(
+					onClick = onUp,
+					modifier = Modifier.size(28.dp),
+				) {
+					Icon(
+						imageVector = Icons.Rounded.ArrowBack,
+						contentDescription = "返回上一级",
+						tint = Color(0xFF2A72F6),
+						modifier = Modifier.size(18.dp),
+					)
+				}
+				Spacer(modifier = Modifier.width(4.dp))
+			}
+
+			LazyRow(
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
+				modifier = Modifier.weight(1f),
+			) {
+				// 根目录节点
+				item {
+					val isCurrent = parts.isEmpty()
+					Surface(
+						shape = RoundedCornerShape(8.dp),
+						color = if (isCurrent) Color(0xFFEAF2FF) else Color.Transparent,
+						onClick = { onNavigate("") },
+					) {
+						Row(
+							modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(4.dp),
+						) {
+							Icon(
+								imageVector = Icons.Rounded.Home,
+								contentDescription = null,
+								tint = if (isCurrent) Color(0xFF2A72F6) else Color(0xFF4E5969),
+								modifier = Modifier.size(14.dp),
+							)
+							Text(
+								text = "根目录",
+								fontSize = 12.sp,
+								fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+								color = if (isCurrent) Color(0xFF2A72F6) else Color(0xFF4E5969),
+							)
+						}
+					}
+				}
+
+				// 各级子目录节点
+				parts.forEachIndexed { index, part ->
+					item {
+						Icon(
+							imageVector = Icons.Rounded.ChevronRight,
+							contentDescription = null,
+							tint = Color(0xFFC9CDD4),
+							modifier = Modifier.size(14.dp),
+						)
+					}
+					item {
+						val targetPath = parts.take(index + 1).joinToString("/")
+						val isCurrent = index == parts.lastIndex
+						Surface(
+							shape = RoundedCornerShape(8.dp),
+							color = if (isCurrent) Color(0xFFEAF2FF) else Color.Transparent,
+							onClick = { if (!isCurrent) onNavigate(targetPath) },
+						) {
+							Text(
+								text = part,
+								fontSize = 12.sp,
+								fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+								color = if (isCurrent) Color(0xFF2A72F6) else Color(0xFF4E5969),
+								maxLines = 1,
+								modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+							)
+						}
+					}
+				}
 			}
 		}
 	}
@@ -828,6 +965,27 @@ private fun FileBrowserContent(
 	val items = vm.filteredEntries
 	val isMulti = vm.isMultiSelectMode
 
+	if (items.isEmpty() && !vm.loading) {
+		Box(
+			modifier = Modifier.fillMaxSize(),
+			contentAlignment = Alignment.Center,
+		) {
+			Column(
+				horizontalAlignment = Alignment.CenterHorizontally,
+				verticalArrangement = Arrangement.spacedBy(8.dp),
+			) {
+				FileIcon(category = FileCategory.All, isDir = true, size = 64.dp)
+				Spacer(modifier = Modifier.height(4.dp))
+				Text(
+					text = if (vm.searchQuery.isNotBlank()) "未找到匹配「${vm.searchQuery}」的文件" else "此文件夹空空如也",
+					fontSize = 14.sp,
+					color = Color(0xFF86909C),
+				)
+			}
+		}
+		return
+	}
+
 	when (vm.viewMode) {
 		ViewMode.Cards -> {
 			LazyColumn(
@@ -857,7 +1015,7 @@ private fun FileBrowserContent(
 								SelectCheckbox(isSelected = isSelected)
 							}
 
-							FileIcon(category = entry.category, isDir = entry.isDir, isAlbum = entry.isAlbum, size = 42.dp)
+							FileThumbnail(entry = entry, urlOf = { vm.urlFor(it) }, size = 42.dp)
 
 							Column(modifier = Modifier.weight(1f)) {
 								Text(
@@ -910,7 +1068,7 @@ private fun FileBrowserContent(
 							SelectCheckbox(isSelected = isSelected)
 						}
 
-						FileIcon(category = entry.category, isDir = entry.isDir, isAlbum = entry.isAlbum, size = 32.dp)
+						FileThumbnail(entry = entry, urlOf = { vm.urlFor(it) }, size = 32.dp)
 
 						Text(
 							text = entry.name,
@@ -949,6 +1107,7 @@ private fun FileBrowserContent(
 			) {
 				items(items, key = { it.path }) { entry ->
 					val isSelected = vm.selectedEntries.contains(entry)
+					val imgUrl = if (entry.isImage) vm.urlFor(entry.path) else null
 					Card(
 						shape = RoundedCornerShape(14.dp),
 						colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -961,7 +1120,7 @@ private fun FileBrowserContent(
 							),
 					) {
 						Column(
-							modifier = Modifier.padding(12.dp),
+							modifier = Modifier.padding(10.dp),
 							horizontalAlignment = Alignment.CenterHorizontally,
 						) {
 							Box(modifier = Modifier.fillMaxWidth()) {
@@ -980,8 +1139,21 @@ private fun FileBrowserContent(
 								}
 							}
 
-							Spacer(modifier = Modifier.height(4.dp))
-							FileIcon(category = entry.category, isDir = entry.isDir, isAlbum = entry.isAlbum, size = 52.dp)
+							Spacer(modifier = Modifier.height(2.dp))
+							if (entry.isImage && !imgUrl.isNullOrBlank()) {
+								AsyncImage(
+									model = imgUrl,
+									contentDescription = entry.name,
+									contentScale = ContentScale.Crop,
+									modifier = Modifier
+										.fillMaxWidth()
+										.aspectRatio(1.2f)
+										.clip(RoundedCornerShape(8.dp))
+										.background(Color(0xFFE5E6EB)),
+								)
+							} else {
+								FileIcon(category = entry.category, isDir = entry.isDir, isAlbum = entry.isAlbum, size = 52.dp)
+							}
 							Spacer(modifier = Modifier.height(8.dp))
 
 							Text(
@@ -1351,6 +1523,7 @@ private fun NetworkManagerSheet(
 @Composable
 private fun ActionBottomSheet(
 	entry: DavEntry,
+	urlOf: (String) -> String?,
 	onDismiss: () -> Unit,
 	onDownload: () -> Unit,
 	onMove: () -> Unit,
@@ -1374,7 +1547,7 @@ private fun ActionBottomSheet(
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.spacedBy(12.dp),
 			) {
-				FileIcon(category = entry.category, isDir = entry.isDir, isAlbum = entry.isAlbum, size = 44.dp)
+				FileThumbnail(entry = entry, urlOf = urlOf, size = 44.dp)
 				Column(modifier = Modifier.weight(1f)) {
 					Text(entry.name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis)
 					Spacer(modifier = Modifier.height(2.dp))

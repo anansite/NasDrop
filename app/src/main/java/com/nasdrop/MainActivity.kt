@@ -82,8 +82,10 @@ class MainActivity : ComponentActivity() {
 
 			when (val r = route) {
 				Route.Browser -> {
-					BackHandler(enabled = vm.currentTab != MainTab.Files || !vm.isRoot) {
-						if (vm.currentTab != MainTab.Files) {
+					BackHandler(enabled = vm.isMultiSelectMode || vm.currentTab != MainTab.Files || !vm.isRoot) {
+						if (vm.isMultiSelectMode) {
+							vm.exitMultiSelect()
+						} else if (vm.currentTab != MainTab.Files) {
 							vm.currentTab = MainTab.Files
 						} else {
 							vm.up()

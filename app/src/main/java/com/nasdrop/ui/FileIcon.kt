@@ -33,7 +33,64 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import com.nasdrop.DavEntry
 import com.nasdrop.FileCategory
+
+/**
+ * 智能文件缩略图 / 图标：
+ * - 若为图片，尝试加载真实高清缩略图，并带优雅圆角与阴影；
+ * - 加载中或失败时自动平滑回退至商业级矢量微渐变图标；
+ * - 文件夹与其他文件类型渲染定制微渐变图标。
+ */
+@Composable
+fun FileThumbnail(
+	entry: DavEntry,
+	urlOf: (String) -> String?,
+	size: Dp = 44.dp,
+	modifier: Modifier = Modifier,
+) {
+	val cornerRadius = size * 0.28f
+
+	if (entry.isImage) {
+		val url = urlOf(entry.path)
+		var isError by remember(entry.path) { mutableStateOf(false) }
+
+		if (!isError && !url.isNullOrBlank()) {
+			Box(
+				modifier = modifier
+					.size(size)
+					.shadow(elevation = 2.dp, shape = RoundedCornerShape(cornerRadius), ambientColor = Color.Black.copy(alpha = 0.1f), spotColor = Color.Black.copy(alpha = 0.1f))
+					.clip(RoundedCornerShape(cornerRadius))
+					.background(Color(0xFFE5E6EB)),
+				contentAlignment = Alignment.Center,
+			) {
+				AsyncImage(
+					model = url,
+					contentDescription = entry.name,
+					contentScale = ContentScale.Crop,
+					onError = { isError = true },
+					modifier = Modifier.fillMaxSize(),
+				)
+			}
+		} else {
+			FileIcon(category = FileCategory.Image, isDir = false, size = size, modifier = modifier)
+		}
+	} else {
+		FileIcon(
+			category = entry.category,
+			isDir = entry.isDir,
+			isAlbum = entry.isAlbum,
+			size = size,
+			modifier = modifier,
+		)
+	}
+}
 
 /**
  * 商业级 2.5D / Duotone 微渐变网盘矢量图标组件。
