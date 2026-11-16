@@ -35,6 +35,12 @@ data class DavEntry(
 	val modified: Long,
 ) {
 	val ext: String get() = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+	/** 用于 UI 主标题展示的文件纯净名称（去除扩展名，避免与副标题格式如 PNG、MP4 重复显示） */
+	val displayName: String get() {
+		if (isDir) return name
+		val dot = name.lastIndexOf('.')
+		return if (dot > 0) name.substring(0, dot) else name
+	}
 	val isAlbum: Boolean get() = isDir && (name.contains("相册") || name.contains("Photo", ignoreCase = true) || name.contains("Album", ignoreCase = true))
 	val isImage: Boolean get() = !isDir && ext in IMAGES
 	val isVideo: Boolean get() = !isDir && ext in VIDEOS

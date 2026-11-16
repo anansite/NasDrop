@@ -239,22 +239,54 @@ fun BrowserScreen(
 				.fillMaxSize()
 				.padding(innerPadding),
 		) {
-			// 沉浸通透顶栏：网络药丸、操作按钮、搜索条、动态传输胶囊
-			CommercialTopBar(
-				vm = vm,
-				routeInfo = routeInfo,
-				onOpenNetSheet = { showNetSheet = true },
-				onOpenTransferSheet = { showTransferSheet = true },
-				onToggleViewMode = { vm.cycleViewMode() },
-				onToggleMultiSelect = {
-					if (vm.isMultiSelectMode) vm.exitMultiSelect()
-					else vm.enterMultiSelect()
-				},
-				onCreateFolder = { showCreateDialog = true },
-				onRefresh = { vm.refresh() },
-				onOpenSettings = onOpenSettings,
-				onPickFile = { filePicker.launch(arrayOf("*/*")) },
-			)
+			// 各 Tab 专属顶栏：网络管家专心负责网络与监控，文件 Tab 承载文件操作
+			when (vm.currentTab) {
+				MainTab.Files -> {
+					CommercialTopBar(
+						vm = vm,
+						routeInfo = routeInfo,
+						onOpenNetSheet = { showNetSheet = true },
+						onOpenTransferSheet = { showTransferSheet = true },
+						onToggleViewMode = { vm.cycleViewMode() },
+						onToggleMultiSelect = {
+							if (vm.isMultiSelectMode) vm.exitMultiSelect()
+							else vm.enterMultiSelect()
+						},
+						onCreateFolder = { showCreateDialog = true },
+						onRefresh = { vm.refresh() },
+						onOpenSettings = onOpenSettings,
+						onPickFile = { filePicker.launch(arrayOf("*/*")) },
+					)
+				}
+
+				MainTab.Photos -> {
+					PhotosTopBar(
+						count = vm.allImages.size,
+						onRefresh = { vm.refresh() },
+						onOpenTransferSheet = { showTransferSheet = true },
+						onOpenSettings = onOpenSettings,
+					)
+				}
+
+				MainTab.Media -> {
+					MediaTopBar(
+						count = vm.allVideos.size,
+						onRefresh = { vm.refresh() },
+						onOpenTransferSheet = { showTransferSheet = true },
+						onOpenSettings = onOpenSettings,
+					)
+				}
+
+				MainTab.Me -> {
+					NetworkTopBar(
+						routeInfo = routeInfo,
+						hasUpdate = vm.hasUpdate,
+						onOpenNetSheet = { showNetSheet = true },
+						onOpenUpdateDialog = { vm.openUpdateDialog() },
+						onOpenSettings = onOpenSettings,
+					)
+				}
+			}
 
 			// 面包屑路径导航栏（支持点击任意层级直达与返回上一级）
 			if (vm.currentTab == MainTab.Files && !vm.isMultiSelectMode) {
@@ -472,6 +504,119 @@ fun BrowserScreen(
 }
 
 // ==================== 顶部导航栏与状态胶囊 ====================
+
+@Composable
+private fun PhotosTopBar(
+	count: Int,
+	onRefresh: () -> Unit,
+	onOpenTransferSheet: () -> Unit,
+	onOpenSettings: () -> Unit,
+) {
+	Row(
+		modifier = Modifier
+			.fillMaxWidth()
+			.background(Color(0xFFF7F8FA))
+			.padding(horizontal = 16.dp, vertical = 10.dp),
+		verticalAlignment = Alignment.CenterVertically,
+		horizontalArrangement = Arrangement.SpaceBetween,
+	) {
+		Column {
+			Text("云端相册", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+			Text("共 $count 张照片", fontSize = 11.sp, color = Color(0xFF86909C))
+		}
+		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+			IconButton(onClick = onRefresh) {
+				Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969))
+			}
+			IconButton(onClick = onOpenTransferSheet) {
+				Icon(Icons.Rounded.SwapVert, contentDescription = "传输", tint = Color(0xFF4E5969))
+			}
+			IconButton(onClick = onOpenSettings) {
+				Icon(Icons.Rounded.Settings, contentDescription = "设置", tint = Color(0xFF4E5969))
+			}
+		}
+	}
+}
+
+@Composable
+private fun MediaTopBar(
+	count: Int,
+	onRefresh: () -> Unit,
+	onOpenTransferSheet: () -> Unit,
+	onOpenSettings: () -> Unit,
+) {
+	Row(
+		modifier = Modifier
+			.fillMaxWidth()
+			.background(Color(0xFFF7F8FA))
+			.padding(horizontal = 16.dp, vertical = 10.dp),
+		verticalAlignment = Alignment.CenterVertically,
+		horizontalArrangement = Arrangement.SpaceBetween,
+	) {
+		Column {
+			Text("影音视界", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+			Text("共 $count 部视频", fontSize = 11.sp, color = Color(0xFF86909C))
+		}
+		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+			IconButton(onClick = onRefresh) {
+				Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969))
+			}
+			IconButton(onClick = onOpenTransferSheet) {
+				Icon(Icons.Rounded.SwapVert, contentDescription = "传输", tint = Color(0xFF4E5969))
+			}
+			IconButton(onClick = onOpenSettings) {
+				Icon(Icons.Rounded.Settings, contentDescription = "设置", tint = Color(0xFF4E5969))
+			}
+		}
+	}
+}
+
+@Composable
+private fun NetworkTopBar(
+	routeInfo: RouteInfo,
+	hasUpdate: Boolean,
+	onOpenNetSheet: () -> Unit,
+	onOpenUpdateDialog: () -> Unit,
+	onOpenSettings: () -> Unit,
+) {
+	Row(
+		modifier = Modifier
+			.fillMaxWidth()
+			.background(Color(0xFFF7F8FA))
+			.padding(horizontal = 16.dp, vertical = 10.dp),
+		verticalAlignment = Alignment.CenterVertically,
+		horizontalArrangement = Arrangement.SpaceBetween,
+	) {
+		Text("网络与 NAS 管家", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+
+		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+			HumanNetworkPill(routeInfo = routeInfo, onClick = onOpenNetSheet)
+
+			if (hasUpdate) {
+				IconButton(onClick = onOpenUpdateDialog) {
+					Box {
+						Icon(
+							imageVector = Icons.Rounded.CloudDownload,
+							contentDescription = "发现新版本",
+							tint = Color(0xFF2A72F6),
+						)
+						Box(
+							modifier = Modifier
+								.size(8.dp)
+								.clip(CircleShape)
+								.background(Color(0xFFFF4D4F))
+								.align(Alignment.TopEnd)
+						)
+					}
+				}
+			}
+
+			IconButton(onClick = onOpenSettings) {
+				Icon(Icons.Rounded.Settings, contentDescription = "设置", tint = Color(0xFF4E5969))
+			}
+		}
+	}
+}
 
 @Composable
 private fun CommercialTopBar(
@@ -1070,7 +1215,7 @@ private fun FileBrowserContent(
 
 							Column(modifier = Modifier.weight(1f)) {
 								Text(
-									text = entry.name,
+									text = entry.displayName,
 									fontSize = 14.sp,
 									fontWeight = FontWeight.Bold,
 									color = Color(0xFF1D2129),
@@ -1125,7 +1270,7 @@ private fun FileBrowserContent(
 
 						Column(modifier = Modifier.weight(1f)) {
 							Text(
-								text = entry.name,
+								text = entry.displayName,
 								fontSize = 13.sp,
 								fontWeight = FontWeight.SemiBold,
 								color = Color(0xFF1D2129),
@@ -1213,7 +1358,7 @@ private fun FileBrowserContent(
 							Spacer(modifier = Modifier.height(8.dp))
 
 							Text(
-								text = entry.name,
+								text = entry.displayName,
 								fontSize = 13.sp,
 								fontWeight = FontWeight.Bold,
 								color = Color(0xFF1D2129),
@@ -1369,13 +1514,9 @@ private fun MediaStreamContent(
 
 					// 标题与元数据
 					Column(modifier = Modifier.padding(12.dp)) {
-						Text(video.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis)
+						Text(video.displayName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis)
 						Spacer(modifier = Modifier.height(4.dp))
-						Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-							Text(formatSize(video.size), fontSize = 11.sp, color = Color(0xFF86909C))
-							Text("·", fontSize = 11.sp, color = Color(0xFF86909C))
-							Text(formatDate(video.modified), fontSize = 11.sp, color = Color(0xFF86909C))
-						}
+						Text(formatMeta(video), fontSize = 11.sp, color = Color(0xFF86909C), maxLines = 1, overflow = TextOverflow.Ellipsis)
 					}
 				}
 			}
@@ -1607,7 +1748,7 @@ private fun ActionBottomSheet(
 			) {
 				FileThumbnail(entry = entry, urlOf = urlOf, size = 44.dp)
 				Column(modifier = Modifier.weight(1f)) {
-					Text(entry.name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis)
+					Text(entry.displayName, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis)
 					Spacer(modifier = Modifier.height(2.dp))
 					Text(formatMeta(entry), fontSize = 12.sp, color = Color(0xFF86909C), maxLines = 1, overflow = TextOverflow.Ellipsis)
 				}

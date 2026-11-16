@@ -111,7 +111,7 @@ fun ImageViewer(
 			title = {
 				Column {
 					Text(
-						current.name,
+						current.displayName,
 						style = MaterialTheme.typography.titleSmall,
 						maxLines = 1,
 						overflow = TextOverflow.Ellipsis,
@@ -422,7 +422,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 							Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = Color.White)
 						}
 						Text(
-							text = entry.name,
+							text = entry.displayName,
 							color = Color.White,
 							fontSize = 15.sp,
 							fontWeight = FontWeight.Bold,
