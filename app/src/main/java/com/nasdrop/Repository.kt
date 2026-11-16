@@ -1,20 +1,40 @@
 package com.nasdrop
 
 import android.content.Context
+import android.util.Log
 import coil.ImageLoader
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import okhttp3.Credentials
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
+
+data class RouteInfo(
+	val isDirect: Boolean,
+	val label: String,
+	val latencyMs: Long = -1L,
+	val isProbing: Boolean = false,
+)
 
 /**
  * 全局唯一的网络出口。
  *
- * 所有请求（WebDAV、图片缩略图、视频流）共用同一个 OkHttpClient，
- * Basic 认证头和 bridge token 由 interceptor 统一注入，业务代码里看不到凭据。
+ * 所有请求（WebDAV、图片缩略图、视频流）共用 OkHttpClient，
+ * Basic 认证头和 bridge token 由 interceptor 统一注入。
+ * 支持智能探测直连：若直连畅通则直连以获得极低延迟，失败则平滑降级到内嵌 Tailscale。
  */
 class Repository(private val context: Context) {
+
+	private val _routeInfo = MutableStateFlow(RouteInfo(false, "连接中", -1L, true))
+	val routeInfo: StateFlow<RouteInfo> = _routeInfo
 
 	@Volatile
 	private var authHeader: String? = null
@@ -28,6 +48,16 @@ class Repository(private val context: Context) {
 	@Volatile
 	private var cached: WebDavClient? = null
 
+	private val trustAllCertsManager = object : X509TrustManager {
+		override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+		override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+		override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+	}
+
+	private val sslContext = SSLContext.getInstance("TLS").apply {
+		init(null, arrayOf<TrustManager>(trustAllCertsManager), SecureRandom())
+	}
+
 	private val okHttp: OkHttpClient = OkHttpClient.Builder()
 		.addInterceptor { chain ->
 			val b = chain.request().newBuilder()
@@ -35,9 +65,16 @@ class Repository(private val context: Context) {
 			if (bridgeToken.isNotEmpty()) b.header("X-Bridge-Token", bridgeToken)
 			chain.proceed(b.build())
 		}
+		.sslSocketFactory(sslContext.socketFactory, trustAllCertsManager)
+		.hostnameVerifier { _, _ -> true }
 		.connectTimeout(15, TimeUnit.SECONDS)
 		.readTimeout(5, TimeUnit.MINUTES)
 		.writeTimeout(5, TimeUnit.MINUTES)
+		.build()
+
+	private val probeHttp: OkHttpClient = okHttp.newBuilder()
+		.connectTimeout(1500, TimeUnit.MILLISECONDS)
+		.readTimeout(1500, TimeUnit.MILLISECONDS)
 		.build()
 
 	val imageLoader: ImageLoader by lazy {
@@ -52,14 +89,15 @@ class Repository(private val context: Context) {
 	/**
 	 * 按当前配置准备一个 WebDavClient。
 	 *
-	 * 开了内嵌 Tailscale 且 AAR 在包里时，base 会变成 http://127.0.0.1:<port><原路径>，
-	 * 后续所有请求都由 Go 侧经 tsnet 转发到真实服务器；否则直接用原地址（直连模式）。
+	 * - Direct: 强制直连
+	 * - Tailscale: 强制走本地 tsnet bridge
+	 * - Auto: 先探测直连是否畅通，畅通则直连，超时或失败则走内嵌 Tailscale
 	 */
 	@Synchronized
 	fun client(settings: Settings): WebDavClient {
 		val key = listOf(
 			settings.baseUrl, settings.user, settings.password,
-			settings.useTailscale, settings.hostname, settings.authKey, settings.trustAllCerts,
+			settings.connectionMode.name, settings.hostname, settings.authKey, settings.trustAllCerts,
 		).joinToString("|")
 		cached?.let { if (key == cachedKey) return it }
 
@@ -69,21 +107,59 @@ class Repository(private val context: Context) {
 		authHeader = Credentials.basic(settings.user, settings.password)
 		bridgeToken = ""
 
+		val shouldTryDirect = when (settings.connectionMode) {
+			ConnectionMode.Direct -> true
+			ConnectionMode.Tailscale -> false
+			ConnectionMode.Auto -> {
+				// 自动模式：探测是否能直连
+				_routeInfo.value = RouteInfo(false, "探测直连中…", -1, true)
+				val directLatency = probeDirect(root)
+				if (directLatency >= 0) {
+					Log.i("Repository", "直连探测成功，延迟 ${directLatency}ms")
+					_routeInfo.value = RouteInfo(true, "直连模式 · ${directLatency}ms", directLatency, false)
+					true
+				} else {
+					Log.i("Repository", "直连不可达，降级到内嵌 Tailscale")
+					false
+				}
+			}
+		}
+
 		var base: HttpUrl = root
-		if (settings.useTailscale && TsBridge.available) {
-			// 只取 scheme://host:port/，路径交给代理原样透传；注意别漏掉自定义端口
+		if (!shouldTryDirect && TsBridge.available) {
 			val origin = root.newBuilder().encodedPath("/").query(null).fragment(null).build().toString()
 			TsBridge.setInsecureTls(settings.trustAllCerts)
 			val p = TsBridge.start(context, settings.hostname, settings.authKey, origin)
 			if (p > 0) {
 				bridgeToken = TsBridge.token
 				base = "http://127.0.0.1:$p${root.encodedPath}".toHttpUrlOrNull() ?: root
+				_routeInfo.value = RouteInfo(false, "内嵌 Tailscale 组网", -1, false)
+			} else {
+				_routeInfo.value = RouteInfo(true, "直连模式（桥未就绪）", -1, false)
 			}
+		} else {
+			val latency = if (shouldTryDirect) probeDirect(root) else -1L
+			_routeInfo.value = RouteInfo(true, if (latency >= 0) "直连模式 · ${latency}ms" else "直连模式", latency, false)
 		}
 
 		return WebDavClient(base, okHttp).also {
 			cached = it
 			cachedKey = key
+		}
+	}
+
+	/** 探测直连连通性，返回耗时毫秒，失败返回 -1 */
+	fun probeDirect(url: HttpUrl): Long {
+		val start = System.currentTimeMillis()
+		return try {
+			val req = Request.Builder().url(url).head().build()
+			probeHttp.newCall(req).execute().use {
+				val elapsed = System.currentTimeMillis() - start
+				// 只要能够收到服务器握手或 HTTP 响应（包括 200/401/403/404/207），说明网络直连可达
+				if (it.code in 200..499) elapsed else -1L
+			}
+		} catch (_: Exception) {
+			-1L
 		}
 	}
 
@@ -93,5 +169,6 @@ class Repository(private val context: Context) {
 		cached = null
 		cachedKey = ""
 		TsBridge.stop()
+		_routeInfo.value = RouteInfo(false, "待重连", -1, false)
 	}
 }

@@ -17,6 +17,15 @@ import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Locale
 
+enum class FileCategory(val label: String, val icon: String) {
+	All("全部", "📁"),
+	Image("图片", "🖼️"),
+	Video("视频", "🎬"),
+	Document("文档", "📄"),
+	Audio("音频", "🎵"),
+	Archive("压缩包", "📦"),
+}
+
 data class DavEntry(
 	val name: String,
 	/** 相对 WebDAV 根的路径，不带首尾斜杠，例如 "Photos/2026" */
@@ -28,10 +37,25 @@ data class DavEntry(
 	val ext: String get() = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
 	val isImage: Boolean get() = !isDir && ext in IMAGES
 	val isVideo: Boolean get() = !isDir && ext in VIDEOS
+	val isDocument: Boolean get() = !isDir && ext in DOCUMENTS
+	val isAudio: Boolean get() = !isDir && ext in AUDIOS
+	val isArchive: Boolean get() = !isDir && ext in ARCHIVES
+
+	val category: FileCategory get() = when {
+		isImage -> FileCategory.Image
+		isVideo -> FileCategory.Video
+		isDocument -> FileCategory.Document
+		isAudio -> FileCategory.Audio
+		isArchive -> FileCategory.Archive
+		else -> FileCategory.All
+	}
 
 	companion object {
-		private val IMAGES = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg")
-		private val VIDEOS = setOf("mp4", "mkv", "mov", "webm", "avi", "m4v", "ts", "flv", "3gp")
+		val IMAGES = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg")
+		val VIDEOS = setOf("mp4", "mkv", "mov", "webm", "avi", "m4v", "ts", "flv", "3gp", "rmvb", "wmv")
+		val DOCUMENTS = setOf("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md", "csv", "json", "xml", "log")
+		val AUDIOS = setOf("mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "ape")
+		val ARCHIVES = setOf("zip", "rar", "7z", "tar", "gz", "bz2", "xz")
 	}
 }
 

@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.net.toUri
 import com.nasdrop.BrowserViewModel
+import com.nasdrop.ConnectionMode
 import com.nasdrop.Settings
 import com.nasdrop.app
 import kotlinx.coroutines.Dispatchers
@@ -64,6 +65,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 	var user by remember { mutableStateOf("") }
 	var password by remember { mutableStateOf("") }
 	var useTs by remember { mutableStateOf(true) }
+	var connMode by remember { mutableStateOf(ConnectionMode.Auto) }
 	var hostname by remember { mutableStateOf("nasdrop-android") }
 	var authKey by remember { mutableStateOf("") }
 	var trustAll by remember { mutableStateOf(true) }
@@ -77,6 +79,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 		user = s.user
 		password = s.password
 		useTs = s.useTailscale
+		connMode = s.connectionMode
 		hostname = s.hostname
 		authKey = s.authKey
 		trustAll = s.trustAllCerts
@@ -87,6 +90,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 		scope.launch {
 			withContext(Dispatchers.IO) {
 				app.prefs.setServer(s.baseUrl, s.user, s.password)
+				app.prefs.setConnectionMode(s.connectionMode)
 				app.prefs.setTailscale(s.useTailscale, s.hostname, s.authKey)
 				app.prefs.setTrustAllCerts(s.trustAllCerts)
 			}
@@ -246,6 +250,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						user = user,
 						password = password,
 						useTailscale = useTs,
+						connectionMode = connMode,
 						hostname = hostname.ifBlank { "nasdrop-android" },
 						authKey = authKey.trim(),
 						trustAllCerts = trustAll,
@@ -266,6 +271,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						user = user,
 						password = password,
 						useTailscale = useTs,
+						connectionMode = connMode,
 						hostname = hostname.ifBlank { "nasdrop-android" },
 						authKey = authKey.trim(),
 						trustAllCerts = trustAll,
