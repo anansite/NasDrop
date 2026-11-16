@@ -6,3 +6,8 @@ app/libs/*.aar
 app/build/
 build/
 .DS_Store
+out/
+*.png
+.ci/*.xml
+.ci/*.json
+.ci/davroot/

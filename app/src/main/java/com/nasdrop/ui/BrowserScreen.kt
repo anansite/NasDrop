@@ -114,6 +114,12 @@ fun BrowserScreen(
 		vm.error?.let { snackbar.showSnackbar(it) }
 	}
 
+	LaunchedEffect(tasks) {
+		if (tasks.isNotEmpty() && tasks.all { it.done }) {
+			vm.refresh()
+		}
+	}
+
 	Scaffold(
 		topBar = {
 			TopAppBar(

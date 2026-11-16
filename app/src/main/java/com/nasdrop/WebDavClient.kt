@@ -132,7 +132,8 @@ class WebDavClient(private val base: HttpUrl, private val http: OkHttpClient) {
 		parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
 		parser.setInput(input, null)
 
-		val rootDecoded = decode(base.encodedPath)
+		val rootDecoded = decode(base.encodedPath).trimEnd('/')
+		val targetRel = basePath.trim('/')
 		val out = ArrayList<DavEntry>()
 
 		var href: String? = null
@@ -157,9 +158,13 @@ class WebDavClient(private val base: HttpUrl, private val http: OkHttpClient) {
 				val raw = href
 				if (raw != null) {
 					val decoded = decode(raw)
-					val rel = decoded.removePrefix(rootDecoded).trim('/')
-					// 第一条通常是目录自身，rel 为空，跳过
-					if (rel.isNotEmpty()) {
+					val rel = (if (rootDecoded.isNotEmpty() && decoded.startsWith(rootDecoded)) {
+						decoded.removePrefix(rootDecoded)
+					} else {
+						decoded
+					}).trim('/')
+					// 排除空路径以及当前所请求目录自身
+					if (rel.isNotEmpty() && rel != targetRel) {
 						out += DavEntry(
 							name = rel.substringAfterLast('/'),
 							path = rel,
