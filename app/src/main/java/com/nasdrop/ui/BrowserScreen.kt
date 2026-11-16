@@ -257,7 +257,7 @@ fun BrowserScreen(
 		)
 	}
 
-	creating?.let {
+	if (creating) {
 		TextInputDialog(
 			title = "新建文件夹",
 			initial = "",

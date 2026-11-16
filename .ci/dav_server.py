@@ -66,7 +66,6 @@ class Handler(BaseHTTPRequestHandler):
         is_dir = os.path.isdir(fs)
         q = urllib.parse.quote(url_path)
         return (
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
             "<D:response><D:href>%s</D:href><D:propstat><D:prop>"
             "<D:displayname>%s</D:displayname>"
             "<D:getcontentlength>%d</D:getcontentlength>"

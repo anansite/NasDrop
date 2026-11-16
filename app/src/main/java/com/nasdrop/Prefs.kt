@@ -16,7 +16,7 @@ data class Settings(
 	/** WebDAV 根地址，必须带结尾斜杠，例如 https://nas.205002.xyz/nas/ */
 	val baseUrl: String = "https://nas.205002.xyz/nas/",
 	val user: String = "admin",
-	val password: String = "",
+	val password: String = "admin",
 	/** 上次选择的上传目录（相对根路径），分享流程默认落在这里 */
 	val lastDir: String = "",
 	val useTailscale: Boolean = true,
@@ -76,7 +76,7 @@ class Prefs(private val context: Context) {
 	private fun Preferences.toSettings() = Settings(
 		baseUrl = this[Keys.baseUrl] ?: Settings().baseUrl,
 		user = this[Keys.user] ?: Settings().user,
-		password = this[Keys.password] ?: "",
+		password = this[Keys.password] ?: "admin",
 		lastDir = this[Keys.lastDir] ?: "",
 		useTailscale = this[Keys.useTailscale] ?: true,
 		hostname = this[Keys.hostname] ?: "nasdrop-android",
