@@ -40,6 +40,10 @@ import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DriveFileMove
+import androidx.compose.material.icons.rounded.DriveFileRenameOutline
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.FlashOn
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOpen
@@ -50,6 +54,7 @@ import androidx.compose.material.icons.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Refresh
@@ -57,6 +62,8 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.VideoLibrary
+import androidx.compose.material.icons.rounded.ViewAgenda
+import androidx.compose.material.icons.rounded.ViewHeadline
 import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -64,8 +71,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -73,10 +78,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -86,6 +91,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -141,10 +147,13 @@ fun BrowserScreen(
 	val tasks by Uploads.tasks.collectAsStateWithLifecycle()
 	val routeInfo by vm.routeInfo.collectAsStateWithLifecycle()
 
-	var overflow by remember { mutableStateOf(false) }
-	var renaming by remember { mutableStateOf<DavEntry?>(null) }
-	var deleting by remember { mutableStateOf<DavEntry?>(null) }
-	var creating by remember { mutableStateOf(false) }
+	// 统一文件操作抽屉状态
+	var activeEntryForAction by remember { mutableStateOf<DavEntry?>(null) }
+	var activeEntryForMove by remember { mutableStateOf<DavEntry?>(null) }
+	var activeEntryForRename by remember { mutableStateOf<DavEntry?>(null) }
+	var activeEntryForDelete by remember { mutableStateOf<DavEntry?>(null) }
+
+	var showCreateDialog by remember { mutableStateOf(false) }
 	var showHolePunchDialog by remember { mutableStateOf(false) }
 
 	val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -196,38 +205,25 @@ fun BrowserScreen(
 				},
 				actions = {
 					if (vm.currentTab == MainTab.Files) {
-						IconButton(onClick = { vm.toggleViewMode() }) {
+						// 循环切换：卡片 -> 紧凑 -> 宫格
+						IconButton(onClick = { vm.cycleViewMode() }) {
 							Icon(
-								if (vm.viewMode == ViewMode.List) Icons.Rounded.GridView else Icons.Rounded.ViewList,
+								when (vm.viewMode) {
+									ViewMode.Cards -> Icons.Rounded.ViewAgenda
+									ViewMode.Compact -> Icons.Rounded.ViewHeadline
+									ViewMode.Grid -> Icons.Rounded.GridView
+								},
 								contentDescription = "切换视图",
 								tint = MaterialTheme.colorScheme.primary,
 							)
 						}
 					}
+					// 新建文件夹/相册按钮
+					IconButton(onClick = { showCreateDialog = true }) {
+						Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建", tint = MaterialTheme.colorScheme.primary)
+					}
 					IconButton(onClick = { vm.refresh() }) {
 						Icon(Icons.Rounded.Refresh, contentDescription = "刷新")
-					}
-					Box {
-						IconButton(onClick = { overflow = true }) {
-							Icon(Icons.Rounded.MoreVert, contentDescription = "更多")
-						}
-						DropdownMenu(expanded = overflow, onDismissRequest = { overflow = false }) {
-							DropdownMenuItem(
-								text = { Text("P2P 打洞与网络诊断") },
-								leadingIcon = { Icon(Icons.Rounded.FlashOn, null) },
-								onClick = { overflow = false; showHolePunchDialog = true },
-							)
-							DropdownMenuItem(
-								text = { Text("新建文件夹") },
-								leadingIcon = { Icon(Icons.Rounded.CreateNewFolder, null) },
-								onClick = { overflow = false; creating = true },
-							)
-							DropdownMenuItem(
-								text = { Text("服务器设置") },
-								leadingIcon = { Icon(Icons.Rounded.Settings, null) },
-								onClick = { overflow = false; onOpenSettings() },
-							)
-						}
 					}
 				},
 				colors = TopAppBarDefaults.topAppBarColors(
@@ -258,7 +254,7 @@ fun BrowserScreen(
 					},
 				)
 			} else {
-				// 阿里云盘精髓：四大金刚底部导航
+				// 类似夸克/主流网盘四大 Tab 导航
 				NavigationBar(
 					containerColor = MaterialTheme.colorScheme.surface,
 					tonalElevation = 8.dp,
@@ -335,19 +331,18 @@ fun BrowserScreen(
 				)
 			}
 
-			// 四大核心视图切换
 			when (vm.currentTab) {
 				MainTab.Files -> FilesTabContent(
 					vm = vm,
 					onOpenImage = onOpenImage,
 					onOpenVideo = onOpenVideo,
-					onRenaming = { renaming = it },
-					onDeleting = { deleting = it },
+					onActionSheet = { activeEntryForAction = it },
 				)
 				MainTab.Photos -> PhotosTabContent(
 					groups = vm.photoTimelineGroups,
 					thumbUrlFor = { vm.urlFor(it) },
 					onOpenImage = onOpenImage,
+					onCreateAlbum = { showCreateDialog = true },
 				)
 				MainTab.Media -> MediaTabContent(
 					videos = vm.allVideos,
@@ -366,7 +361,88 @@ fun BrowserScreen(
 		}
 	}
 
-	// P2P 打洞与链路详情弹窗
+	// 统一文件操作抽屉 Action BottomSheet
+	activeEntryForAction?.let { entry ->
+		ActionBottomSheet(
+			entry = entry,
+			onDownload = {
+				activeEntryForAction = null
+				vm.download(context, entry) { ok, msg ->
+					Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+				}
+			},
+			onMove = {
+				activeEntryForAction = null
+				activeEntryForMove = entry
+			},
+			onRename = {
+				activeEntryForAction = null
+				activeEntryForRename = entry
+			},
+			onDelete = {
+				activeEntryForAction = null
+				activeEntryForDelete = entry
+			},
+			onDismiss = { activeEntryForAction = null },
+		)
+	}
+
+	// 移动文件目标文件夹选择抽屉
+	activeEntryForMove?.let { entry ->
+		MoveFolderSheet(
+			entry = entry,
+			folderPaths = vm.allFolderPaths,
+			onConfirm = { targetDir ->
+				activeEntryForMove = null
+				vm.move(entry, targetDir)
+				Toast.makeText(context, "已移动到 /${targetDir.ifEmpty { "根目录" }}", Toast.LENGTH_SHORT).show()
+			},
+			onDismiss = { activeEntryForMove = null },
+		)
+	}
+
+	// 重命名对话框
+	activeEntryForRename?.let { entry ->
+		TextInputDialog(
+			title = "重命名",
+			initial = entry.name,
+			confirmText = "保存",
+			onDismiss = { activeEntryForRename = null },
+			onConfirm = { name ->
+				activeEntryForRename = null
+				if (name.isNotBlank() && name != entry.name) vm.rename(entry, name.trim())
+			},
+		)
+	}
+
+	// 新建文件夹/相册对话框
+	if (showCreateDialog) {
+		CreateFolderDialog(
+			onConfirm = { name, isAlbum ->
+				showCreateDialog = false
+				if (name.isNotBlank()) vm.mkdir(name.trim(), isAlbum)
+			},
+			onDismiss = { showCreateDialog = false },
+		)
+	}
+
+	// 删除确认对话框
+	activeEntryForDelete?.let { entry ->
+		AlertDialog(
+			onDismissRequest = { activeEntryForDelete = null },
+			title = { Text("删除确认", fontWeight = FontWeight.Bold) },
+			text = { Text("确定从网盘删除「${entry.name}」？此操作不可撤销。") },
+			confirmButton = {
+				TextButton(onClick = {
+					activeEntryForDelete = null
+					vm.delete(entry)
+				}) { Text("彻底删除", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
+			},
+			dismissButton = { TextButton(onClick = { activeEntryForDelete = null }) { Text("取消") } },
+		)
+	}
+
+	// P2P 打洞控制台弹窗
 	if (showHolePunchDialog) {
 		HolePunchDialog(
 			routeInfo = routeInfo,
@@ -379,47 +455,6 @@ fun BrowserScreen(
 			onDismiss = { showHolePunchDialog = false },
 		)
 	}
-
-	renaming?.let { entry ->
-		TextInputDialog(
-			title = "重命名",
-			initial = entry.name,
-			confirmText = "保存",
-			onDismiss = { renaming = null },
-			onConfirm = { name ->
-				renaming = null
-				if (name.isNotBlank() && name != entry.name) vm.rename(entry, name.trim())
-			},
-		)
-	}
-
-	if (creating) {
-		TextInputDialog(
-			title = "新建文件夹",
-			initial = "",
-			confirmText = "创建",
-			onDismiss = { creating = false },
-			onConfirm = { name ->
-				creating = false
-				if (name.isNotBlank()) vm.mkdir(name.trim())
-			},
-		)
-	}
-
-	deleting?.let { entry ->
-		AlertDialog(
-			onDismissRequest = { deleting = null },
-			title = { Text("删除确认", fontWeight = FontWeight.Bold) },
-			text = { Text("确定删除「${entry.name}」？此操作不可撤销。") },
-			confirmButton = {
-				TextButton(onClick = {
-					deleting = null
-					vm.delete(entry)
-				}) { Text("彻底删除", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
-			},
-			dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } },
-		)
-	}
 }
 
 /** 顶部【文件】页面主体内容 */
@@ -429,11 +464,10 @@ private fun FilesTabContent(
 	vm: BrowserViewModel,
 	onOpenImage: (DavEntry) -> Unit,
 	onOpenVideo: (DavEntry) -> Unit,
-	onRenaming: (DavEntry) -> Unit,
-	onDeleting: (DavEntry) -> Unit,
+	onActionSheet: (DavEntry) -> Unit,
 ) {
 	Column(Modifier.fillMaxSize()) {
-		// 阿里云盘风格搜索胶囊
+		// 夸克网盘风格搜索胶囊
 		SearchCapsuleBar(
 			query = vm.searchQuery,
 			onQueryChange = { vm.searchQuery = it },
@@ -441,7 +475,7 @@ private fun FilesTabContent(
 
 		if (!vm.isRoot) CrumbBar(vm.path) { vm.open(it) }
 
-		// 阿里云盘风格横向分类筛选胶囊
+		// 解决点照片没反应：选图片精准呈现照片，排除无关普通文件夹
 		CategoryFilterRow(
 			selected = vm.selectedCategory,
 			onSelect = { vm.selectCategory(it) },
@@ -478,7 +512,26 @@ private fun FilesTabContent(
 								entry.isVideo -> onOpenVideo(entry)
 							}
 						},
-						onMenu = { onDeleting(entry) },
+						onMenu = { onActionSheet(entry) },
+					)
+				}
+			}
+			vm.viewMode == ViewMode.Compact -> LazyColumn(
+				contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+				modifier = Modifier.fillMaxSize(),
+			) {
+				items(list, key = { it.path }) { entry ->
+					CompactEntryRow(
+						entry = entry,
+						thumbUrl = if (entry.isImage) vm.urlFor(entry.path) else null,
+						onClick = {
+							when {
+								entry.isDir -> vm.open(entry.path)
+								entry.isImage -> onOpenImage(entry)
+								entry.isVideo -> onOpenVideo(entry)
+							}
+						},
+						onMenu = { onActionSheet(entry) },
 					)
 				}
 			}
@@ -498,8 +551,8 @@ private fun FilesTabContent(
 								entry.isVideo -> onOpenVideo(entry)
 							}
 						},
-						onLongClick = { if (!entry.isDir) onRenaming(entry) },
-						onMenu = { onDeleting(entry) },
+						onLongClick = { onActionSheet(entry) },
+						onMenu = { onActionSheet(entry) },
 					)
 				}
 			}
@@ -507,19 +560,320 @@ private fun FilesTabContent(
 	}
 }
 
-/** 阿里云盘【相册】精髓：3 列紧凑无缝网格时光轴照片墙 */
+/** 统一文件操作抽屉 Action BottomSheet */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ActionBottomSheet(
+	entry: DavEntry,
+	onDownload: () -> Unit,
+	onMove: () -> Unit,
+	onRename: () -> Unit,
+	onDelete: () -> Unit,
+	onDismiss: () -> Unit,
+) {
+	val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+	val (bgGradient, iconColor, icon) = fileVisuals(entry)
+
+	ModalBottomSheet(
+		onDismissRequest = onDismiss,
+		sheetState = sheetState,
+		containerColor = MaterialTheme.colorScheme.surface,
+		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+	) {
+		Column(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(horizontal = 20.dp, vertical = 10.dp),
+		) {
+			// 顶部文件卡片
+			Row(
+				verticalAlignment = Alignment.CenterVertically,
+				modifier = Modifier.padding(bottom = 16.dp),
+			) {
+				Box(
+					modifier = Modifier
+						.size(46.dp)
+						.clip(RoundedCornerShape(12.dp))
+						.background(bgGradient),
+					contentAlignment = Alignment.Center,
+				) {
+					Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(24.dp))
+				}
+				Spacer(Modifier.width(14.dp))
+				Column(Modifier.weight(1f)) {
+					Text(
+						text = entry.name,
+						style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
+					Spacer(Modifier.height(2.dp))
+					Text(
+						text = if (entry.isDir) "文件夹" else subtitleOf(entry),
+						style = MaterialTheme.typography.bodySmall,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+					)
+				}
+			}
+
+			HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+			// 核心金刚位操作按钮行（4个操作）
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(vertical = 18.dp),
+				horizontalArrangement = Arrangement.SpaceAround,
+			) {
+				ActionButtonItem(
+					icon = Icons.Rounded.Download,
+					label = if (entry.isImage || entry.isVideo) "存入相册" else "下载文件",
+					onClick = onDownload,
+				)
+				ActionButtonItem(
+					icon = Icons.Rounded.DriveFileMove,
+					label = "移动文件",
+					onClick = onMove,
+				)
+				ActionButtonItem(
+					icon = Icons.Rounded.DriveFileRenameOutline,
+					label = "重命名",
+					onClick = onRename,
+				)
+				ActionButtonItem(
+					icon = Icons.Rounded.Delete,
+					label = "删除文件",
+					tint = MaterialTheme.colorScheme.error,
+					onClick = onDelete,
+				)
+			}
+
+			// 详细属性展示
+			Surface(
+				color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+				shape = RoundedCornerShape(12.dp),
+				modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
+			) {
+				Column(Modifier.padding(12.dp)) {
+					Text("📁 存储路径: /${entry.path}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+					Spacer(Modifier.height(4.dp))
+					Text("🏷️ 文件类型: ${if (entry.isDir) "文件夹" else entry.ext.uppercase(Locale.ROOT)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+				}
+			}
+		}
+	}
+}
+
+@Composable
+private fun ActionButtonItem(
+	icon: ImageVector,
+	label: String,
+	tint: Color = MaterialTheme.colorScheme.onSurface,
+	onClick: () -> Unit,
+) {
+	Column(
+		horizontalAlignment = Alignment.CenterHorizontally,
+		modifier = Modifier
+			.clip(RoundedCornerShape(12.dp))
+			.clickable { onClick() }
+			.padding(8.dp),
+	) {
+		Box(
+			modifier = Modifier
+				.size(48.dp)
+				.clip(RoundedCornerShape(14.dp))
+				.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+			contentAlignment = Alignment.Center,
+		) {
+			Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(24.dp))
+		}
+		Spacer(Modifier.height(6.dp))
+		Text(label, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium), color = tint)
+	}
+}
+
+/** 移动文件选择目标文件夹抽屉 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MoveFolderSheet(
+	entry: DavEntry,
+	folderPaths: List<String>,
+	onConfirm: (String) -> Unit,
+	onDismiss: () -> Unit,
+) {
+	val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+	ModalBottomSheet(
+		onDismissRequest = onDismiss,
+		sheetState = sheetState,
+		containerColor = MaterialTheme.colorScheme.surface,
+		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+	) {
+		Column(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(horizontal = 20.dp, vertical = 10.dp),
+		) {
+			Text("移动「${entry.name}」到…", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+			Spacer(Modifier.height(10.dp))
+			LazyColumn(
+				modifier = Modifier.height(260.dp),
+			) {
+				items(folderPaths) { fPath ->
+					val displayName = if (fPath.isEmpty()) "根目录 (/)" else "/$fPath"
+					Surface(
+						color = MaterialTheme.colorScheme.surface,
+						shape = RoundedCornerShape(10.dp),
+						modifier = Modifier
+							.fillMaxWidth()
+							.padding(vertical = 4.dp)
+							.clip(RoundedCornerShape(10.dp))
+							.clickable { onConfirm(fPath) },
+					) {
+						Row(
+							modifier = Modifier.padding(12.dp),
+							verticalAlignment = Alignment.CenterVertically,
+						) {
+							Icon(Icons.Rounded.Folder, null, tint = Color(0xFFF57F17))
+							Spacer(Modifier.width(10.dp))
+							Text(displayName, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+/** 新建文件夹/新建相册弹窗 */
+@Composable
+private fun CreateFolderDialog(
+	onConfirm: (String, Boolean) -> Unit,
+	onDismiss: () -> Unit,
+) {
+	var name by remember { mutableStateOf("") }
+	var isAlbum by remember { mutableStateOf(false) }
+
+	AlertDialog(
+		onDismissRequest = onDismiss,
+		title = { Text("新建文件夹 / 相册", fontWeight = FontWeight.Bold) },
+		text = {
+			Column {
+				OutlinedTextField(
+					value = name,
+					onValueChange = { name = it },
+					singleLine = true,
+					label = { Text("名称") },
+					placeholder = { Text(if (isAlbum) "例如: 2026家庭相册" else "例如: 学习资料") },
+					modifier = Modifier.fillMaxWidth(),
+				)
+				Spacer(Modifier.height(14.dp))
+				Row(
+					modifier = Modifier.fillMaxWidth(),
+					horizontalArrangement = Arrangement.spacedBy(10.dp),
+				) {
+					Surface(
+						color = if (!isAlbum) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+						shape = RoundedCornerShape(12.dp),
+						border = if (!isAlbum) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+						modifier = Modifier
+							.weight(1f)
+							.clip(RoundedCornerShape(12.dp))
+							.clickable { isAlbum = false },
+					) {
+						Column(
+							modifier = Modifier.padding(12.dp),
+							horizontalAlignment = Alignment.CenterHorizontally,
+						) {
+							Icon(Icons.Rounded.Folder, null, tint = Color(0xFFF57F17), modifier = Modifier.size(28.dp))
+							Spacer(Modifier.height(4.dp))
+							Text("普通文件夹", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+						}
+					}
+					Surface(
+						color = if (isAlbum) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+						shape = RoundedCornerShape(12.dp),
+						border = if (isAlbum) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+						modifier = Modifier
+							.weight(1f)
+							.clip(RoundedCornerShape(12.dp))
+							.clickable { isAlbum = true },
+					) {
+						Column(
+							modifier = Modifier.padding(12.dp),
+							horizontalAlignment = Alignment.CenterHorizontally,
+						) {
+							Icon(Icons.Rounded.PhotoCamera, null, tint = Color(0xFFD81E06), modifier = Modifier.size(28.dp))
+							Spacer(Modifier.height(4.dp))
+							Text("专属相册", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+						}
+					}
+				}
+			}
+		},
+		confirmButton = {
+			TextButton(onClick = { onConfirm(name, isAlbum) }) {
+				Text("立即创建", fontWeight = FontWeight.Bold)
+			}
+		},
+		dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+	)
+}
+
+/** 紧凑单行视图列表项 */
+@Composable
+private fun CompactEntryRow(
+	entry: DavEntry,
+	thumbUrl: String?,
+	onClick: () -> Unit,
+	onMenu: () -> Unit,
+) {
+	val (_, iconColor, icon) = fileVisuals(entry)
+	Surface(
+		color = MaterialTheme.colorScheme.surface,
+		modifier = Modifier
+			.fillMaxWidth()
+			.clickable { onClick() }
+			.padding(vertical = 2.dp),
+	) {
+		Row(
+			modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+			verticalAlignment = Alignment.CenterVertically,
+		) {
+			Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(20.dp))
+			Spacer(Modifier.width(10.dp))
+			Text(
+				text = entry.name,
+				style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+				maxLines = 1,
+				overflow = TextOverflow.Ellipsis,
+				modifier = Modifier.weight(1f),
+			)
+			Text(
+				text = if (entry.isDir) "文件夹" else subtitleOf(entry),
+				style = MaterialTheme.typography.labelSmall,
+				color = MaterialTheme.colorScheme.outline,
+			)
+			IconButton(onClick = onMenu, modifier = Modifier.size(28.dp)) {
+				Icon(Icons.Rounded.MoreVert, contentDescription = "更多", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(16.dp))
+			}
+		}
+	}
+}
+
+/** 3 列相册瀑布流时光轴 */
 @Composable
 private fun PhotosTabContent(
 	groups: List<TimelineGroup>,
 	thumbUrlFor: (String) -> String?,
 	onOpenImage: (DavEntry) -> Unit,
+	onCreateAlbum: () -> Unit,
 ) {
 	if (groups.isEmpty()) {
 		EmptyState(
 			title = "暂未发现照片",
 			detail = "网盘内的照片会自动按时间轴汇总在这里，支持全屏预览与缩放",
-			action = null,
-			onAction = {},
+			action = "新建相册",
+			onAction = onCreateAlbum,
 		)
 		return
 	}
@@ -573,7 +927,7 @@ private fun PhotosTabContent(
 	}
 }
 
-/** 阿里云盘【影音】精髓：宽幅 16:9 质感视频海报流卡片 */
+/** 影音专区 */
 @Composable
 private fun MediaTabContent(
 	videos: List<DavEntry>,
@@ -604,7 +958,6 @@ private fun MediaTabContent(
 					.clickable { onOpenVideo(video) },
 			) {
 				Column {
-					// 16:9 视频封面海报区
 					Box(
 						modifier = Modifier
 							.fillMaxWidth()
@@ -622,7 +975,6 @@ private fun MediaTabContent(
 							tint = Color.White.copy(alpha = 0.85f),
 							modifier = Modifier.size(56.dp),
 						)
-						// 右下角格式标签
 						Surface(
 							color = Color.Black.copy(alpha = 0.6f),
 							shape = RoundedCornerShape(6.dp),
@@ -638,7 +990,6 @@ private fun MediaTabContent(
 							)
 						}
 					}
-					// 视频信息
 					Row(
 						modifier = Modifier
 							.fillMaxWidth()
@@ -673,7 +1024,7 @@ private fun MediaTabContent(
 	}
 }
 
-/** 【我的与传输】页面：展示链路状态、主动打洞按钮与设置 */
+/** 【我的与传输】页面 */
 @Composable
 private fun MeTabContent(
 	routeInfo: RouteInfo,
@@ -686,7 +1037,6 @@ private fun MeTabContent(
 			.fillMaxSize()
 			.padding(16.dp),
 	) {
-		// 链路卡片
 		Card(
 			colors = CardDefaults.cardColors(
 				containerColor = if (routeInfo.isDirect) Color(0xFFE8F5E9) else Color(0xFFFFF3E0),
@@ -743,7 +1093,6 @@ private fun MeTabContent(
 
 		Spacer(Modifier.height(16.dp))
 
-		// 设置入口卡片
 		Card(
 			colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
 			shape = RoundedCornerShape(16.dp),
@@ -767,7 +1116,6 @@ private fun MeTabContent(
 
 		Spacer(Modifier.height(16.dp))
 
-		// 传输队列预览
 		Text("传输任务 (${tasks.size})", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
 		Spacer(Modifier.height(8.dp))
 		if (tasks.isEmpty()) {
@@ -791,7 +1139,7 @@ private fun MeTabContent(
 	}
 }
 
-/** P2P 打洞与链路详情弹窗 */
+/** P2P 打洞控制台弹窗 */
 @Composable
 private fun HolePunchDialog(
 	routeInfo: RouteInfo,
@@ -841,7 +1189,7 @@ private fun HolePunchDialog(
 	)
 }
 
-/** 现代网盘网络状态药丸徽章（直连高亮绿 / 中继橙色） */
+/** 网络状态药丸徽章 */
 @Composable
 private fun NetworkPill(
 	routeInfo: RouteInfo,
@@ -885,7 +1233,7 @@ private fun NetworkPill(
 	}
 }
 
-/** 阿里云盘风格搜索胶囊输入框 */
+/** 夸克网盘风格搜索胶囊输入框 */
 @Composable
 private fun SearchCapsuleBar(
 	query: String,
@@ -906,7 +1254,7 @@ private fun SearchCapsuleBar(
 			Spacer(Modifier.width(8.dp))
 			Box(Modifier.weight(1f)) {
 				if (query.isEmpty()) {
-					Text("搜索网盘文件…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+					Text("搜索网盘文件、图片或视频…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
 				}
 				androidx.compose.foundation.text.BasicTextField(
 					value = query,
@@ -965,7 +1313,7 @@ private fun CategoryFilterRow(
 	}
 }
 
-/** 阿里云盘质感单行卡片 */
+/** 详细卡片视图项 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun EntryCard(
@@ -1022,7 +1370,7 @@ private fun EntryCard(
 				)
 				Spacer(Modifier.height(2.dp))
 				Text(
-					text = if (entry.isDir) "文件夹" else subtitleOf(entry),
+					text = if (entry.isDir) (if (entry.isAlbum) "专属相册" else "文件夹") else subtitleOf(entry),
 					style = MaterialTheme.typography.bodySmall,
 					color = MaterialTheme.colorScheme.onSurfaceVariant,
 					maxLines = 1,
@@ -1040,7 +1388,7 @@ private fun EntryCard(
 	}
 }
 
-/** 宫格大卡片 */
+/** 2列宫格大卡片 */
 @Composable
 private fun GridEntryCard(
 	entry: DavEntry,
@@ -1090,7 +1438,7 @@ private fun GridEntryCard(
 			)
 			Spacer(Modifier.height(2.dp))
 			Text(
-				text = if (entry.isDir) "文件夹" else subtitleOf(entry),
+				text = if (entry.isDir) (if (entry.isAlbum) "专属相册" else "文件夹") else subtitleOf(entry),
 				style = MaterialTheme.typography.labelSmall,
 				color = MaterialTheme.colorScheme.onSurfaceVariant,
 			)
@@ -1098,8 +1446,13 @@ private fun GridEntryCard(
 	}
 }
 
-/** 阿里云盘风格彩色文件类型视觉定义 */
+/** 拟物彩色文件类型视觉定义 */
 private fun fileVisuals(entry: DavEntry): Triple<Brush, Color, ImageVector> = when {
+	entry.isAlbum -> Triple(
+		Brush.linearGradient(listOf(Color(0xFFFFE8EC), Color(0xFFFFB3C2))),
+		Color(0xFFD81E06),
+		Icons.Rounded.PhotoCamera,
+	)
 	entry.isDir -> Triple(
 		Brush.linearGradient(listOf(Color(0xFFFFF9C4), Color(0xFFFFE082))),
 		Color(0xFFF57F17),

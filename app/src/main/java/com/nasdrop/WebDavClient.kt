@@ -35,6 +35,7 @@ data class DavEntry(
 	val modified: Long,
 ) {
 	val ext: String get() = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+	val isAlbum: Boolean get() = isDir && (name.contains("相册") || name.contains("Photo", ignoreCase = true) || name.contains("Album", ignoreCase = true))
 	val isImage: Boolean get() = !isDir && ext in IMAGES
 	val isVideo: Boolean get() = !isDir && ext in VIDEOS
 	val isDocument: Boolean get() = !isDir && ext in DOCUMENTS
@@ -104,6 +105,30 @@ class WebDavClient(private val base: HttpUrl, private val http: OkHttpClient) {
 			.build()
 		http.newCall(req).execute().use {
 			if (!it.isSuccessful) throw DavException(it.code, "移动失败")
+		}
+	}
+
+	/**
+	 * 下载指定路径的文件并写入本地目标输出流。
+	 */
+	fun download(path: String, output: java.io.OutputStream, onProgress: (Long, Long) -> Unit) {
+		val req = Request.Builder().url(urlFor(path)).get().build()
+		http.newCall(req).execute().use { resp ->
+			if (!resp.isSuccessful) throw DavException(resp.code, "下载失败")
+			val body = resp.body ?: throw DavException(resp.code, "响应体为空")
+			val total = body.contentLength()
+			body.byteStream().use { ins ->
+				val buf = ByteArray(64 * 1024)
+				var sent = 0L
+				while (true) {
+					val n = ins.read(buf)
+					if (n <= 0) break
+					output.write(buf, 0, n)
+					sent += n
+					onProgress(sent, total)
+				}
+				output.flush()
+			}
 		}
 	}
 

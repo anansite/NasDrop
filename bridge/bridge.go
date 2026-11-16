@@ -31,6 +31,7 @@ import (
 	// 那个包的注册文件构建标签是 (linux && !android) || (android && !cgo)，
 	// 而 gomobile bind 是 android + cgo，导入它等于什么都没做（.so 里不会有任何
 	// androidbin 符号）。网卡枚举的绕行方案在本包的 interfaces.go 里自己注册。
+	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 )
 
@@ -354,7 +355,7 @@ func PunchHole() string {
 	for _, p := range st.Peer {
 		if len(p.TailscaleIPs) > 0 {
 			ip := p.TailscaleIPs[0]
-			res, err := cl.Ping(ctx, ip)
+			res, err := cl.Ping(ctx, ip, tailcfg.PingDisco)
 			if err != nil {
 				return fmt.Sprintf("打洞探测失败: %v", err)
 			}

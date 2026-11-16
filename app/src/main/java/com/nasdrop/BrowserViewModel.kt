@@ -1,5 +1,10 @@
 package com.nasdrop
 
+import android.content.ContentValues
+import android.content.Context
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -10,6 +15,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -24,8 +31,9 @@ enum class MainTab {
 }
 
 enum class ViewMode {
-	List,
-	Grid,
+	Cards,   // 详细卡片视图
+	Compact, // 极简紧凑列表
+	Grid,    // 2列宫格大图
 }
 
 data class TimelineGroup(
@@ -58,19 +66,23 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var selectedCategory by mutableStateOf(FileCategory.All)
 		private set
 
-	/** 文件视图模式：列表 vs 宫格 */
-	var viewMode by mutableStateOf(ViewMode.List)
+	/** 视图模式：详细卡片 vs 紧凑列表 vs 宫格大图 */
+	var viewMode by mutableStateOf(ViewMode.Cards)
 		private set
 
 	/** 全局搜索关键词 */
 	var searchQuery by mutableStateOf("")
 
-	/** 全局聚合照片池（跨目录汇总所有照片，类似阿里云盘相册） */
+	/** 全局聚合照片池（跨目录汇总所有照片，类似主流网盘相册） */
 	var allPhotos by mutableStateOf<List<DavEntry>>(emptyList())
 		private set
 
-	/** 全局聚合视频池（跨目录汇总所有视频，类似阿里云盘影音） */
+	/** 全局聚合视频池（跨目录汇总所有视频，类似主流网盘影音） */
 	var allVideos by mutableStateOf<List<DavEntry>>(emptyList())
+		private set
+
+	/** 当前已发现的所有文件夹相对路径集合（供文件移动对话框选择） */
+	var allFolderPaths by mutableStateOf<List<String>>(listOf(""))
 		private set
 
 	val routeInfo: StateFlow<RouteInfo> = app.repo.routeInfo
@@ -125,8 +137,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		selectedCategory = cat
 	}
 
-	fun toggleViewMode() {
-		viewMode = if (viewMode == ViewMode.List) ViewMode.Grid else ViewMode.List
+	fun cycleViewMode() {
+		viewMode = when (viewMode) {
+			ViewMode.Cards -> ViewMode.Compact
+			ViewMode.Compact -> ViewMode.Grid
+			ViewMode.Grid -> ViewMode.Cards
+		}
 	}
 
 	/** 触发 NAT 打洞直连 */
@@ -157,8 +173,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					entries = fresh
 					path = target
 				}
-				// 异步更新全局媒体索引
 				collectMediaFrom(fresh)
+				updateFolderPaths(fresh)
 			} catch (t: Throwable) {
 				if (cached == null) {
 					error = t.message ?: t.javaClass.simpleName
@@ -182,12 +198,79 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
-	fun mkdir(name: String) = mutate { it.mkcol(join(path, name)) }
+	/** 新建普通子文件夹或专属相册 */
+	fun mkdir(name: String, isAlbum: Boolean = false) {
+		val finalName = if (isAlbum && !name.contains("相册")) "$name 相册" else name
+		mutate { it.mkcol(join(path, finalName)) }
+	}
 
 	fun delete(entry: DavEntry) = mutate { it.delete(entry.path, entry.isDir) }
 
 	fun rename(entry: DavEntry, newName: String) = mutate {
 		it.move(entry.path, join(entry.path.substringBeforeLast('/', ""), newName))
+	}
+
+	/** 移动文件到目标文件夹 */
+	fun move(entry: DavEntry, targetDir: String) = mutate {
+		val dest = join(targetDir, entry.name)
+		it.move(entry.path, dest)
+	}
+
+	/**
+	 * 将网盘文件下载并保存到本地（相册/Download目录）
+	 */
+	fun download(context: Context, entry: DavEntry, onResult: (Boolean, String) -> Unit) {
+		viewModelScope.launch {
+			withContext(Dispatchers.IO) {
+				try {
+					val c = client ?: app.repo.client(app.prefs.current()).also { client = it }
+					val resolver = context.contentResolver
+
+					if (entry.isImage || entry.isVideo) {
+						// 存入系统相册
+						val collection = if (entry.isImage) {
+							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+								MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+							} else {
+								MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+							}
+						} else {
+							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+								MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+							} else {
+								MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+							}
+						}
+
+						val values = ContentValues().apply {
+							put(MediaStore.MediaColumns.DISPLAY_NAME, entry.name)
+							put(MediaStore.MediaColumns.MIME_TYPE, if (entry.isImage) "image/*" else "video/*")
+							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+								put(MediaStore.MediaColumns.RELATIVE_PATH, if (entry.isImage) "Pictures/NasDrop" else "Movies/NasDrop")
+							}
+						}
+
+						val uri = resolver.insert(collection, values)
+							?: throw IllegalStateException("无法创建媒体存储记录")
+						resolver.openOutputStream(uri)?.use { os ->
+							c.download(entry.path, os) { _, _ -> }
+						}
+						withContext(Dispatchers.Main) { onResult(true, "已成功保存到手机相册") }
+					} else {
+						// 存入外部下载目录
+						val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+						val subDir = File(dir, "NasDrop").apply { mkdirs() }
+						val destFile = File(subDir, entry.name)
+						FileOutputStream(destFile).use { fos ->
+							c.download(entry.path, fos) { _, _ -> }
+						}
+						withContext(Dispatchers.Main) { onResult(true, "已下载到: Download/NasDrop/${entry.name}") }
+					}
+				} catch (t: Throwable) {
+					withContext(Dispatchers.Main) { onResult(false, "下载失败: ${t.message}") }
+				}
+			}
+		}
 	}
 
 	fun rememberDir(dir: String) {
@@ -248,7 +331,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		allVideos = vids
 	}
 
-	/** 跨目录预扫描，为相册和影音提供全局聚合数据 */
+	private fun updateFolderPaths(items: List<DavEntry>) {
+		val dirs = items.filter { it.isDir }.map { it.path }
+		allFolderPaths = (allFolderPaths + dirs).distinct().sorted()
+	}
+
 	private suspend fun scanGlobalMedia() {
 		withContext(Dispatchers.IO) {
 			try {
@@ -256,11 +343,13 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				val c = app.repo.client(s)
 				val rootEntries = c.list("")
 				collectMediaFrom(rootEntries)
+				updateFolderPaths(rootEntries)
 				for (dir in rootEntries.filter { it.isDir }) {
 					runCatching {
 						val sub = c.list(dir.path)
 						dirCache[dir.path] = sub
 						collectMediaFrom(sub)
+						updateFolderPaths(sub)
 					}
 				}
 			} catch (_: Exception) {}
