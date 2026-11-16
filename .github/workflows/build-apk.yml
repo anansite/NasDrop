@@ -63,7 +63,7 @@ jobs:
       - name: 编译 Tailscale 桥（gomobile → AAR）
         run: |
           chmod +x build-aar.sh
-          ABIS=android/arm64,android/arm ./build-aar.sh
+          ABIS=android/arm64,android/arm,android/amd64 ./build-aar.sh
         env:
           GOFLAGS: -mod=mod
 

@@ -44,9 +44,23 @@ object TsBridge {
 	private fun load(): Class<*>? {
 		if (!probed) {
 			probed = true
-			cls = runCatching { Class.forName(CLASS_NAME) }.getOrNull()
+			// 注意：Class.forName 会触发静态初始化，而 gomobile 生成的类在静态块里
+			// System.loadLibrary("gojni")。所以这里失败可能是“类不存在”，也可能是
+			// “so 加载失败”（例如装在没有对应 ABI 的设备/模拟器上）。
+			// 早期只打一句“未找到”，把两种原因混在一起，排查时毫无信息量。
+			var err: Throwable? = null
+			cls = runCatching { Class.forName(CLASS_NAME) }
+				.onFailure { err = it }
+				.getOrNull()
 			if (cls == null) {
-				Log.i(TAG, "未找到 $CLASS_NAME：本次构建没有内嵌 Tailscale，走直连模式")
+				val reason = when (err) {
+					is ClassNotFoundException -> "包里没有 $CLASS_NAME（本次构建未内嵌 Tailscale 桥）"
+					is UnsatisfiedLinkError -> "找不到 libgojni.so，设备 ABI 与包内库不匹配（abi=${android.os.Build.SUPPORTED_ABIS.joinToString()}）"
+					else -> "${err?.javaClass?.simpleName ?: "未知错误"}: ${err?.message}"
+				}
+				Log.w(TAG, "内嵌 Tailscale 桥不可用 → 直连模式。原因：$reason")
+			} else {
+				Log.i(TAG, "内嵌 Tailscale 桥已加载（abi=${android.os.Build.SUPPORTED_ABIS.joinToString()}）")
 			}
 		}
 		return cls
