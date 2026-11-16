@@ -10,7 +10,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CloudDownload
-import androidx.compose.material.icons.rounded.RocketLaunch
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -62,7 +61,7 @@ fun UpdateDialog(
 					contentAlignment = Alignment.Center,
 				) {
 					Icon(
-						imageVector = Icons.Rounded.RocketLaunch,
+						imageVector = Icons.Rounded.CloudDownload,
 						contentDescription = null,
 						tint = Color.White,
 						modifier = Modifier.size(28.dp),

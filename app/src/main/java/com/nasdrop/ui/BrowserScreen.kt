@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -78,6 +79,7 @@ import androidx.compose.material.icons.rounded.ViewHeadline
 import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -542,7 +544,7 @@ private fun CommercialTopBar(
 					IconButton(onClick = { vm.openUpdateDialog() }) {
 						Box {
 							Icon(
-								imageVector = Icons.Rounded.RocketLaunch,
+								imageVector = Icons.Rounded.CloudDownload,
 								contentDescription = "发现新版本",
 								tint = Color(0xFF2A72F6),
 							)
@@ -1841,7 +1843,7 @@ private fun NetworkIntelligenceConsole(
 									.background(Color(0xFF2A72F6)),
 								contentAlignment = Alignment.Center,
 							) {
-								Icon(Icons.Rounded.PhoneAndroid, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+								Icon(Icons.Rounded.Smartphone, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
 							}
 							Spacer(modifier = Modifier.height(6.dp))
 							Text("我的手机", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
@@ -1889,7 +1891,7 @@ private fun NetworkIntelligenceConsole(
 									.background(Color(0xFF00B5A6)),
 								contentAlignment = Alignment.Center,
 							) {
-								Icon(Icons.Rounded.Dns, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+								Icon(Icons.Rounded.Storage, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
 							}
 							Spacer(modifier = Modifier.height(6.dp))
 							Text("私有 NAS", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)

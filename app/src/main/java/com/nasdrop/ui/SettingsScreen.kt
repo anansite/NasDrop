@@ -162,7 +162,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 							contentAlignment = Alignment.Center,
 						) {
 							Icon(
-								imageVector = Icons.Rounded.RocketLaunch,
+								imageVector = Icons.Rounded.CloudDownload,
 								contentDescription = null,
 								tint = Color.White,
 								modifier = Modifier.size(20.dp),
