@@ -11,8 +11,10 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -21,6 +23,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 enum class MainTab {
@@ -37,26 +40,59 @@ enum class ViewMode {
 }
 
 data class TimelineGroup(
-	val title: String,
+	val dateTitle: String,
+	val count: Int,
 	val items: List<DavEntry>,
 )
 
-class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
+enum class TransferStatus {
+	QUEUED,
+	RUNNING,
+	PAUSED,
+	COMPLETED,
+	FAILED,
+}
 
+data class TransferTask(
+	val id: String = UUID.randomUUID().toString(),
+	val name: String,
+	val path: String,
+	val isUpload: Boolean = false,
+	var totalBytes: Long = 0L,
+	var sentBytes: Long = 0L,
+	var speedBytesPerSec: Long = 0L,
+	var status: TransferStatus = TransferStatus.QUEUED,
+	var error: String? = null,
+	var lastUpdated: Long = System.currentTimeMillis(),
+) {
+	val progress: Float
+		get() = if (totalBytes > 0) (sentBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f) else 0f
+
+	val speedStr: String
+		get() {
+			if (speedBytesPerSec <= 0) return "--"
+			val mb = speedBytesPerSec / (1024.0 * 1024.0)
+			return if (mb >= 1.0) String.format(Locale.ROOT, "%.1f MB/s", mb)
+			else String.format(Locale.ROOT, "%.0f KB/s", speedBytesPerSec / 1024.0)
+		}
+}
+
+class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var currentTab by mutableStateOf(MainTab.Files)
 
-	var settings by mutableStateOf<Settings?>(null)
-		private set
-	var entries by mutableStateOf<List<DavEntry>>(emptyList())
-		private set
 	var path by mutableStateOf("")
 		private set
+
+	var entries by mutableStateOf<List<DavEntry>>(emptyList())
+		private set
+
 	var loading by mutableStateOf(false)
 		private set
+
 	var error by mutableStateOf<String?>(null)
 		private set
 
-	var linkStatus by mutableStateOf("")
+	var linkStatus by mutableStateOf("探测中...")
 		private set
 
 	var authUrl by mutableStateOf("")
@@ -87,10 +123,32 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	val routeInfo: StateFlow<RouteInfo> = app.repo.routeInfo
 
-	private var client: WebDavClient? = null
+	// ========== 批量多选状态 ==========
+	var isMultiSelectMode by mutableStateOf(false)
+		private set
 
-	/** 目录内存缓存：0ms 瞬间秒开（Stale-While-Revalidate） */
+	var selectedEntries by mutableStateOf<Set<DavEntry>>(emptySet())
+		private set
+
+	// ========== 传输管理中心状态 ==========
+	var transferTasks by mutableStateOf<List<TransferTask>>(emptyList())
+		private set
+
+	val activeTransferCount: Int
+		get() = transferTasks.count { it.status == TransferStatus.RUNNING || it.status == TransferStatus.QUEUED }
+
+	val totalSpeedStr: String
+		get() {
+			val total = transferTasks.filter { it.status == TransferStatus.RUNNING }.sumOf { it.speedBytesPerSec }
+			if (total <= 0) return "--"
+			val mb = total / (1024.0 * 1024.0)
+			return if (mb >= 1.0) String.format(Locale.ROOT, "%.1f MB/s", mb)
+			else String.format(Locale.ROOT, "%.0f KB/s", total / 1024.0)
+		}
+
+	private var client: WebDavClient? = null
 	private val dirCache = ConcurrentHashMap<String, List<DavEntry>>()
+	private var transferJob: Job? = null
 
 	val isRoot: Boolean get() = path.isEmpty()
 	val needsLogin: Boolean get() = linkStatus.contains("等待登录")
@@ -125,6 +183,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch { open("") }
 		viewModelScope.launch { pollLink() }
 		viewModelScope.launch { scanGlobalMedia() }
+		viewModelScope.launch { startAutoHealing() }
+		startTransferWorker()
 	}
 
 	fun urlFor(entryPath: String): String? = client?.urlFor(entryPath)?.toString()
@@ -145,30 +205,282 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
-	/** 触发 NAT 打洞直连 */
-	fun punchHole(): String {
-		val res = app.repo.triggerHolePunch()
-		pollPeerStatus()
-		return res
+	/**
+	 * 慢速自适应智能自愈：若当前处于 DERP 中继慢速代理，后台每 15 秒静默发起探测
+	 */
+	private suspend fun startAutoHealing() {
+		while (true) {
+			delay(15_000)
+			try {
+				val info = routeInfo.value
+				if (info.isRelay) {
+					app.repo.triggerHolePunch()
+				}
+			} catch (_: Exception) {}
+		}
 	}
 
+	fun imageAlbum(entry: DavEntry): Pair<List<DavEntry>, Int> {
+		val list = if (currentTab == MainTab.Photos) allPhotos else entries.filter { !it.isDir && it.isImage }
+		val idx = list.indexOfFirst { it.path == entry.path }.coerceAtLeast(0)
+		return Pair(if (list.isEmpty()) listOf(entry) else list, idx)
+	}
+
+	/** 手动触发加速直连 */
+	fun punchHole() {
+		viewModelScope.launch {
+			app.repo.triggerHolePunch()
+		}
+	}
+
+	// ==================== 批量多选控制 ====================
+	fun enterMultiSelect(initial: DavEntry? = null) {
+		isMultiSelectMode = true
+		selectedEntries = if (initial != null) setOf(initial) else emptySet()
+	}
+
+	fun exitMultiSelect() {
+		isMultiSelectMode = false
+		selectedEntries = emptySet()
+	}
+
+	fun toggleSelect(entry: DavEntry) {
+		val newSet = selectedEntries.toMutableSet()
+		if (newSet.contains(entry)) {
+			newSet.remove(entry)
+		} else {
+			newSet.add(entry)
+		}
+		selectedEntries = newSet
+		if (newSet.isEmpty() && isMultiSelectMode) {
+			// 仍然保持多选模式，等待用户继续选择
+		}
+	}
+
+	fun selectAll(currentItems: List<DavEntry>) {
+		selectedEntries = currentItems.toSet()
+	}
+
+	fun batchDelete(onDone: () -> Unit = {}) {
+		val targets = selectedEntries.toList()
+		if (targets.isEmpty()) return
+		mutate { c ->
+			for (item in targets) {
+				c.delete(item.path, item.isDir)
+			}
+		}
+		exitMultiSelect()
+		onDone()
+	}
+
+	fun batchMove(targetDir: String, onDone: () -> Unit = {}) {
+		val targets = selectedEntries.toList()
+		if (targets.isEmpty()) return
+		mutate { c ->
+			for (item in targets) {
+				val dest = join(targetDir, item.name)
+				c.move(item.path, dest)
+			}
+		}
+		exitMultiSelect()
+		onDone()
+	}
+
+	fun batchDownload(context: Context, onDone: () -> Unit = {}) {
+		val targets = selectedEntries.toList().filter { !it.isDir }
+		for (entry in targets) {
+			enqueueDownload(context, entry)
+		}
+		exitMultiSelect()
+		onDone()
+	}
+
+	// ==================== 并发传输队列管理 ====================
+	fun enqueueDownload(context: Context, entry: DavEntry) {
+		// 避免重复入队
+		if (transferTasks.any { it.path == entry.path && it.status != TransferStatus.FAILED }) return
+		val task = TransferTask(
+			name = entry.name,
+			path = entry.path,
+			isUpload = false,
+			totalBytes = entry.size,
+			status = TransferStatus.QUEUED,
+		)
+		transferTasks = transferTasks + task
+		// 每次发起传输时，若当前不是直连，顺便触发一次打洞自愈
+		punchHole()
+	}
+
+	fun pauseTask(taskId: String) {
+		transferTasks = transferTasks.map {
+			if (it.id == taskId && (it.status == TransferStatus.RUNNING || it.status == TransferStatus.QUEUED)) {
+				it.copy(status = TransferStatus.PAUSED, speedBytesPerSec = 0)
+			} else it
+		}
+	}
+
+	fun resumeTask(taskId: String) {
+		transferTasks = transferTasks.map {
+			if (it.id == taskId && it.status == TransferStatus.PAUSED) {
+				it.copy(status = TransferStatus.QUEUED)
+			} else it
+		}
+	}
+
+	fun cancelTask(taskId: String) {
+		transferTasks = transferTasks.filterNot { it.id == taskId }
+	}
+
+	fun pauseAll() {
+		transferTasks = transferTasks.map {
+			if (it.status == TransferStatus.RUNNING || it.status == TransferStatus.QUEUED) {
+				it.copy(status = TransferStatus.PAUSED, speedBytesPerSec = 0)
+			} else it
+		}
+	}
+
+	fun resumeAll() {
+		transferTasks = transferTasks.map {
+			if (it.status == TransferStatus.PAUSED) {
+				it.copy(status = TransferStatus.QUEUED)
+			} else it
+		}
+	}
+
+	private fun startTransferWorker() {
+		transferJob?.cancel()
+		transferJob = viewModelScope.launch(Dispatchers.IO) {
+			while (isActive) {
+				val nextTask = transferTasks.firstOrNull { it.status == TransferStatus.QUEUED }
+				if (nextTask == null) {
+					delay(1000)
+					continue
+				}
+
+				// 将状态标记为 RUNNING
+				updateTask(nextTask.id) { it.status = TransferStatus.RUNNING }
+
+				try {
+					val c = client ?: app.repo.client(app.prefs.current()).also { client = it }
+					val resolver = app.contentResolver
+
+					val isMedia = nextTask.name.endsWith(".jpg", true) ||
+						nextTask.name.endsWith(".png", true) ||
+						nextTask.name.endsWith(".mp4", true) ||
+						nextTask.name.endsWith(".mov", true)
+
+					var lastBytes = 0L
+					var lastTime = System.currentTimeMillis()
+
+					if (isMedia) {
+						val isImg = nextTask.name.endsWith(".jpg", true) || nextTask.name.endsWith(".png", true)
+						val collection = if (isImg) {
+							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+							else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+						} else {
+							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+							else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+						}
+
+						val values = ContentValues().apply {
+							put(MediaStore.MediaColumns.DISPLAY_NAME, nextTask.name)
+							put(MediaStore.MediaColumns.MIME_TYPE, if (isImg) "image/*" else "video/*")
+							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+								put(MediaStore.MediaColumns.RELATIVE_PATH, if (isImg) "Pictures/NasDrop" else "Movies/NasDrop")
+							}
+						}
+
+						val uri = resolver.insert(collection, values) ?: throw IllegalStateException("无法创建媒体存储")
+						resolver.openOutputStream(uri)?.use { os ->
+							c.download(nextTask.path, os) { sent, total ->
+								val now = System.currentTimeMillis()
+								val dt = now - lastTime
+								var speed = 0L
+								if (dt >= 500) {
+									speed = ((sent - lastBytes) * 1000) / dt
+									lastBytes = sent
+									lastTime = now
+								}
+								updateTask(nextTask.id) {
+									it.sentBytes = sent
+									if (total > 0) it.totalBytes = total
+									if (speed > 0) it.speedBytesPerSec = speed
+								}
+							}
+						}
+					} else {
+						val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+						val subDir = File(dir, "NasDrop").apply { mkdirs() }
+						val destFile = File(subDir, nextTask.name)
+						FileOutputStream(destFile).use { fos ->
+							c.download(nextTask.path, fos) { sent, total ->
+								val now = System.currentTimeMillis()
+								val dt = now - lastTime
+								var speed = 0L
+								if (dt >= 500) {
+									speed = ((sent - lastBytes) * 1000) / dt
+									lastBytes = sent
+									lastTime = now
+								}
+								updateTask(nextTask.id) {
+									it.sentBytes = sent
+									if (total > 0) it.totalBytes = total
+									if (speed > 0) it.speedBytesPerSec = speed
+								}
+							}
+						}
+					}
+
+					updateTask(nextTask.id) {
+						it.status = TransferStatus.COMPLETED
+						it.sentBytes = it.totalBytes
+						it.speedBytesPerSec = 0
+					}
+				} catch (t: Throwable) {
+					updateTask(nextTask.id) {
+						it.status = TransferStatus.FAILED
+						it.error = t.message
+						it.speedBytesPerSec = 0
+					}
+				}
+				delay(200)
+			}
+		}
+	}
+
+	private fun updateTask(taskId: String, block: (TransferTask) -> Unit) {
+		val list = transferTasks.map {
+			if (it.id == taskId) {
+				val copy = it.copy()
+				block(copy)
+				copy
+			} else it
+		}
+		viewModelScope.launch(Dispatchers.Main) {
+			transferTasks = list
+		}
+	}
+
+	// ==================== 浏览与目录 ====================
 	fun open(target: String) {
 		val cached = dirCache[target]
 		if (cached != null) {
 			entries = cached
 			path = target
 			loading = false
+			error = null
 		} else {
 			loading = true
 		}
-		error = null
 
 		viewModelScope.launch {
 			try {
-				val s = settings ?: app.prefs.current().also { settings = it }
-				val c = withContext(Dispatchers.IO) { app.repo.client(s) }.also { client = it }
+				val s = app.prefs.current()
+				val c = app.repo.client(s)
+				client = c
 				val fresh = withContext(Dispatchers.IO) { c.list(target) }
 				dirCache[target] = fresh
+				error = null
 				if (path == target || cached == null) {
 					entries = fresh
 					path = target
@@ -188,14 +500,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	fun refresh() {
 		dirCache.remove(path)
 		open(path)
-		viewModelScope.launch { scanGlobalMedia() }
 	}
 
-	fun up() {
-		if (path.isNotEmpty()) {
-			val parent = path.substringBeforeLast('/', "")
-			open(parent)
-		}
+	fun cd(entry: DavEntry) {
+		if (entry.isDir) open(entry.path)
+	}
+
+	fun up(): Boolean {
+		if (isRoot) return false
+		open(parentOf(path))
+		return true
 	}
 
 	/** 新建普通子文件夹或专属相册 */
@@ -210,123 +524,50 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		it.move(entry.path, join(entry.path.substringBeforeLast('/', ""), newName))
 	}
 
-	/** 移动文件到目标文件夹 */
 	fun move(entry: DavEntry, targetDir: String) = mutate {
 		val dest = join(targetDir, entry.name)
 		it.move(entry.path, dest)
-	}
-
-	/**
-	 * 将网盘文件下载并保存到本地（相册/Download目录）
-	 */
-	fun download(context: Context, entry: DavEntry, onResult: (Boolean, String) -> Unit) {
-		viewModelScope.launch {
-			withContext(Dispatchers.IO) {
-				try {
-					val c = client ?: app.repo.client(app.prefs.current()).also { client = it }
-					val resolver = context.contentResolver
-
-					if (entry.isImage || entry.isVideo) {
-						// 存入系统相册
-						val collection = if (entry.isImage) {
-							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-								MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-							} else {
-								MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-							}
-						} else {
-							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-								MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-							} else {
-								MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-							}
-						}
-
-						val values = ContentValues().apply {
-							put(MediaStore.MediaColumns.DISPLAY_NAME, entry.name)
-							put(MediaStore.MediaColumns.MIME_TYPE, if (entry.isImage) "image/*" else "video/*")
-							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-								put(MediaStore.MediaColumns.RELATIVE_PATH, if (entry.isImage) "Pictures/NasDrop" else "Movies/NasDrop")
-							}
-						}
-
-						val uri = resolver.insert(collection, values)
-							?: throw IllegalStateException("无法创建媒体存储记录")
-						resolver.openOutputStream(uri)?.use { os ->
-							c.download(entry.path, os) { _, _ -> }
-						}
-						withContext(Dispatchers.Main) { onResult(true, "已成功保存到手机相册") }
-					} else {
-						// 存入外部下载目录
-						val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-						val subDir = File(dir, "NasDrop").apply { mkdirs() }
-						val destFile = File(subDir, entry.name)
-						FileOutputStream(destFile).use { fos ->
-							c.download(entry.path, fos) { _, _ -> }
-						}
-						withContext(Dispatchers.Main) { onResult(true, "已下载到: Download/NasDrop/${entry.name}") }
-					}
-				} catch (t: Throwable) {
-					withContext(Dispatchers.Main) { onResult(false, "下载失败: ${t.message}") }
-				}
-			}
-		}
 	}
 
 	fun rememberDir(dir: String) {
 		viewModelScope.launch { app.prefs.setLastDir(dir) }
 	}
 
-	fun reloadSettings() {
+	private fun mutate(action: suspend (WebDavClient) -> Unit) {
 		viewModelScope.launch {
-			dirCache.clear()
-			app.repo.invalidate()
-			settings = app.prefs.current()
-			open(path)
-			scanGlobalMedia()
+			try {
+				val s = app.prefs.current()
+				val c = client ?: app.repo.client(s).also { client = it }
+				withContext(Dispatchers.IO) { action(c) }
+				dirCache.clear()
+				open(path)
+				scanGlobalMedia()
+			} catch (t: Throwable) {
+				error = t.message ?: t.javaClass.simpleName
+			}
 		}
-	}
-
-	fun imageAlbum(entry: DavEntry): Pair<List<DavEntry>, Int> {
-		val pool = if (allPhotos.any { it.path == entry.path }) allPhotos else entries.filter { it.isImage }
-		val i = pool.indexOfFirst { it.path == entry.path }
-		return pool to i.coerceAtLeast(0)
 	}
 
 	private suspend fun pollLink() {
 		while (true) {
-			pollPeerStatus()
-			delay(2500)
+			try {
+				val s = app.prefs.current()
+				if (!s.useTailscale) {
+					linkStatus = "直连 WebDAV"
+					authUrl = ""
+				} else {
+					val st = withContext(Dispatchers.IO) { TsBridge.status() }
+					linkStatus = st.summary
+					authUrl = st.authUrl
+				}
+			} catch (_: Throwable) {}
+			delay(3000)
 		}
-	}
-
-	private fun pollPeerStatus() {
-		val embedded = TsBridge.available
-		if (embedded) {
-			app.repo.updateRouteInfo()
-			val st = TsBridge.status()
-			linkStatus = label(st)
-			authUrl = if (st == "needs-login") TsBridge.authUrl() else ""
-		} else {
-			linkStatus = "直连模式"
-			authUrl = ""
-		}
-	}
-
-	private fun label(st: String): String = when {
-		st.startsWith("running") ->
-			"内嵌 Tailscale · " + st.removePrefix("running:").removePrefix("running").trim(':')
-				.ifEmpty { "已连接" }
-		st == "needs-login" -> "内嵌 Tailscale · 等待登录"
-		st == "starting" -> "内嵌 Tailscale · 连接中"
-		st.startsWith("error") -> "内嵌 Tailscale 失败"
-		st == "idle" || st.isEmpty() -> "内嵌 Tailscale · 待启动"
-		else -> "内嵌 Tailscale · $st"
 	}
 
 	private fun collectMediaFrom(items: List<DavEntry>) {
-		val imgs = (allPhotos + items.filter { it.isImage }).distinctBy { it.path }
-		val vids = (allVideos + items.filter { it.isVideo }).distinctBy { it.path }
+		val imgs = (allPhotos + items.filter { !it.isDir && it.isImage }).distinctBy { it.path }
+		val vids = (allVideos + items.filter { !it.isDir && it.isVideo }).distinctBy { it.path }
 		allPhotos = imgs
 		allVideos = vids
 	}
@@ -339,7 +580,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	private suspend fun scanGlobalMedia() {
 		withContext(Dispatchers.IO) {
 			try {
-				val s = settings ?: app.prefs.current().also { settings = it }
+				val s = app.prefs.current()
 				val c = app.repo.client(s)
 				val rootEntries = c.list("")
 				collectMediaFrom(rootEntries)
@@ -356,61 +597,39 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
-	private fun mutate(block: (WebDavClient) -> Unit) {
-		viewModelScope.launch {
-			loading = true
-			error = null
-			try {
-				val c = client ?: app.repo.client(app.prefs.current()).also { client = it }
-				withContext(Dispatchers.IO) { block(c) }
-				dirCache.remove(path)
-				val fresh = withContext(Dispatchers.IO) { c.list(path) }
-				dirCache[path] = fresh
-				entries = fresh
-				scanGlobalMedia()
-			} catch (t: Throwable) {
-				error = t.message ?: t.javaClass.simpleName
-			} finally {
-				loading = false
+	private fun groupEntriesForTimeline(items: List<DavEntry>): List<TimelineGroup> {
+		if (items.isEmpty()) return emptyList()
+		val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA)
+		val todayStr = sdf.format(Date())
+
+		val cal = Calendar.getInstance()
+		cal.add(Calendar.DAY_OF_YEAR, -1)
+		val yesterdayStr = sdf.format(cal.time)
+
+		val groupsMap = items.sortedByDescending { it.modified }.groupBy {
+			if (it.modified > 0) sdf.format(Date(it.modified)) else "其他"
+		}
+
+		return groupsMap.map { (dateKey, list) ->
+			val title = when (dateKey) {
+				todayStr -> "今天"
+				yesterdayStr -> "昨天"
+				"其他" -> "更早之前"
+				else -> dateKey
 			}
+			TimelineGroup(dateTitle = title, count = list.size, items = list)
 		}
 	}
 
-	companion object {
-		fun join(dir: String, name: String) =
-			listOf(dir.trim('/'), name.trim('/')).filter { it.isNotEmpty() }.joinToString("/")
+	private fun parentOf(p: String): String {
+		val trimmed = p.trim('/')
+		val idx = trimmed.lastIndexOf('/')
+		return if (idx <= 0) "" else trimmed.substring(0, idx)
+	}
 
-		fun groupEntriesForTimeline(list: List<DavEntry>): List<TimelineGroup> {
-			val files = list.filter { !it.isDir }
-			if (files.isEmpty()) return emptyList()
-
-			val now = Calendar.getInstance()
-			val todayYear = now.get(Calendar.YEAR)
-			val todayDayOfYear = now.get(Calendar.DAY_OF_YEAR)
-
-			val groups = LinkedHashMap<String, MutableList<DavEntry>>()
-			val sdfDate = SimpleDateFormat("yyyy年MM月dd日", Locale.getDefault())
-			val sdfMonth = SimpleDateFormat("yyyy年MM月", Locale.getDefault())
-
-			val sorted = files.sortedByDescending { it.modified }
-			for (item in sorted) {
-				val title = if (item.modified <= 0) {
-					"未知时间"
-				} else {
-					val c = Calendar.getInstance().apply { timeInMillis = item.modified }
-					val itemYear = c.get(Calendar.YEAR)
-					val itemDayOfYear = c.get(Calendar.DAY_OF_YEAR)
-					when {
-						itemYear == todayYear && itemDayOfYear == todayDayOfYear -> "今天"
-						itemYear == todayYear && itemDayOfYear == todayDayOfYear - 1 -> "昨天"
-						itemYear == todayYear -> sdfDate.format(Date(item.modified))
-						else -> sdfMonth.format(Date(item.modified))
-					}
-				}
-				groups.getOrPut(title) { ArrayList() }.add(item)
-			}
-
-			return groups.map { TimelineGroup(it.key, it.value) }
-		}
+	private fun join(a: String, b: String): String {
+		val cleanA = a.trim('/')
+		val cleanB = b.trim('/')
+		return if (cleanA.isEmpty()) cleanB else "$cleanA/$cleanB"
 	}
 }

@@ -8,6 +8,7 @@ build/
 .DS_Store
 out/
 *.png
+!app/src/main/res/**/*.png
 .ci/*.xml
 .ci/*.json
 .ci/davroot/
