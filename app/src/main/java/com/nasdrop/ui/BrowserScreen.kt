@@ -1843,7 +1843,7 @@ private fun NetworkIntelligenceConsole(
 									.background(Color(0xFF2A72F6)),
 								contentAlignment = Alignment.Center,
 							) {
-								Icon(Icons.Rounded.Smartphone, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+								Icon(Icons.Rounded.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
 							}
 							Spacer(modifier = Modifier.height(6.dp))
 							Text("我的手机", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
@@ -1891,7 +1891,7 @@ private fun NetworkIntelligenceConsole(
 									.background(Color(0xFF00B5A6)),
 								contentAlignment = Alignment.Center,
 							) {
-								Icon(Icons.Rounded.Storage, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+								Icon(Icons.Rounded.CloudDone, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
 							}
 							Spacer(modifier = Modifier.height(6.dp))
 							Text("私有 NAS", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
