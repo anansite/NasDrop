@@ -217,7 +217,6 @@ fun BrowserScreen(
 					currentTab = vm.currentTab,
 					onTabSelect = { tab ->
 						vm.currentTab = tab
-						if (tab == MainTab.Me) showNetSheet = true
 					},
 				)
 			}
@@ -537,6 +536,11 @@ private fun CommercialTopBar(
 				// 刷新
 				IconButton(onClick = onRefresh) {
 					Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969))
+				}
+
+				// 服务器设置
+				IconButton(onClick = onOpenSettings) {
+					Icon(Icons.Rounded.Settings, contentDescription = "设置", tint = Color(0xFF4E5969))
 				}
 
 				// 仅在检测到有新版本发布时才在首页顶栏展示更新按钮
