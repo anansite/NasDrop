@@ -480,6 +480,110 @@ fun BrowserScreen(
 	}
 }
 
+
+private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+
+@Composable
+private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
+	val (bgColor, textColor, dotColor, label) = when {
+		routeInfo.isDirect && routeInfo.endpoint.isEmpty() -> {
+			Quadruple(Color(0xFFE8F9F2), Color(0xFF00A870), Color(0xFF00B578), "🏡 在家直连 · 1ms")
+		}
+		routeInfo.isDirect -> {
+			Quadruple(Color(0xFFEAF2FF), Color(0xFF2A72F6), Color(0xFF2A72F6), "🚀 远程专线 · 极速")
+		}
+		else -> {
+			Quadruple(Color(0xFFFFF4E5), Color(0xFFE66A00), Color(0xFFFF7A00), "🐢 远程顺畅 · 自动加速中")
+		}
+	}
+
+	Surface(
+		shape = RoundedCornerShape(20.dp),
+		color = bgColor,
+		shadowElevation = 1.dp,
+		onClick = onClick,
+	) {
+		Row(
+			modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.spacedBy(6.dp),
+		) {
+			Box(
+				modifier = Modifier
+					.size(7.dp)
+					.clip(CircleShape)
+					.background(dotColor),
+			)
+			Text(
+				text = label,
+				fontSize = 11.sp,
+				fontWeight = FontWeight.Bold,
+				color = textColor,
+			)
+		}
+	}
+}
+
+@Composable
+private fun PickBar(
+	path: String,
+	lastDir: String,
+	onCreateFolder: () -> Unit,
+	onConfirm: () -> Unit,
+) {
+	Surface(
+		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+		color = Color.White,
+		shadowElevation = 12.dp,
+	) {
+		Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.SpaceBetween,
+			) {
+				Column(modifier = Modifier.weight(1f)) {
+					Text(
+						"存入位置: /${path.ifEmpty { "根目录" }}",
+						fontSize = 14.sp,
+						fontWeight = FontWeight.Bold,
+						color = Color(0xFF1D2129),
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
+					Text(
+						"可点击下方文件夹进入子目录，选定后点击确认存入",
+						fontSize = 11.sp,
+						color = Color(0xFF86909C),
+					)
+				}
+				OutlinedButton(
+					onClick = onCreateFolder,
+					shape = RoundedCornerShape(12.dp),
+					contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+				) {
+					Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(16.dp))
+					Spacer(modifier = Modifier.width(4.dp))
+					Text("新建", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+				}
+			}
+
+			Spacer(Modifier.height(12.dp))
+
+			Button(
+				onClick = onConfirm,
+				colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
+				shape = RoundedCornerShape(14.dp),
+				modifier = Modifier.fillMaxWidth().height(46.dp),
+			) {
+				Icon(Icons.Rounded.CloudUpload, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+				Spacer(modifier = Modifier.width(6.dp))
+				Text("存入当前目录", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 15.sp)
+			}
+		}
+	}
+}
+
 // ==================== 顶部导航栏与状态胶囊 ====================
 
 @Composable
