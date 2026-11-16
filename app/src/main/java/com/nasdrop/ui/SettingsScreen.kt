@@ -211,6 +211,20 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 				}
 			}
 
+			Spacer(Modifier.height(6.dp))
+			Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+				Text(
+					"节点起不来（例如刚开机没有网络）时点右侧重连，不用重装或杀进程。",
+					style = MaterialTheme.typography.bodySmall,
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+					modifier = Modifier.weight(1f),
+				)
+				TextButton(onClick = {
+					vm.reloadSettings()
+					Toast.makeText(context, "正在重连…", Toast.LENGTH_SHORT).show()
+				}) { Text("重连") }
+			}
+
 			Spacer(Modifier.height(14.dp))
 			Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
 				Column(Modifier.weight(1f)) {

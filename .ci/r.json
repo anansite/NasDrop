@@ -1,28 +1,28 @@
 {
-  "total_count": 4,
+  "total_count": 5,
   "workflow_runs": [
     {
-      "id": 43830031762,
+      "id": 43832199014,
       "name": "build-apk",
-      "node_id": "WFR_kwLOVwGdLs8AAAAKNHk1kg",
+      "node_id": "WFR_kwLOVwGdLs8AAAAKNJpHZg",
       "head_branch": "main",
-      "head_sha": "5cb1a1106d8ebffc9f282fa8cf7a844ea1a2542b",
+      "head_sha": "1ae3180a1e9ffe1a46b62ef354f008a7440c4277",
       "path": ".github/workflows/build-apk.yml",
-      "display_title": "fix(ci): 补装 gobind，gomobile bind 依赖它",
-      "run_number": 5,
+      "display_title": "fix: available 改为按需探测，否则内嵌 Tailscale 会静默失效退化成直连",
+      "run_number": 6,
       "event": "push",
       "status": "completed",
       "conclusion": "success",
       "workflow_id": 419875019,
-      "check_suite_id": 118653809758,
-      "check_suite_node_id": "CS_kwDOVwGdLs8AAAAboFF0Xg",
-      "url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43830031762",
-      "html_url": "https://github.com/anansite/private_filemanager/actions/runs/43830031762",
+      "check_suite_id": 118659500599,
+      "check_suite_node_id": "CS_kwDOVwGdLs8AAAAboKhKNw",
+      "url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43832199014",
+      "html_url": "https://github.com/anansite/private_filemanager/actions/runs/43832199014",
       "pull_requests": [
 
       ],
-      "created_at": "2026-11-16T08:17:24Z",
-      "updated_at": "2026-11-16T08:31:33Z",
+      "created_at": "2026-11-16T08:33:34Z",
+      "updated_at": "2026-11-16T08:40:24Z",
       "actor": {
         "login": "anansite",
         "id": 59083799,
@@ -48,7 +48,7 @@
       "referenced_workflows": [
 
       ],
-      "run_started_at": "2026-11-16T08:17:24Z",
+      "run_started_at": "2026-11-16T08:33:34Z",
       "triggering_actor": {
         "login": "anansite",
         "id": 59083799,
@@ -70,26 +70,26 @@
         "user_view_type": "public",
         "site_admin": false
       },
-      "jobs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43830031762/jobs",
-      "logs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43830031762/logs",
-      "check_suite_url": "https://api.github.com/repos/anansite/private_filemanager/check-suites/118653809758",
-      "artifacts_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43830031762/artifacts",
-      "cancel_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43830031762/cancel",
-      "rerun_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43830031762/rerun",
+      "jobs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43832199014/jobs",
+      "logs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43832199014/logs",
+      "check_suite_url": "https://api.github.com/repos/anansite/private_filemanager/check-suites/118659500599",
+      "artifacts_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43832199014/artifacts",
+      "cancel_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43832199014/cancel",
+      "rerun_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43832199014/rerun",
       "previous_attempt_url": null,
       "workflow_url": "https://api.github.com/repos/anansite/private_filemanager/actions/workflows/419875019",
       "head_commit": {
-        "id": "5cb1a1106d8ebffc9f282fa8cf7a844ea1a2542b",
-        "tree_id": "ca272058a1299a5f9b9b770ccc44686a2783cc4e",
-        "message": "fix(ci): 补装 gobind，gomobile bind 依赖它",
-        "timestamp": "2026-11-16T08:17:21Z",
+        "id": "1ae3180a1e9ffe1a46b62ef354f008a7440c4277",
+        "tree_id": "9b4be184862185e3385aae5a5ed585cc7d24c734",
+        "message": "fix: available 改为按需探测，否则内嵌 Tailscale 会静默失效退化成直连",
+        "timestamp": "2026-11-16T08:33:27Z",
         "author": {
           "name": "anansite",
           "email": "anansite@users.noreply.github.com"
         },
         "committer": {
-          "name": "anansite",
-          "email": "anansite@users.noreply.github.com"
+          "name": "tianruinan",
+          "email": "tianruinan@xylink.com"
         }
       },
       "repository": {

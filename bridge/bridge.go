@@ -21,9 +21,26 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	// 这一行是 Android 上能跑起来的前提，缺了它 tsnet.Up 会直接失败：
+	//
+	//	tsnet: route ip+net: netlinkrib: permission denied
+	//
+	// 原因是 Android SDK 30 起对 app UID（untrusted_app）关掉了 NETLINK_ROUTE 套接字
+	// 和 /proc/net，而 Go 标准库的 net.Interfaces() 在 linux/android 上一律走 netlink，
+	// 于是 netmon 无法启动。官方 Android App 靠 Java 侧 RegisterInterfaceGetter 绕过；
+	// 我们这种「AAR 嵌进 App、Go 侧没有 Java 可依赖」的形态，官方留的口子就是这个包：
+	// 它注册一个 netmon 回退（合成一个 android 接口，地址靠让内核给一条出站 UDP 路由
+	// 反查源地址，不发包），顺带注入 androiddns（Android 没有 /etc/resolv.conf）
+	// 并把 CA 根证书指到 /system/etc/security/cacerts。
+	// 官方包文档原话：It is not linked into tsnet by default; tsnet apps opt in
+	// with a blank import of this package.
+	_ "tailscale.com/feature/androidbin"
 
 	"tailscale.com/tsnet"
 )
@@ -44,9 +61,30 @@ var (
 	target string
 	logBuf []string
 
+	// 上次 Start 的参数，供 Retry 复用
+	lastDir, lastHost, lastKey, lastTarget string
+
 	// 是否放行自签/私有 CA 证书。必须在 Start 之前设置。
 	insecureTLS bool
 )
+
+// prepareRuntimeDirs 给 Go 运行时和 logpolicy 准备一个可写的家目录。
+//
+// Android 上既没有 HOME 也没有 TMPDIR，而 Tailscale 的日志/状态代码会一路回退到
+// 「当前目录（/，被排除）→ 临时目录（不存在）」，最后直接 panic
+// （no safe place to store log state）。在 Up 之前把这些环境变量指到 App 私有目录即可。
+func prepareRuntimeDirs(stateDir string) {
+	dirs := map[string]string{
+		"HOME":            stateDir,
+		"TMPDIR":          filepath.Join(stateDir, "tmp"),
+		"XDG_CACHE_HOME":  filepath.Join(stateDir, "cache"),
+		"XDG_CONFIG_HOME": filepath.Join(stateDir, "config"),
+	}
+	for k, v := range dirs {
+		_ = os.MkdirAll(v, 0o700)
+		_ = os.Setenv(k, v)
+	}
+}
 
 // SetInsecureTLS 控制下游 TLS 校验，必须在 Start 之前调用。
 //
@@ -93,6 +131,9 @@ func Start(stateDir, hostname, authKey, targetURL string) (int32, error) {
 		return 0, fmt.Errorf("非法的目标地址: %q", targetURL)
 	}
 
+	// 必须在 tsnet 起来之前：给它一个可写的 HOME/TMPDIR，否则日志状态无处可存。
+	prepareRuntimeDirs(stateDir)
+
 	mu.Lock()
 	if hs != nil {
 		p := port
@@ -132,6 +173,7 @@ func Start(stateDir, hostname, authKey, targetURL string) (int32, error) {
 
 	mu.Lock()
 	srv, ln, hs, port, token, upErr, target = s, l, server, p, tk, nil, targetURL
+	lastDir, lastHost, lastKey, lastTarget = stateDir, hostname, authKey, targetURL
 	mu.Unlock()
 
 	go func() {
@@ -148,7 +190,11 @@ func Start(stateDir, hostname, authKey, targetURL string) (int32, error) {
 			mu.Lock()
 			upErr = err
 			mu.Unlock()
-			logf("tsnet 上线失败: %v", err)
+			if strings.Contains(err.Error(), "netlinkrib") {
+				logf("tsnet 上线失败: %v（Android 拒绝了 netlink，检查是否漏了 androidbin 空导入）", err)
+			} else {
+				logf("tsnet 上线失败: %v", err)
+			}
 			return
 		}
 		logf("tsnet 已上线: %v", st.TailscaleIPs)
@@ -237,6 +283,21 @@ func Logs() string {
 	mu.Lock()
 	defer mu.Unlock()
 	return strings.Join(logBuf, "\n")
+}
+
+// Retry 用上次的参数重新拉一次节点，返回新的本地代理端口（参数缺失时返回 0）。
+//
+// 用途：首次 Up 失败（例如网络还没就绪）后不用杀进程重开 App。
+// 注意端口会变，Kotlin 侧要重新拿 baseUrl —— Repository.invalidate() + client() 即为此。
+func Retry() int32 {
+	mu.Lock()
+	d, h, k, t := lastDir, lastHost, lastKey, lastTarget
+	mu.Unlock()
+	if d == "" || t == "" {
+		return 0
+	}
+	Stop()
+	return Start(d, h, k, t)
 }
 
 // Stop 关闭代理并下线节点。可重复调用。
