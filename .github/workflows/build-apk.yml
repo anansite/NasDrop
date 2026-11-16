@@ -1,0 +1,94 @@
+name: build-apk
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: 内嵌 Tailscale + 打包 APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
+
+      # gomobile 需要用 NDK 交叉编译 Go 代码
+      - name: 安装 NDK
+        run: |
+          sdkmanager --install "ndk;27.0.12077973" | tail -3
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
+      - name: Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          check-latest: true
+          cache: false
+
+      # Go 模块缓存：tailscale.com 依赖树很大，不缓存的话每次都要重下
+      - name: 缓存 Go 模块
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('go.mod') }}-v1
+          restore-keys: |
+            go-${{ runner.os }}-
+
+      - name: Gradle 缓存
+        uses: gradle/actions/setup-gradle@v4
+
+      # 升级 Tailscale = 改这一行的 --upgrade，Kotlin 侧永远不用动
+      - name: 编译 Tailscale 桥（gomobile → AAR）
+        run: |
+          chmod +x build-aar.sh
+          ABIS=android/arm64,android/arm ./build-aar.sh
+        env:
+          GOFLAGS: -mod=mod
+
+      - name: 打包 APK
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: 整理产物
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/*.apk "out/NasDrop-${GITHUB_SHA:0:7}.apk"
+          ls -lh out
+
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NasDrop-apk
+          path: out/*.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: 打 tag 时发布 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.apk
+          generate_release_notes: true

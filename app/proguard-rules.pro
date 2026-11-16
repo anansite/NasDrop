@@ -1,0 +1,4 @@
+-keep class bridge.** { *; }
+-keep class go.** { *; }
+-dontwarn bridge.**
+-dontwarn go.**

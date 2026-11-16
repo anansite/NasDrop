@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+	<!-- 用平台主题做容器，视觉全部交给 Compose 的 Material 3 主题 -->
+	<style name="Theme.NasDrop" parent="android:Theme.Material.Light.NoActionBar">
+		<item name="android:windowBackground">@color/window_bg</item>
+		<item name="android:statusBarColor">@android:color/transparent</item>
+		<item name="android:navigationBarColor">@android:color/transparent</item>
+		<item name="android:windowLightStatusBar">true</item>
+	</style>
+</resources>

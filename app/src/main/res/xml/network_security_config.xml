@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  只对本机回环地址放开明文 HTTP。
+  NasDrop 的所有 WebDAV 请求都发到 127.0.0.1:<bridge port>（Go 侧再加密走 tailnet），
+  所以不需要、也不应该全局打开 usesCleartextTraffic。
+  如果你要直连 http://100.x.x.x:8888 这种地址，把那个 IP 也加进 domain 列表。
+-->
+<network-security-config>
+	<base-config cleartextTrafficPermitted="false" />
+	<domain-config cleartextTrafficPermitted="true">
+		<domain includeSubdomains="false">127.0.0.1</domain>
+		<domain includeSubdomains="false">localhost</domain>
+	</domain-config>
+</network-security-config>
