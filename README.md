@@ -37,10 +37,13 @@ app/src/main/java/com/nasdrop/
 
 ## 构建
 
-CI 已经配好，推代码就会出包：
+CI 已经配好，推代码就会出包（仓库：`https://github.com/anansite/private_filemanager`）：
 
 - `main` 分支 push → Actions 里下载 `NasDrop-apk` artifact
 - 打 `v*` tag（如 `v0.1.0`）→ 自动发 Release 并附上 APK
+
+取包路径：`Actions → 最新一次 build-apk → 底部 Artifacts → NasDrop-apk`。
+构建约 15–25 分钟（第一次要下拉整棵 Tailscale 依赖树并交叉编译 2 个 ABI）。
 
 本地构建需要 JDK 17 + Android SDK（含 NDK）+ Go 1.24+：
 
@@ -56,7 +59,11 @@ CI 已经配好，推代码就会出包：
 ```
 
 `tailscale.com` 只是 `go.mod` 里的一个普通依赖，升级不会碰到任何 Kotlin 代码。
-CI 里默认就是 `@latest`，所以直接重跑流水线拿到的也是最新版。
+
+在 CI 上想升级，最省事的方式是本地跑一次 `./build-aar.sh --upgrade`，把更新后的
+`go.mod` / `go.sum` 提交上去；流水线会用这个版本重新出包。
+（首次构建时 CI 会自动把解析出来的版本提交回 `main`，从此每次构建的 Tailscale 版本固定，
+不会出现"昨天能编、今天 upstream 改了 API 就挂"。）
 
 ## 签名
 
