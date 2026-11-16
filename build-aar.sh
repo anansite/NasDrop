@@ -25,7 +25,13 @@ if ! command -v gomobile >/dev/null 2>&1; then
 	export PATH="$PATH:$(go env GOPATH)/bin"
 fi
 
-if [[ $UPGRADE == 1 ]] || ! grep -q 'tailscale.com' go.mod; then
+# 注意：不能直接用 grep 找 "tailscale.com"，go.mod 的注释里也会有这个词，
+# 那样会误判成"已拉取"从而跳过整步。这里只认真正的 require 行。
+has_require() {
+	grep -qE "^[[:space:]]*$1[[:space:]]+v" go.mod
+}
+
+if [[ $UPGRADE == 1 ]] || ! has_require 'tailscale\.com'; then
 	echo "==> 拉取 Tailscale 依赖"
 	go get tailscale.com@latest
 	go mod tidy
@@ -33,7 +39,7 @@ fi
 
 # 顺序很重要：go mod tidy 会把没有被任何代码 import 的 golang.org/x/mobile 删掉，
 # 而 gomobile bind 又要求它出现在 go.mod 里，所以必须放在 tidy 之后。
-if ! grep -q 'golang.org/x/mobile' go.mod; then
+if ! has_require 'golang\.org/x/mobile'; then
 	echo "==> 拉取 gomobile 运行时依赖"
 	go get golang.org/x/mobile/bind@latest
 fi

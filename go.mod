@@ -2,6 +2,7 @@ module nasdrop
 
 go 1.24
 
-// tailscale.com 故意不写死版本：
-// 首次构建执行 `./build-aar.sh --upgrade` 会自动拉取最新版并写回这里。
-// 之后每次升级 Tailscale 也只需要这一条命令，Kotlin 侧无需任何改动。
+// 这个文件里的 require 由 ./build-aar.sh 自动维护：
+//   首次构建 / ./build-aar.sh --upgrade  -> 拉取最新版 Tailscale 并写回这里
+//   之后每次构建                        -> 用这里锁定的版本，保证可复现
+// 想升级 Tailscale，只需要重新跑一次 --upgrade，Kotlin 侧不用改任何代码。
