@@ -25,16 +25,17 @@ if ! command -v gomobile >/dev/null 2>&1; then
 	export PATH="$PATH:$(go env GOPATH)/bin"
 fi
 
-# gomobile bind 在 module 模式下需要目标模块里有 golang.org/x/mobile/bind
-if ! grep -q 'golang.org/x/mobile' go.mod; then
-	echo "==> 拉取 gomobile 运行时依赖"
-	go get golang.org/x/mobile/bind@latest
-fi
-
 if [[ $UPGRADE == 1 ]] || ! grep -q 'tailscale.com' go.mod; then
 	echo "==> 拉取 Tailscale 依赖"
 	go get tailscale.com@latest
 	go mod tidy
+fi
+
+# 顺序很重要：go mod tidy 会把没有被任何代码 import 的 golang.org/x/mobile 删掉，
+# 而 gomobile bind 又要求它出现在 go.mod 里，所以必须放在 tidy 之后。
+if ! grep -q 'golang.org/x/mobile' go.mod; then
+	echo "==> 拉取 gomobile 运行时依赖"
+	go get golang.org/x/mobile/bind@latest
 fi
 
 echo "==> 当前 Tailscale 版本"
