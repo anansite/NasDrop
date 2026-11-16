@@ -1,0 +1,25 @@
+{
+  "total_count": 1,
+  "artifacts": [
+    {
+      "id": 14209066710,
+      "node_id": "MDg6QXJ0aWZhY3QxNDIwOTA2NjcxMA==",
+      "name": "NasDrop-apk",
+      "size_in_bytes": 18283333,
+      "url": "https://api.github.com/repos/anansite/private_filemanager/actions/artifacts/14209066710",
+      "archive_download_url": "https://api.github.com/repos/anansite/private_filemanager/actions/artifacts/14209066710/zip",
+      "expired": false,
+      "digest": "sha256:555bfd9a4689e373f7339ac3600de86126b8183d65b036824ea9f37372be884d",
+      "created_at": "2026-11-16T08:30:20Z",
+      "updated_at": "2026-11-16T08:30:20Z",
+      "expires_at": "2027-02-14T08:17:24Z",
+      "workflow_run": {
+        "id": 43830031762,
+        "repository_id": 1459723566,
+        "head_repository_id": 1459723566,
+        "head_branch": "main",
+        "head_sha": "5cb1a1106d8ebffc9f282fa8cf7a844ea1a2542b"
+      }
+    }
+  ]
+}

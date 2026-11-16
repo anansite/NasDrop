@@ -1,28 +1,28 @@
 {
-  "total_count": 3,
+  "total_count": 4,
   "workflow_runs": [
     {
-      "id": 43829700940,
+      "id": 43830031762,
       "name": "build-apk",
-      "node_id": "WFR_kwLOVwGdLs8AAAAKNHQpTA",
+      "node_id": "WFR_kwLOVwGdLs8AAAAKNHk1kg",
       "head_branch": "main",
-      "head_sha": "1424a4117b711695b4872481ec71dc24b0033897",
+      "head_sha": "5cb1a1106d8ebffc9f282fa8cf7a844ea1a2542b",
       "path": ".github/workflows/build-apk.yml",
-      "display_title": "docs: 补上仓库地址、取包路径与依赖版本锁定说明",
-      "run_number": 4,
+      "display_title": "fix(ci): 补装 gobind，gomobile bind 依赖它",
+      "run_number": 5,
       "event": "push",
       "status": "completed",
-      "conclusion": "failure",
+      "conclusion": "success",
       "workflow_id": 419875019,
-      "check_suite_id": 118652931234,
-      "check_suite_node_id": "CS_kwDOVwGdLs8AAAAboEQMog",
-      "url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829700940",
-      "html_url": "https://github.com/anansite/private_filemanager/actions/runs/43829700940",
+      "check_suite_id": 118653809758,
+      "check_suite_node_id": "CS_kwDOVwGdLs8AAAAboFF0Xg",
+      "url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43830031762",
+      "html_url": "https://github.com/anansite/private_filemanager/actions/runs/43830031762",
       "pull_requests": [
 
       ],
-      "created_at": "2026-11-16T08:14:54Z",
-      "updated_at": "2026-11-16T08:16:51Z",
+      "created_at": "2026-11-16T08:17:24Z",
+      "updated_at": "2026-11-16T08:31:33Z",
       "actor": {
         "login": "anansite",
         "id": 59083799,
@@ -48,7 +48,7 @@
       "referenced_workflows": [
 
       ],
-      "run_started_at": "2026-11-16T08:14:54Z",
+      "run_started_at": "2026-11-16T08:17:24Z",
       "triggering_actor": {
         "login": "anansite",
         "id": 59083799,
@@ -70,19 +70,19 @@
         "user_view_type": "public",
         "site_admin": false
       },
-      "jobs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829700940/jobs",
-      "logs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829700940/logs",
-      "check_suite_url": "https://api.github.com/repos/anansite/private_filemanager/check-suites/118652931234",
-      "artifacts_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829700940/artifacts",
-      "cancel_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829700940/cancel",
-      "rerun_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829700940/rerun",
+      "jobs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43830031762/jobs",
+      "logs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43830031762/logs",
+      "check_suite_url": "https://api.github.com/repos/anansite/private_filemanager/check-suites/118653809758",
+      "artifacts_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43830031762/artifacts",
+      "cancel_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43830031762/cancel",
+      "rerun_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43830031762/rerun",
       "previous_attempt_url": null,
       "workflow_url": "https://api.github.com/repos/anansite/private_filemanager/actions/workflows/419875019",
       "head_commit": {
-        "id": "1424a4117b711695b4872481ec71dc24b0033897",
-        "tree_id": "5aa932b9f9d1be051ed8a9e958a9d8790b68f81e",
-        "message": "docs: 补上仓库地址、取包路径与依赖版本锁定说明",
-        "timestamp": "2026-11-16T08:14:52Z",
+        "id": "5cb1a1106d8ebffc9f282fa8cf7a844ea1a2542b",
+        "tree_id": "ca272058a1299a5f9b9b770ccc44686a2783cc4e",
+        "message": "fix(ci): 补装 gobind，gomobile bind 依赖它",
+        "timestamp": "2026-11-16T08:17:21Z",
         "author": {
           "name": "anansite",
           "email": "anansite@users.noreply.github.com"

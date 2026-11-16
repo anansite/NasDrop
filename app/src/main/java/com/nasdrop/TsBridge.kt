@@ -19,10 +19,15 @@ object TsBridge {
 	private const val TAG = "TsBridge"
 	private const val CLASS_NAME = "bridge.Bridge"
 
-	/** AAR 是否已打进包里 */
-	@Volatile
-	var available: Boolean = false
-		private set
+	/**
+	 * AAR 是否已打进包里。
+	 *
+	 * 注意这里必须写成 getter：第一次读取时才真正 Class.forName 探测。
+	 * 早先写成 var + private set 的缓存字段，结果是 Repository 在加载 AAR 之前
+	 * 就读它，永远是 false，于是整个 App 静默退化成"直连模式"（等于没内嵌 Tailscale），
+	 * 而且再没有任何代码路径会去触发加载，永久卡死。
+	 */
+	val available: Boolean get() = load() != null
 
 	@Volatile
 	var port: Int = 0
@@ -35,12 +40,12 @@ object TsBridge {
 	private var cls: Class<*>? = null
 	private var probed = false
 
+	@Synchronized
 	private fun load(): Class<*>? {
 		if (!probed) {
 			probed = true
 			cls = runCatching { Class.forName(CLASS_NAME) }.getOrNull()
-			available = cls != null
-			if (!available) {
+			if (cls == null) {
 				Log.i(TAG, "未找到 $CLASS_NAME：本次构建没有内嵌 Tailscale，走直连模式")
 			}
 		}

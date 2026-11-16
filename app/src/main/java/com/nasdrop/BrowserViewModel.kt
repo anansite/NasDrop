@@ -103,7 +103,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	private suspend fun pollLink() {
 		while (true) {
 			val s = settings ?: app.prefs.current().also { settings = it }
-			if (s.useTailscale && TsBridge.available) {
+			// 第一次读 TsBridge.available 会触发 Class.forName，进而加载 libgojni.so，
+			// 放到 IO 线程做，别卡主线程。
+			val embedded = withContext(Dispatchers.IO) { TsBridge.available }
+			if (s.useTailscale && embedded) {
 				val st = withContext(Dispatchers.IO) { TsBridge.status() }
 				linkStatus = label(st)
 				authUrl = if (st == "needs-login") withContext(Dispatchers.IO) { TsBridge.authUrl() } else ""
