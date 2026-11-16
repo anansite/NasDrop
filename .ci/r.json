@@ -1,28 +1,28 @@
 {
-  "total_count": 2,
+  "total_count": 3,
   "workflow_runs": [
     {
-      "id": 43829596630,
+      "id": 43829700940,
       "name": "build-apk",
-      "node_id": "WFR_kwLOVwGdLs8AAAAKNHKR1g",
+      "node_id": "WFR_kwLOVwGdLs8AAAAKNHQpTA",
       "head_branch": "main",
-      "head_sha": "f32aa8fc1724deaaad7d3dc3fd23dcaf57baf008",
+      "head_sha": "1424a4117b711695b4872481ec71dc24b0033897",
       "path": ".github/workflows/build-apk.yml",
-      "display_title": "fix(ci): 用 require 行判断依赖是否已拉取，避免被 go.mod 注释误导",
-      "run_number": 3,
+      "display_title": "docs: 补上仓库地址、取包路径与依赖版本锁定说明",
+      "run_number": 4,
       "event": "push",
-      "status": "in_progress",
-      "conclusion": null,
+      "status": "completed",
+      "conclusion": "failure",
       "workflow_id": 419875019,
-      "check_suite_id": 118652645939,
-      "check_suite_node_id": "CS_kwDOVwGdLs8AAAAboD-yMw",
-      "url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829596630",
-      "html_url": "https://github.com/anansite/private_filemanager/actions/runs/43829596630",
+      "check_suite_id": 118652931234,
+      "check_suite_node_id": "CS_kwDOVwGdLs8AAAAboEQMog",
+      "url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829700940",
+      "html_url": "https://github.com/anansite/private_filemanager/actions/runs/43829700940",
       "pull_requests": [
 
       ],
-      "created_at": "2026-11-16T08:14:06Z",
-      "updated_at": "2026-11-16T08:14:10Z",
+      "created_at": "2026-11-16T08:14:54Z",
+      "updated_at": "2026-11-16T08:16:51Z",
       "actor": {
         "login": "anansite",
         "id": 59083799,
@@ -48,7 +48,7 @@
       "referenced_workflows": [
 
       ],
-      "run_started_at": "2026-11-16T08:14:06Z",
+      "run_started_at": "2026-11-16T08:14:54Z",
       "triggering_actor": {
         "login": "anansite",
         "id": 59083799,
@@ -70,19 +70,19 @@
         "user_view_type": "public",
         "site_admin": false
       },
-      "jobs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829596630/jobs",
-      "logs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829596630/logs",
-      "check_suite_url": "https://api.github.com/repos/anansite/private_filemanager/check-suites/118652645939",
-      "artifacts_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829596630/artifacts",
-      "cancel_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829596630/cancel",
-      "rerun_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829596630/rerun",
+      "jobs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829700940/jobs",
+      "logs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829700940/logs",
+      "check_suite_url": "https://api.github.com/repos/anansite/private_filemanager/check-suites/118652931234",
+      "artifacts_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829700940/artifacts",
+      "cancel_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829700940/cancel",
+      "rerun_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43829700940/rerun",
       "previous_attempt_url": null,
       "workflow_url": "https://api.github.com/repos/anansite/private_filemanager/actions/workflows/419875019",
       "head_commit": {
-        "id": "f32aa8fc1724deaaad7d3dc3fd23dcaf57baf008",
-        "tree_id": "a969d381044ea609fce591cf308bef466a2a1748",
-        "message": "fix(ci): 用 require 行判断依赖是否已拉取，避免被 go.mod 注释误导",
-        "timestamp": "2026-11-16T08:14:03Z",
+        "id": "1424a4117b711695b4872481ec71dc24b0033897",
+        "tree_id": "5aa932b9f9d1be051ed8a9e958a9d8790b68f81e",
+        "message": "docs: 补上仓库地址、取包路径与依赖版本锁定说明",
+        "timestamp": "2026-11-16T08:14:52Z",
         "author": {
           "name": "anansite",
           "email": "anansite@users.noreply.github.com"

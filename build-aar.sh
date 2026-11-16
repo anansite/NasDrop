@@ -25,6 +25,14 @@ if ! command -v gomobile >/dev/null 2>&1; then
 	export PATH="$PATH:$(go env GOPATH)/bin"
 fi
 
+# gomobile bind 内部会调用 gobind，两者必须同时存在。
+# 只装 gomobile 时这里会报 "gobind was not found. Please run gomobile init"。
+if ! command -v gobind >/dev/null 2>&1; then
+	echo "==> 安装 gobind"
+	go install golang.org/x/mobile/cmd/gobind@latest
+	export PATH="$PATH:$(go env GOPATH)/bin"
+fi
+
 # 注意：不能直接用 grep 找 "tailscale.com"，go.mod 的注释里也会有这个词，
 # 那样会误判成"已拉取"从而跳过整步。这里只认真正的 require 行。
 has_require() {
