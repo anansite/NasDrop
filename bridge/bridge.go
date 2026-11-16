@@ -162,7 +162,11 @@ func Start(stateDir, hostname, authKey, targetURL string) (int32, error) {
 		Logf:     logf,
 	}
 
-	rp := newReverseProxy(u, s)
+	// 节点是异步上线的（冷启动要几秒，首次还要等授权）。这个 channel 让代理在拨号前
+	// 稍等一下，App 第一次打开目录就不会因为“节点还没起来”直接吃一个 502。
+	ready := make(chan struct{})
+
+	rp := newReverseProxy(u, s, ready)
 
 	mux := http.NewServeMux()
 	mux.Handle("/", tokenGuard(tk, rp))
@@ -198,6 +202,7 @@ func Start(stateDir, hostname, authKey, targetURL string) (int32, error) {
 			return
 		}
 		logf("tsnet 已上线: %v", st.TailscaleIPs)
+		close(ready)
 	}()
 
 	return int32(p), nil
@@ -297,7 +302,12 @@ func Retry() int32 {
 		return 0
 	}
 	Stop()
-	return Start(d, h, k, t)
+	p, err := Start(d, h, k, t)
+	if err != nil {
+		logf("重连失败: %v", err)
+		return 0
+	}
+	return p
 }
 
 // Stop 关闭代理并下线节点。可重复调用。
@@ -320,7 +330,19 @@ func Stop() {
 	}
 }
 
-func newReverseProxy(u *url.URL, s *tsnet.Server) *httputil.ReverseProxy {
+// waitReady 等节点上线，最多等 d。超时也继续往下走，让真正的 Dial 把错误暴露出来
+// （比如需要用户去浏览器授权，这时等待没意义，不如直接报错，由 UI 引导去登录）。
+func waitReady(ctx context.Context, ready <-chan struct{}, d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ready:
+	case <-t.C:
+	case <-ctx.Done():
+	}
+}
+
+func newReverseProxy(u *url.URL, s *tsnet.Server, ready <-chan struct{}) *httputil.ReverseProxy {
 	rp := httputil.NewSingleHostReverseProxy(u)
 
 	// 默认 Director 只改 URL.Host，不会改 Host 头，结果后端收到的是 127.0.0.1:port，
@@ -348,7 +370,10 @@ func newReverseProxy(u *url.URL, s *tsnet.Server) *httputil.ReverseProxy {
 
 	transport := &http.Transport{
 		// 关键的一行：把所有出站 TCP 交给 tsnet 的用户态网络栈。
+		// 拨号前先等节点就绪：节点没起来时 Dial 只会返回一个难懂的错误，
+		// 与其让用户看到 502，不如在这里多等一会儿（最多 30 秒）。
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			waitReady(ctx, ready, 30*time.Second)
 			return s.Dial(ctx, network, addr)
 		},
 		TLSHandshakeTimeout:    20 * time.Second,
