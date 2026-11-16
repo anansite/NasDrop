@@ -1,28 +1,28 @@
 {
-  "total_count": 6,
+  "total_count": 7,
   "workflow_runs": [
     {
-      "id": 43835283882,
+      "id": 43835742555,
       "name": "build-apk",
-      "node_id": "WFR_kwLOVwGdLs8AAAAKNMlZqg",
+      "node_id": "WFR_kwLOVwGdLs8AAAAKNNBZWw",
       "head_branch": "main",
-      "head_sha": "35bf545b29dd59b835fedd4fed183a76a5fce407",
+      "head_sha": "990428ca7aee42f62ad4d1f886548c25d9147f17",
       "path": ".github/workflows/build-apk.yml",
-      "display_title": "fix(android): 空导入 feature/androidbin 解决 netlinkrib permission denied，…",
-      "run_number": 7,
+      "display_title": "fix(android): 修正 Retry 返回值类型；拨号前等待节点就绪，冷启动不再 502",
+      "run_number": 8,
       "event": "push",
-      "status": "completed",
-      "conclusion": "failure",
+      "status": "in_progress",
+      "conclusion": null,
       "workflow_id": 419875019,
-      "check_suite_id": 118667614630,
-      "check_suite_node_id": "CS_kwDOVwGdLs8AAAAboSQZpg",
-      "url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43835283882",
-      "html_url": "https://github.com/anansite/private_filemanager/actions/runs/43835283882",
+      "check_suite_id": 118668832311,
+      "check_suite_node_id": "CS_kwDOVwGdLs8AAAAboTauNw",
+      "url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43835742555",
+      "html_url": "https://github.com/anansite/private_filemanager/actions/runs/43835742555",
       "pull_requests": [
 
       ],
-      "created_at": "2026-11-16T08:55:56Z",
-      "updated_at": "2026-11-16T08:58:06Z",
+      "created_at": "2026-11-16T08:59:18Z",
+      "updated_at": "2026-11-16T08:59:22Z",
       "actor": {
         "login": "anansite",
         "id": 59083799,
@@ -48,7 +48,7 @@
       "referenced_workflows": [
 
       ],
-      "run_started_at": "2026-11-16T08:55:56Z",
+      "run_started_at": "2026-11-16T08:59:18Z",
       "triggering_actor": {
         "login": "anansite",
         "id": 59083799,
@@ -70,26 +70,26 @@
         "user_view_type": "public",
         "site_admin": false
       },
-      "jobs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43835283882/jobs",
-      "logs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43835283882/logs",
-      "check_suite_url": "https://api.github.com/repos/anansite/private_filemanager/check-suites/118667614630",
-      "artifacts_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43835283882/artifacts",
-      "cancel_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43835283882/cancel",
-      "rerun_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43835283882/rerun",
+      "jobs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43835742555/jobs",
+      "logs_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43835742555/logs",
+      "check_suite_url": "https://api.github.com/repos/anansite/private_filemanager/check-suites/118668832311",
+      "artifacts_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43835742555/artifacts",
+      "cancel_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43835742555/cancel",
+      "rerun_url": "https://api.github.com/repos/anansite/private_filemanager/actions/runs/43835742555/rerun",
       "previous_attempt_url": null,
       "workflow_url": "https://api.github.com/repos/anansite/private_filemanager/actions/workflows/419875019",
       "head_commit": {
-        "id": "35bf545b29dd59b835fedd4fed183a76a5fce407",
-        "tree_id": "497ae74bde44ee0f586d1c642d03b501d7891972",
-        "message": "fix(android): 空导入 feature/androidbin 解决 netlinkrib permission denied，并给 tsnet 准备可写 HOME/TMPDIR",
-        "timestamp": "2026-11-16T08:55:42Z",
+        "id": "990428ca7aee42f62ad4d1f886548c25d9147f17",
+        "tree_id": "c80ff410f104cce7c4455633b95f61803d791575",
+        "message": "fix(android): 修正 Retry 返回值类型；拨号前等待节点就绪，冷启动不再 502",
+        "timestamp": "2026-11-16T08:59:13Z",
         "author": {
           "name": "anansite",
           "email": "anansite@users.noreply.github.com"
         },
         "committer": {
-          "name": "tianruinan",
-          "email": "tianruinan@xylink.com"
+          "name": "anansite",
+          "email": "anansite@users.noreply.github.com"
         }
       },
       "repository": {

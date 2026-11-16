@@ -64,6 +64,11 @@ var (
 	// 上次 Start 的参数，供 Retry 复用
 	lastDir, lastHost, lastKey, lastTarget string
 
+	// 「节点已就绪」信号：Up 成功或任何一次 Status 看到 Running 都会关掉它。
+	// 这样即使 Up 先超时返回，节点后来才连上，等待方也能被放行。
+	readyMu sync.Mutex
+	readyCh chan struct{}
+
 	// 是否放行自签/私有 CA 证书。必须在 Start 之前设置。
 	insecureTLS bool
 )
@@ -83,6 +88,28 @@ func prepareRuntimeDirs(stateDir string) {
 	for k, v := range dirs {
 		_ = os.MkdirAll(v, 0o700)
 		_ = os.Setenv(k, v)
+	}
+}
+
+// newReadyChan 为一次新的 Start 创建就绪信号。
+func newReadyChan() chan struct{} {
+	readyMu.Lock()
+	defer readyMu.Unlock()
+	readyCh = make(chan struct{})
+	return readyCh
+}
+
+// markReady 关闭就绪信号（幂等，可被 Up 和状态轮询重复调用）。
+func markReady() {
+	readyMu.Lock()
+	defer readyMu.Unlock()
+	if readyCh == nil {
+		return
+	}
+	select {
+	case <-readyCh:
+	default:
+		close(readyCh)
 	}
 }
 
@@ -164,7 +191,7 @@ func Start(stateDir, hostname, authKey, targetURL string) (int32, error) {
 
 	// 节点是异步上线的（冷启动要几秒，首次还要等授权）。这个 channel 让代理在拨号前
 	// 稍等一下，App 第一次打开目录就不会因为“节点还没起来”直接吃一个 502。
-	ready := make(chan struct{})
+	ready := newReadyChan()
 
 	rp := newReverseProxy(u, s, ready)
 
@@ -191,6 +218,12 @@ func Start(stateDir, hostname, authKey, targetURL string) (int32, error) {
 		defer cancel()
 		st, err := s.Up(ctx)
 		if err != nil {
+			// Up 在 NeedsLogin 时会一直阻塞（这是 tsnet 的已知行为），所以超时往往
+			// 只是“用户还没去浏览器授权”，不能当成致命错误盖住登录入口。
+			if errors.Is(err, context.DeadlineExceeded) {
+				logf("等待上线超时，节点仍在后台尝试；如需登录请点“去登录”")
+				return
+			}
 			mu.Lock()
 			upErr = err
 			mu.Unlock()
@@ -202,7 +235,7 @@ func Start(stateDir, hostname, authKey, targetURL string) (int32, error) {
 			return
 		}
 		logf("tsnet 已上线: %v", st.TailscaleIPs)
-		close(ready)
+		markReady()
 	}()
 
 	return int32(p), nil
@@ -237,6 +270,8 @@ func Status() string {
 
 	switch st.BackendState {
 	case "Running":
+		// Up 可能已经超时返回了，这里兜底：只要看到 Running 就放行拨号等待。
+		markReady()
 		if st.Self != nil && len(st.Self.TailscaleIPs) > 0 {
 			return "running:" + st.Self.TailscaleIPs[0].String()
 		}
@@ -373,8 +408,12 @@ func newReverseProxy(u *url.URL, s *tsnet.Server, ready <-chan struct{}) *httput
 		// 拨号前先等节点就绪：节点没起来时 Dial 只会返回一个难懂的错误，
 		// 与其让用户看到 502，不如在这里多等一会儿（最多 30 秒）。
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			waitReady(ctx, ready, 30*time.Second)
-			return s.Dial(ctx, network, addr)
+			waitReady(ctx, ready, 20*time.Second)
+			// tsnet 的 Dial 内部会一直等节点 Running，这里给个上限，
+			// 免得界面无限转圈（按 OkHttp 的读超时算，最多也就等这么久）。
+			dctx, cancel := context.WithTimeout(ctx, 40*time.Second)
+			defer cancel()
+			return s.Dial(dctx, network, addr)
 		},
 		TLSHandshakeTimeout:    20 * time.Second,
 		ResponseHeaderTimeout:  60 * time.Second,
