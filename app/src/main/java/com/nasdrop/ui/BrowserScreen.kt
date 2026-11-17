@@ -1649,7 +1649,7 @@ private fun MediaStreamContent(
 			}
 		}
 
-		// 2. 视频内容展示（带高清海报缩略图）
+		// 2. 视频内容展示：双列紧凑海报网格（一屏轻松容纳 6~8 部视频，高效且具备院线级视觉质感）
 		if (videos.isEmpty()) {
 			Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
 				Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1659,22 +1659,24 @@ private fun MediaStreamContent(
 				}
 			}
 		} else {
-			LazyColumn(
-				contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-				verticalArrangement = Arrangement.spacedBy(12.dp),
+			LazyVerticalGrid(
+				columns = GridCells.Fixed(2),
+				contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+				horizontalArrangement = Arrangement.spacedBy(10.dp),
+				verticalArrangement = Arrangement.spacedBy(10.dp),
 				modifier = Modifier.fillMaxSize(),
 			) {
 				items(videos, key = { it.path }) { video ->
 					Card(
-						shape = RoundedCornerShape(16.dp),
+						shape = RoundedCornerShape(14.dp),
 						colors = CardDefaults.cardColors(containerColor = Color.White),
-						elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+						elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
 						modifier = Modifier
 							.fillMaxWidth()
 							.clickable { onOpenVideo(video) },
 					) {
 						Column {
-							// 16:9 视频海报视窗（带缩略图与半透明播放层）
+							// 16:9 高清缩略图海报视窗
 							Box(
 								modifier = Modifier
 									.fillMaxWidth()
@@ -1693,37 +1695,64 @@ private fun MediaStreamContent(
 									Box(
 										modifier = Modifier
 											.fillMaxSize()
-											.background(Color.Black.copy(alpha = 0.25f))
+											.background(Color.Black.copy(alpha = 0.2f))
 									)
 								}
 
+								// 微质感播放指示器
 								Surface(
 									shape = CircleShape,
 									color = Color(0xFF722ED1).copy(alpha = 0.85f),
-									modifier = Modifier.size(48.dp),
+									modifier = Modifier.size(32.dp),
 								) {
 									Box(contentAlignment = Alignment.Center) {
-										Icon(Icons.Rounded.PlayArrow, contentDescription = "播放", tint = Color.White, modifier = Modifier.size(30.dp))
+										Icon(
+											Icons.Rounded.PlayArrow,
+											contentDescription = "播放",
+											tint = Color.White,
+											modifier = Modifier.size(20.dp),
+										)
 									}
 								}
 
-								// 右下角 4K/HDR 标签
+								// 右下角格式/清晰度微徽标
 								Surface(
-									shape = RoundedCornerShape(6.dp),
+									shape = RoundedCornerShape(4.dp),
 									color = Color.Black.copy(alpha = 0.65f),
 									modifier = Modifier
 										.align(Alignment.BottomEnd)
-										.padding(8.dp),
+										.padding(6.dp),
 								) {
-									Text("高清视频", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+									Text(
+										text = video.ext.uppercase(Locale.ROOT).ifEmpty { "HD" },
+										fontSize = 9.sp,
+										fontWeight = FontWeight.Bold,
+										color = Color.White,
+										modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+									)
 								}
 							}
 
-							// 标题与元数据
-							Column(modifier = Modifier.padding(12.dp)) {
-								Text(video.displayName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis)
-								Spacer(modifier = Modifier.height(4.dp))
-								Text(formatMeta(video), fontSize = 11.sp, color = Color(0xFF86909C), maxLines = 1, overflow = TextOverflow.Ellipsis)
+							// 紧凑双行信息（标题 + 大小/日期）
+							Column(
+								modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+							) {
+								Text(
+									text = video.displayName,
+									fontSize = 12.sp,
+									fontWeight = FontWeight.Bold,
+									color = Color(0xFF1D2129),
+									maxLines = 1,
+									overflow = TextOverflow.Ellipsis,
+								)
+								Spacer(modifier = Modifier.height(3.dp))
+								Text(
+									text = formatMeta(video),
+									fontSize = 10.sp,
+									color = Color(0xFF86909C),
+									maxLines = 1,
+									overflow = TextOverflow.Ellipsis,
+								)
 							}
 						}
 					}
