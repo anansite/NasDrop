@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -681,6 +682,8 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 							colors = listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent),
 						),
 					)
+					// 沉浸式全屏下给状态栏/刘海留白，避免返回键和标题被"眉毛"遮挡
+					.statusBarsPadding()
 					.padding(horizontal = 12.dp, vertical = 8.dp),
 			) {
 				Row(

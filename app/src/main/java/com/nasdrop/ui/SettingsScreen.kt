@@ -46,16 +46,18 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 	val app = context.app
 	val routeInfo by vm.routeInfo.collectAsState()
 
+	// 用 Settings 默认值预填，避免首次进入或异步加载前输入框一片空白的"没默认值"观感。
+	// LaunchedEffect 加载持久化的真实配置后会覆盖。
 	var loaded by remember { mutableStateOf(false) }
-	var baseUrl by remember { mutableStateOf("") }
-	var user by remember { mutableStateOf("") }
-	var password by remember { mutableStateOf("") }
+	var baseUrl by remember { mutableStateOf(Settings().baseUrl) }
+	var user by remember { mutableStateOf(Settings().user) }
+	var password by remember { mutableStateOf(Settings().password) }
 	var passwordVisible by remember { mutableStateOf(false) }
-	var useTs by remember { mutableStateOf(true) }
-	var connMode by remember { mutableStateOf(ConnectionMode.Auto) }
-	var hostname by remember { mutableStateOf("nasdrop-android") }
+	var useTs by remember { mutableStateOf(Settings().useTailscale) }
+	var connMode by remember { mutableStateOf(Settings().connectionMode) }
+	var hostname by remember { mutableStateOf(Settings().hostname) }
 	var authKey by remember { mutableStateOf("") }
-	var trustAll by remember { mutableStateOf(true) }
+	var trustAll by remember { mutableStateOf(Settings().trustAllCerts) }
 
 	var testing by remember { mutableStateOf(false) }
 	var logs by remember { mutableStateOf<String?>(null) }
@@ -398,39 +400,10 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 
 					HorizontalDivider(color = Color(0xFFF0F2F5), thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
 
-					// 链路闭环诊断面板
-					val peerEndpoint = if (routeInfo.endpoint.isEmpty()) "P2P直连节点" else routeInfo.endpoint
-					val relayEndpoint = if (routeInfo.endpoint.isEmpty()) "官方DERP中继" else routeInfo.endpoint
-					val diag = when {
-						routeInfo.isLan -> RouteDiagnostic(
-							title = "局域网千兆直连",
-							color = Color(0xFF00B42A),
-							bgColor = Color(0xFFE8FFEA),
-							desc = "设备与私有云处于同一家庭局域网，直达千兆/百兆满速，0 外部流量消耗。",
-							advice = "当前处于最佳连接模式，延迟极低（< 5ms）。",
-						)
-						routeInfo.isDirect -> RouteDiagnostic(
-							title = "Tailscale P2P 打洞直连",
-							color = Color(0xFF2A72F6),
-							bgColor = Color(0xFFEAF2FF),
-							desc = "端到端加密通道已直穿打通（对端端点: $peerEndpoint），不经中继节点转发。",
-							advice = "连接健康，无中继带宽上限，传输速度由您的家庭宽带上行与手机网络决定。",
-						)
-						routeInfo.isRelay -> RouteDiagnostic(
-							title = "Tailscale DERP 中继转发模式",
-							color = Color(0xFFFF7D00),
-							bgColor = Color(0xFFFFF7E8),
-							desc = "因两端对称型 NAT 或防火墙限制，P2P 打洞暂未穿透，当前流量由 Tailscale 中转节点（$relayEndpoint）转发。",
-							advice = "【闭环优化方案】\n1. 点击上方「重新握手打洞」尝试触发 STUN 双向穿透；\n2. 回家后连入家庭 Wi-Fi 可自动切换为绿点千兆直连；\n3. 长期优化：在家庭路由器开启 UPnP 或 Full Cone NAT，即可常态保持蓝点直连。",
-						)
-						else -> RouteDiagnostic(
-							title = "离线或未建立连接",
-							color = Color(0xFFF53F3F),
-							bgColor = Color(0xFFFFECE8),
-							desc = "未能与私有云建立有效连接，请核对接入地址或 Tailscale 登录状态。",
-							advice = "请检查上方 WebDAV 服务地址及账密，或点击上方「去授权」完成 Tailscale 登录。",
-						)
-					}
+					// 连接状态：只告诉用户"连没连上"，直连/中继/打洞等由 App 自动处理，不打扰用户。
+					val online = routeInfo.isDirect || routeInfo.isRelay || routeInfo.isLan
+					val statusText = if (online) "已连接，可正常使用" else "正在连接，请稍候"
+					val statusColor = if (online) Color(0xFF00B578) else Color(0xFF86909C)
 					Column(modifier = Modifier.fillMaxWidth()) {
 						Row(
 							modifier = Modifier.fillMaxWidth(),
@@ -443,23 +416,20 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 							) {
 								Box(
 									modifier = Modifier
-										.size(10.dp)
+										.size(9.dp)
 										.clip(CircleShape)
-										.background(diag.color),
+										.background(statusColor),
 								)
 								Text(
-									text = diag.title,
+									text = "连接状态",
 									fontSize = 13.sp,
 									fontWeight = FontWeight.Bold,
-									color = diag.color,
+									color = Color(0xFF1D2129),
 								)
 							}
 							Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-								TextButton(onClick = {
-									vm.reloadSettings()
-									Toast.makeText(context, "正在尝试重新握手打洞...", Toast.LENGTH_SHORT).show()
-								}) {
-									Text("重新握手打洞", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+								TextButton(onClick = { vm.reloadSettings() }) {
+									Text("重新连接", fontSize = 12.sp, fontWeight = FontWeight.Bold)
 								}
 								if (vm.needsLogin) {
 									Button(
@@ -479,41 +449,16 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 							}
 						}
 						Spacer(modifier = Modifier.height(8.dp))
-						// 闭环诊断说明卡片
 						Surface(
 							shape = RoundedCornerShape(10.dp),
-							color = diag.bgColor,
+							color = Color(0xFFF7F8FA),
 							modifier = Modifier.fillMaxWidth(),
 						) {
-							Column(modifier = Modifier.padding(12.dp)) {
-								Text(
-									text = diag.desc,
-									fontSize = 12.sp,
-									color = Color(0xFF1D2129),
-									lineHeight = 17.sp,
-								)
-								Spacer(modifier = Modifier.height(6.dp))
-								Text(
-									text = diag.advice,
-									fontSize = 11.sp,
-									color = Color(0xFF4E5969),
-									lineHeight = 16.sp,
-								)
-							}
-						}
-						Spacer(modifier = Modifier.height(8.dp))
-						Box(
-							modifier = Modifier
-								.fillMaxWidth()
-								.clip(RoundedCornerShape(8.dp))
-								.background(Color(0xFFF7F8FA))
-								.padding(horizontal = 10.dp, vertical = 8.dp),
-						) {
 							Text(
-								text = vm.linkStatus.ifEmpty { "节点探测与测速中..." },
-								fontSize = 11.sp,
-								color = Color(0xFF86909C),
-								lineHeight = 15.sp,
+								text = statusText,
+								fontSize = 12.sp,
+								color = Color(0xFF4E5969),
+								modifier = Modifier.padding(12.dp),
 							)
 						}
 					}
@@ -686,11 +631,3 @@ private fun SettingItemRow(
 		trailing()
 	}
 }
-
-private data class RouteDiagnostic(
-	val title: String,
-	val color: Color,
-	val bgColor: Color,
-	val desc: String,
-	val advice: String,
-)

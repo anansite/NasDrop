@@ -24,6 +24,14 @@ object UpdateManager {
 
 	private const val RELEASES_API = "https://api.github.com/repos/anansite/private_filemanager/releases/latest"
 
+	// 国内直连 api.github.com 常超时，按序尝试镜像；全部失败才放弃。
+	// 镜像只做公开 releases API 的反代，不涉及任何隐私数据。
+	private val API_CANDIDATES = listOf(
+		"https://api.github.com/repos/anansite/private_filemanager/releases/latest",
+		"https://gh-proxy.com/https://api.github.com/repos/anansite/private_filemanager/releases/latest",
+		"https://ghproxy.net/https://api.github.com/repos/anansite/private_filemanager/releases/latest",
+	)
+
 	private val http = OkHttpClient.Builder()
 		.connectTimeout(15, TimeUnit.SECONDS)
 		.readTimeout(30, TimeUnit.SECONDS)
@@ -39,19 +47,30 @@ object UpdateManager {
 
 	suspend fun checkUpdate(currentVersion: String): UpdateInfo? = withContext(Dispatchers.IO) {
 		runCatching {
-			Log.i("UpdateManager", "Starting checkUpdate, current: $currentVersion, url: $RELEASES_API")
-			val request = Request.Builder()
-				.url(RELEASES_API)
-				.header("Accept", "application/vnd.github.v3+json")
-				.header("User-Agent", "NasDrop-Android-App")
-				.build()
-
-			val response = http.newCall(request).execute()
-			Log.i("UpdateManager", "Response code: ${response.code}")
-			if (!response.isSuccessful) return@withContext null
-			val jsonStr = response.body?.string() ?: return@withContext null
-			Log.i("UpdateManager", "Got body length: ${jsonStr.length}")
-			val obj = JSONObject(jsonStr)
+			Log.i("UpdateManager", "Starting checkUpdate, current: $currentVersion")
+			var jsonStr: String? = null
+			for (url in API_CANDIDATES) {
+				try {
+					val request = Request.Builder()
+						.url(url)
+						.header("Accept", "application/vnd.github.v3+json")
+						.header("User-Agent", "NasDrop-Android-App")
+						.build()
+					val response = http.newCall(request).execute()
+					Log.i("UpdateManager", "API ${url.take(40)} -> ${response.code}")
+					if (response.isSuccessful) {
+						response.body?.string()?.let {
+							if (it.startsWith("{") && it.contains("tag_name")) { jsonStr = it }
+						}
+						if (jsonStr != null) break
+					}
+				} catch (e: Exception) {
+					Log.w("UpdateManager", "API candidate failed: ${e.message}")
+				}
+			}
+			val body = jsonStr ?: return@withContext null
+			Log.i("UpdateManager", "Got body length: ${body.length}")
+			val obj = JSONObject(body)
 
 			val tagName = obj.optString("tag_name", "").trim().removePrefix("v").removePrefix("V")
 			val body = obj.optString("body", "优化与常规 Bug 修复")

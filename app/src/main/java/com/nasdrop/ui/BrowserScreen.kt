@@ -727,15 +727,16 @@ private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third:
 
 @Composable
 private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
+	// 只表达"连没连上"，不暴露直连/中继/打洞等细节——这些由 App 自动处理，用户无需关心。
 	val (bgColor, textColor, dotColor, label) = when {
-		routeInfo.isDirect && routeInfo.endpoint.isEmpty() -> {
-			Quadruple(Color(0xFFE8F9F2), Color(0xFF00A870), Color(0xFF00B578), "🏡 在家直连 · 1ms")
+		routeInfo.isDirect || routeInfo.isLan -> {
+			Quadruple(Color(0xFFE8F9F2), Color(0xFF00A870), Color(0xFF00B578), "已连接")
 		}
-		routeInfo.isDirect -> {
-			Quadruple(Color(0xFFEAF2FF), Color(0xFF2A72F6), Color(0xFF2A72F6), "🚀 远程专线 · 极速")
+		routeInfo.isRelay -> {
+			Quadruple(Color(0xFFEAF2FF), Color(0xFF2A72F6), Color(0xFF2A72F6), "已连接")
 		}
 		else -> {
-			Quadruple(Color(0xFFFFF4E5), Color(0xFFE66A00), Color(0xFFFF7A00), "🐢 远程顺畅 · 自动加速中")
+			Quadruple(Color(0xFFFFF4E5), Color(0xFFE66A00), Color(0xFFFF7A00), "连接中…")
 		}
 	}
 
@@ -834,11 +835,12 @@ private fun SettingsWithStatusButton(
 	onClick: () -> Unit,
 	modifier: Modifier = Modifier,
 ) {
-	val dotColor = when {
-		routeInfo.isLan -> Color(0xFF00B578)      // 🟢 局域网直连 (千兆绿)
-		routeInfo.isDirect -> Color(0xFF2A72F6)   // 🔵 Tailscale打洞直连 (极速蓝)
-		routeInfo.isRelay -> Color(0xFFFF7D00)    // 🟠 DERP中继 (橙点)
-		else -> Color(0xFFFF4D4F)                 // 🔴 离线/未连接 (红点)
+	// 连接状态只做极轻量的底色提示，不再用右上角圆点——那会被误认成"有新消息"。
+	// 用户无需关心直连/中继，这里只区分"在线 / 离线"两种状态。
+	val indicatorColor = if (routeInfo.isDirect || routeInfo.isRelay || routeInfo.isLan) {
+		Color(0xFF00B578) // 在线（柔和绿）
+	} else {
+		Color(0xFFC9CDD4) // 未连接（中性灰，不用刺眼的红）
 	}
 
 	IconButton(
@@ -852,13 +854,14 @@ private fun SettingsWithStatusButton(
 				tint = Color(0xFF4E5969),
 				modifier = Modifier.size(20.dp),
 			)
+			// 齿轮正下方一条极细状态线，弱化存在感，绝不像通知角标
 			Box(
 				modifier = Modifier
-					.size(7.dp)
+					.width(10.dp)
+					.height(2.dp)
 					.clip(CircleShape)
-					.background(dotColor)
-					.border(1.dp, Color.White, CircleShape)
-					.align(Alignment.TopEnd),
+					.background(indicatorColor)
+					.align(Alignment.BottomCenter),
 			)
 		}
 	}
@@ -2962,17 +2965,17 @@ private fun CompactTabItem(
 		modifier = modifier
 			.fillMaxHeight()
 			.clickable(onClick = onClick)
-			.padding(top = 7.dp, bottom = 3.dp),
+			.padding(vertical = 5.dp),
 		horizontalAlignment = Alignment.CenterHorizontally,
-		verticalArrangement = Arrangement.Bottom,
+		// 图标与文字垂直居中且紧贴，去掉多余留白
+		verticalArrangement = Arrangement.Center,
 	) {
 		Icon(
 			imageVector = icon,
 			contentDescription = title,
 			tint = color,
-			modifier = Modifier.size(20.dp),
+			modifier = Modifier.size(19.dp),
 		)
-		Spacer(modifier = Modifier.height(1.dp))
 		Text(
 			text = title,
 			fontSize = 10.sp,
