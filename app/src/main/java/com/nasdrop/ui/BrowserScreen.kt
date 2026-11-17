@@ -1886,15 +1886,14 @@ private fun MoveFolderSheet(
 /**
  * 新建文件夹与专属相册对话框
  */
-@Composable
-private enum class CreateDialogType {
+enum class CreateDialogType {
 	Folder,
 	Album,
 	MediaFolder,
 }
 
 @Composable
-fun CreateFolderDialog(
+private fun CreateFolderDialog(
 	type: CreateDialogType,
 	onConfirm: (name: String) -> Unit,
 	onDismiss: () -> Unit,
