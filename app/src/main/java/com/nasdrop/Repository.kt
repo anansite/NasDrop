@@ -144,12 +144,18 @@ class Repository(private val context: Context) {
 
 	fun http(): OkHttpClient = okHttp
 
+	data class DirectProbeResult(val ip: String, val latencyMs: Long, val isLan: Boolean)
+
+	@Volatile
+	private var directConfirmed: DirectProbeResult? = null
+
 	/** 按当前配置准备 WebDavClient */
 	@Synchronized
 	fun client(settings: Settings): WebDavClient {
 		val key = listOf(
 			settings.baseUrl, settings.user, settings.password,
 			settings.hostname, settings.authKey, settings.trustAllCerts,
+			settings.useTailscale,
 		).joinToString("|")
 		cached?.let { if (key == cachedKey) return it }
 
@@ -160,24 +166,24 @@ class Repository(private val context: Context) {
 		bridgeToken = ""
 
 		var base: HttpUrl = root
-		val lanIp = probeLanDirect(root, settings.user, settings.password)
-		if (lanIp != null) {
+		val direct = probeDirect(root, settings.user, settings.password)
+		if (direct != null) {
 			base = root
 			_routeInfo.value = RouteInfo(
 				isDirect = true,
 				isRelay = false,
-				endpoint = lanIp,
-				peerName = "LAN",
-				label = "🏡 局域网直连 · 1ms (千兆原速)",
-				latencyMs = 1L,
+				endpoint = direct.ip,
+				peerName = if (direct.isLan) "LAN" else "Direct",
+				label = if (direct.isLan) "🏡 局域网直连 · ${direct.latencyMs}ms (千兆原速)" else "⚡ 系统专线直连 · ${direct.latencyMs}ms",
+				latencyMs = direct.latencyMs,
 				isProbing = false,
 				isLanDirect = true,
 			)
 		} else {
-			// 若当前未知是否为 LAN，触发后台异步极速探测，不阻塞主线程
-			triggerLanProbeAsync(settings)
+			// 若当前未知是否为直连，触发后台异步极速探测，不阻塞主线程
+			triggerDirectProbeAsync(settings)
 
-			if (TsBridge.available) {
+			if (settings.useTailscale && TsBridge.available) {
 				val origin = root.newBuilder().encodedPath("/").query(null).fragment(null).build().toString()
 				// 避免在 Android UI 主线程阻塞 JNI / libhoudini 导致 ANR
 				if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
@@ -198,6 +204,17 @@ class Repository(private val context: Context) {
 						}
 					}
 				}
+			} else {
+				_routeInfo.value = RouteInfo(
+					isDirect = false,
+					isRelay = false,
+					endpoint = "",
+					peerName = "",
+					label = if (!settings.useTailscale) "🌐 直连模式" else "🔴 离线未连接",
+					latencyMs = -1L,
+					isProbing = false,
+					isLanDirect = false,
+				)
 			}
 		}
 
@@ -207,31 +224,31 @@ class Repository(private val context: Context) {
 		}
 	}
 
-	private fun probeLanDirect(root: HttpUrl, user: String, pass: String): String? {
-		lanConfirmedIp?.let { return it }
+	private fun probeDirect(root: HttpUrl, user: String, pass: String): DirectProbeResult? {
+		directConfirmed?.let { return it }
 		// 主线程绝不执行同步网络请求，避免 NetworkOnMainThreadException 与卡顿
 		if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
 			return null
 		}
-		return doLanProbe(root, user, pass)
+		return doDirectProbe(root, user, pass)
 	}
 
-	private fun triggerLanProbeAsync(settings: Settings) {
+	private fun triggerDirectProbeAsync(settings: Settings) {
 		val root = settings.baseUrl.toHttpUrlOrNull() ?: return
 		CoroutineScope(Dispatchers.IO).launch {
-			val ip = doLanProbe(root, settings.user, settings.password)
-			if (ip != null) {
-				lanConfirmedIp = ip
+			val res = doDirectProbe(root, settings.user, settings.password)
+			if (res != null) {
+				directConfirmed = res
 				synchronized(this@Repository) {
 					cached = WebDavClient(root, okHttp)
 				}
 				_routeInfo.value = RouteInfo(
 					isDirect = true,
 					isRelay = false,
-					endpoint = ip,
-					peerName = "LAN",
-					label = "🏡 局域网直连 · 1ms (千兆原速)",
-					latencyMs = 1L,
+					endpoint = res.ip,
+					peerName = if (res.isLan) "LAN" else "Direct",
+					label = if (res.isLan) "🏡 局域网直连 · ${res.latencyMs}ms (千兆原速)" else "⚡ 系统专线直连 · ${res.latencyMs}ms",
+					latencyMs = res.latencyMs,
 					isProbing = false,
 					isLanDirect = true,
 				)
@@ -240,41 +257,34 @@ class Repository(private val context: Context) {
 	}
 
 	/**
-	 * 局域网三重智能判定：
-	 * 1. 域名在当前物理网络下被 DNS 解析为私有 IPv4 (RFC 1918)
-	 * 2. 对该私有地址快速发起轻量 HTTP WebDAV 握手 (PROPFIND)，带用户密码
-	 * 3. 握手成功 (200 / 207 / 401 证实确系用户的 NAS WebDAV 服务)
-	 * 全部命中则判定为在家局域网直连，跑满千兆 Wi-Fi，延迟 1ms，彻底绕过虚拟网卡与打洞代理。
+	 * 智能网络判定：
+	 * 1. 优先尝试轻量 HTTP WebDAV 握手 (PROPFIND)，若本地或当前环境网络（Wi-Fi/系统VPN）可直接通达则直接采用直连通道；
+	 * 2. 握手成功则直接使用原生连接，免去内嵌 tsnet 代理开销；
+	 * 3. 只有无法直连且启用了 Tailscale 时才走内嵌 tsnet 隧道打洞。
 	 */
-	private fun doLanProbe(root: HttpUrl, user: String, pass: String): String? {
+	private fun doDirectProbe(root: HttpUrl, user: String, pass: String): DirectProbeResult? {
 		return try {
 			val host = root.host
 			val addrs = java.net.InetAddress.getAllByName(host)
-			var privateIp: String? = null
+			var anyIp = host
+			var isLan = false
 			for (addr in addrs) {
 				val ip = addr.hostAddress ?: continue
+				anyIp = ip
 				val bytes = addr.address
 				if (bytes.size == 4) {
 					val b0 = bytes[0].toInt() and 0xFF
 					val b1 = bytes[1].toInt() and 0xFF
-					val isPrivate = (b0 == 10) ||
+					isLan = (b0 == 10) ||
 						(b0 == 172 && (b1 in 16..31)) ||
 						(b0 == 192 && b1 == 168) ||
 						(b0 == 169 && b1 == 254) ||
 						addr.isSiteLocalAddress ||
 						addr.isLoopbackAddress
-					if (isPrivate) {
-						privateIp = ip
-						break
-					}
+					if (isLan) break
 				}
 			}
 
-			if (privateIp == null) {
-				return null // 公网 IP，回退至 Tailscale 打洞
-			}
-
-			// 发起轻量握手验证，验证服务存活且确系 WebDAV
 			val testReq = Request.Builder()
 				.url(root)
 				.header("Depth", "0")
@@ -285,14 +295,14 @@ class Repository(private val context: Context) {
 			val t0 = System.currentTimeMillis()
 			probeHttp.newCall(testReq).execute().use { resp ->
 				val dt = (System.currentTimeMillis() - t0).coerceAtLeast(1L)
-				if (resp.isSuccessful || resp.code == 401 || resp.code == 207) {
-					Log.i("Repository", "LAN Direct confirmed via $privateIp (${dt}ms)")
-					return privateIp
+				if (resp.isSuccessful || resp.code in 200..499) {
+					Log.i("Repository", "Direct confirmed via $anyIp (${dt}ms), status=${resp.code}")
+					return DirectProbeResult(anyIp, dt, isLan)
 				}
 			}
 			null
 		} catch (e: Exception) {
-			Log.d("Repository", "LAN Direct probe skipped: ${e.message}")
+			Log.d("Repository", "Direct probe skipped: ${e.message}")
 			null
 		}
 	}
@@ -363,6 +373,7 @@ class Repository(private val context: Context) {
 		cached = null
 		cachedKey = ""
 		lanConfirmedIp = null
+		directConfirmed = null
 		TsBridge.stop()
 		_routeInfo.value = RouteInfo(false, false, "", "", "已断开", -1, false)
 	}

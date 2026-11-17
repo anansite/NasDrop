@@ -115,7 +115,12 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 					}
 				},
 				actions = {
-					IconButton(onClick = { logs = vm.logs().ifEmpty { "（暂无日志）" } }) {
+					IconButton(onClick = {
+						scope.launch(Dispatchers.IO) {
+							val text = vm.logs().ifEmpty { "（暂无日志）" }
+							withContext(Dispatchers.Main) { logs = text }
+						}
+					}) {
 						Icon(Icons.Rounded.BugReport, contentDescription = "诊断日志", tint = Color(0xFF86909C))
 					}
 				},
