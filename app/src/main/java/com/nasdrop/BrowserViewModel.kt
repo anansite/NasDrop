@@ -592,8 +592,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			var okCount = 0
 			var failCount = 0
 			val s = app.prefs.current()
-			val c = client ?: app.repo.client(s).also { client = it }
 			withContext(Dispatchers.IO) {
+				val c = client ?: app.repo.client(s).also { client = it }
 				for (item in targets) {
 					try {
 						c.delete(item.path, item.isDir)
@@ -811,9 +811,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch {
 			try {
 				val s = app.prefs.current()
-				val c = app.repo.client(s)
-				client = c
-				val fresh = withContext(Dispatchers.IO) { c.list(target) }
+				val fresh = withContext(Dispatchers.IO) {
+					val c = client ?: app.repo.client(s).also { client = it }
+					c.list(target)
+				}
 				dirCache[target] = fresh
 				error = null
 				if (path == target || cached == null) {
@@ -997,8 +998,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch {
 			try {
 				val s = app.prefs.current()
-				val c = client ?: app.repo.client(s).also { client = it }
-				withContext(Dispatchers.IO) { c.delete(entry.path, entry.isDir) }
+				withContext(Dispatchers.IO) {
+					val c = client ?: app.repo.client(s).also { client = it }
+					c.delete(entry.path, entry.isDir)
+				}
 				dirCache.clear()
 				onResult(true, null)
 				refresh()
@@ -1036,8 +1039,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch {
 			try {
 				val s = app.prefs.current()
-				val c = client ?: app.repo.client(s).also { client = it }
-				withContext(Dispatchers.IO) { action(c) }
+				withContext(Dispatchers.IO) {
+					val c = client ?: app.repo.client(s).also { client = it }
+					action(c)
+				}
 				dirCache.clear()
 				open(path)
 				scanGlobalMedia()

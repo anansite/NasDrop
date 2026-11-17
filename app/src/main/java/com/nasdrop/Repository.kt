@@ -182,12 +182,24 @@ class Repository(private val context: Context) {
 
 			if (TsBridge.available) {
 				val origin = root.newBuilder().encodedPath("/").query(null).fragment(null).build().toString()
-				TsBridge.setInsecureTls(settings.trustAllCerts)
-				val p = TsBridge.start(context, settings.hostname, settings.authKey, origin)
-				if (p > 0) {
-					bridgeToken = TsBridge.token
-					base = "http://127.0.0.1:$p${root.encodedPath}".toHttpUrlOrNull() ?: root
-					updateRouteInfo()
+				// 避免在 Android UI 主线程阻塞 JNI / libhoudini 导致 ANR
+				if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+					TsBridge.setInsecureTls(settings.trustAllCerts)
+					val p = TsBridge.start(context, settings.hostname, settings.authKey, origin)
+					if (p > 0) {
+						bridgeToken = TsBridge.token
+						base = "http://127.0.0.1:$p${root.encodedPath}".toHttpUrlOrNull() ?: root
+						updateRouteInfo()
+					}
+				} else {
+					CoroutineScope(Dispatchers.IO).launch {
+						TsBridge.setInsecureTls(settings.trustAllCerts)
+						val p = TsBridge.start(context, settings.hostname, settings.authKey, origin)
+						if (p > 0) {
+							bridgeToken = TsBridge.token
+							updateRouteInfo()
+						}
+					}
 				}
 			}
 		}
