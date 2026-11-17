@@ -424,11 +424,15 @@ func PunchHole() string {
 
 	ip := p.TailscaleIPs[0]
 	// 连续发送 2 次 PingDisco（间隔 200ms），大幅提升在移动蜂窝网络和对称 NAT 下的打洞成功率
-	var lastRes *tailcfg.PingResult
+	var lastEndpoint string
+	var lastDERP string
+	var lastLatency float64
 	for i := 0; i < 2; i++ {
 		res, err := cl.Ping(ctx, ip, tailcfg.PingDisco)
 		if err == nil {
-			lastRes = res
+			lastEndpoint = res.Endpoint
+			lastDERP = res.DERPRegionCode
+			lastLatency = res.LatencySeconds
 			if res.Endpoint != "" {
 				break
 			}
@@ -457,14 +461,14 @@ func PunchHole() string {
 		}
 	}
 
-	if lastRes != nil {
-		if lastRes.Endpoint != "" {
-			return fmt.Sprintf("打洞成功！直连 %s (%.1f ms)", lastRes.Endpoint, lastRes.LatencySeconds*1000)
-		}
-		if lastRes.DERPRegionCode != "" {
-			return fmt.Sprintf("当前中继至 %s (%.1f ms)，正在持续尝试打洞", lastRes.DERPRegionCode, lastRes.LatencySeconds*1000)
-		}
-		return fmt.Sprintf("探测完成 (%.1f ms)", lastRes.LatencySeconds*1000)
+	if lastEndpoint != "" {
+		return fmt.Sprintf("打洞成功！直连 %s (%.1f ms)", lastEndpoint, lastLatency*1000)
+	}
+	if lastDERP != "" {
+		return fmt.Sprintf("当前中继至 %s (%.1f ms)，正在持续尝试打洞", lastDERP, lastLatency*1000)
+	}
+	if lastLatency > 0 {
+		return fmt.Sprintf("探测完成 (%.1f ms)", lastLatency*1000)
 	}
 
 	return "未发现可用对端"
