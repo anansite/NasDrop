@@ -301,6 +301,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		get() = groupEntriesForTimeline(currentAlbumPhotos)
 
 	init {
+		loadUserPreferences()
 		viewModelScope.launch(workerDispatcher) { open("") }
 		startUnifiedLinkMonitor()
 		cleanupOldCache()
@@ -400,8 +401,28 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		selectedCategory = cat
 	}
 
+	private fun loadUserPreferences() {
+		viewModelScope.launch(Dispatchers.IO) {
+			runCatching {
+				val savedView = app.prefs.getViewMode()
+				if (savedView != null) {
+					val vm = ViewMode.valueOf(savedView)
+					withContext(Dispatchers.Main) { viewMode = vm }
+				}
+			}
+			runCatching {
+				val savedSort = app.prefs.getSortOrder()
+				if (savedSort != null) {
+					val so = SortOrder.valueOf(savedSort)
+					withContext(Dispatchers.Main) { sortOrder = so }
+				}
+			}
+		}
+	}
+
 	fun toggleViewMode() {
 		viewMode = if (viewMode == ViewMode.Cards) ViewMode.Grid else ViewMode.Cards
+		viewModelScope.launch { app.prefs.setViewMode(viewMode.name) }
 	}
 
 	fun cycleViewMode() {
@@ -414,6 +435,65 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			SortOrder.ModifiedAsc -> SortOrder.NameAsc
 			SortOrder.NameAsc -> SortOrder.SizeDesc
 			SortOrder.SizeDesc -> SortOrder.ModifiedDesc
+		}
+		viewModelScope.launch { app.prefs.setSortOrder(sortOrder.name) }
+	}
+
+	/**
+	 * 将远端原图保存到本地系统相册 (Pictures/NasDrop) 并通知系统刷新
+	 */
+	fun saveImageToGallery(entry: DavEntry, onResult: (Boolean, String) -> Unit) {
+		viewModelScope.launch(Dispatchers.IO) {
+			try {
+				val cli = client ?: return@launch withContext(Dispatchers.Main) {
+					onResult(false, "未连接服务器")
+				}
+				val picturesDir = android.os.Environment.getExternalStoragePublicDirectory(
+					android.os.Environment.DIRECTORY_PICTURES
+				).resolve("NasDrop")
+				if (!picturesDir.exists()) picturesDir.mkdirs()
+
+				val destFile = picturesDir.resolve(entry.name)
+				destFile.outputStream().use { fos ->
+					cli.download(entry.path, fos) { _, _ -> }
+				}
+				if (destFile.exists() && destFile.length() > 0) {
+					android.media.MediaScannerConnection.scanFile(
+						app,
+						arrayOf(destFile.absolutePath),
+						null,
+					) { _, _ -> }
+					withContext(Dispatchers.Main) {
+						onResult(true, "已保存至相册 Pictures/NasDrop")
+					}
+				} else {
+					withContext(Dispatchers.Main) { onResult(false, "下载失败") }
+				}
+			} catch (e: Exception) {
+				withContext(Dispatchers.Main) { onResult(false, "保存失败：${e.message}") }
+			}
+		}
+	}
+
+	/**
+	 * 将图片下载至共享临时缓存，准备进行系统微信/QQ等第三方分享
+	 */
+	fun prepareShareImage(entry: DavEntry, onResult: (java.io.File?) -> Unit) {
+		viewModelScope.launch(Dispatchers.IO) {
+			try {
+				val cli = client ?: return@launch withContext(Dispatchers.Main) { onResult(null) }
+				val shareDir = app.cacheDir.resolve("share")
+				if (!shareDir.exists()) shareDir.mkdirs()
+				val shareFile = shareDir.resolve(entry.name)
+				if (!shareFile.exists() || shareFile.length() != entry.size) {
+					shareFile.outputStream().use { fos ->
+						cli.download(entry.path, fos) { _, _ -> }
+					}
+				}
+				withContext(Dispatchers.Main) { onResult(shareFile) }
+			} catch (_: Exception) {
+				withContext(Dispatchers.Main) { onResult(null) }
+			}
 		}
 	}
 

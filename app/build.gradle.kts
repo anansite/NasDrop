@@ -17,6 +17,10 @@ android {
 			?: 25
 		versionCode = runNumber
 		versionName = "1.0.$runNumber"
+
+		ndk {
+			abiFilters += listOf("arm64-v8a")
+		}
 	}
 
 	// 仓库里放了一张固定的自签名证书，这样每次 CI 打出来的包签名一致，

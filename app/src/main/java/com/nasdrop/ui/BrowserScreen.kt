@@ -491,25 +491,63 @@ fun BrowserScreen(
 		)
 	}
 
-	// 4. 重命名对话框
+	// 4. 重命名对话框（带文件后缀名保护）
 	activeEntryForRename?.let { entry ->
-		var newName by remember { mutableStateOf(entry.name) }
+		val originalName = entry.name
+		val isFile = !entry.isDir
+		val dotIndex = originalName.lastIndexOf('.')
+		val hasExt = isFile && dotIndex > 0
+		val baseName = if (hasExt) originalName.substring(0, dotIndex) else originalName
+		val extension = if (hasExt) originalName.substring(dotIndex) else ""
+
+		var newBaseName by remember(entry) { mutableStateOf(baseName) }
+
 		AlertDialog(
 			onDismissRequest = { activeEntryForRename = null },
-			title = { Text("重命名", fontWeight = FontWeight.Bold) },
+			title = { Text(if (entry.isDir) "重命名文件夹" else "重命名文件", fontWeight = FontWeight.Bold) },
 			text = {
-				OutlinedTextField(
-					value = newName,
-					onValueChange = { newName = it },
-					singleLine = true,
-					modifier = Modifier.fillMaxWidth(),
-				)
+				Column {
+					OutlinedTextField(
+						value = newBaseName,
+						onValueChange = { newBaseName = it },
+						singleLine = true,
+						modifier = Modifier.fillMaxWidth(),
+						label = { Text(if (hasExt) "文件名称" else "名称") },
+						trailingIcon = if (hasExt) {
+							{
+								Surface(
+									color = Color(0xFFF1F5F9),
+									shape = RoundedCornerShape(6.dp),
+									modifier = Modifier.padding(end = 8.dp),
+								) {
+									Text(
+										text = extension,
+										style = MaterialTheme.typography.labelMedium,
+										color = Color(0xFF64748B),
+										fontWeight = FontWeight.Bold,
+										modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+									)
+								}
+							}
+						} else null,
+					)
+					if (hasExt) {
+						Spacer(modifier = Modifier.height(6.dp))
+						Text(
+							"🔒 后缀名 $extension 已受保护，避免格式损坏",
+							style = MaterialTheme.typography.bodySmall,
+							color = Color(0xFF94A3B8),
+						)
+					}
+				}
 			},
 			confirmButton = {
 				Button(
 					onClick = {
-						val target = newName.trim()
-						if (target.isNotBlank() && target != entry.name) vm.rename(entry, target)
+						val target = (newBaseName.trim() + extension).trim()
+						if (target.isNotBlank() && target != entry.name) {
+							vm.rename(entry, target)
+						}
 						activeEntryForRename = null
 					},
 					colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),

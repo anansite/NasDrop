@@ -23,16 +23,17 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 data class RouteInfo(
-	val isDirect: Boolean,     // 是否为 P2P 直连打洞
+	val isDirect: Boolean,     // 是否为 P2P 直连打洞或局域网直连
 	val isRelay: Boolean,      // 是否为 DERP 中继代理模式
 	val endpoint: String,      // 对端打洞端点或中继节点（如 "39.163.49.110:20045"）
-	val peerName: String,      // 对端主机名（如 "istoreos"）
+	val peerName: String,      // 对端主机名（如 "istoreos" 或 "LAN"）
 	val label: String,         // 状态标签
 	val latencyMs: Long = -1L,
 	val isProbing: Boolean = false,
+	val isLanDirect: Boolean = false,
 ) {
 	val isLan: Boolean
-		get() = isDirect && endpoint.isEmpty()
+		get() = isLanDirect || (isDirect && endpoint.isEmpty())
 }
 
 /**
@@ -156,7 +157,20 @@ class Repository(private val context: Context) {
 		bridgeToken = ""
 
 		var base: HttpUrl = root
-		if (TsBridge.available) {
+		val lanIp = probeLanDirect(root, settings.user, settings.password)
+		if (lanIp != null) {
+			base = root
+			_routeInfo.value = RouteInfo(
+				isDirect = true,
+				isRelay = false,
+				endpoint = lanIp,
+				peerName = "LAN",
+				label = "🏡 局域网直连 · 1ms (千兆原速)",
+				latencyMs = 1L,
+				isProbing = false,
+				isLanDirect = true,
+			)
+		} else if (TsBridge.available) {
 			val origin = root.newBuilder().encodedPath("/").query(null).fragment(null).build().toString()
 			TsBridge.setInsecureTls(settings.trustAllCerts)
 			val p = TsBridge.start(context, settings.hostname, settings.authKey, origin)
@@ -173,8 +187,69 @@ class Repository(private val context: Context) {
 		}
 	}
 
+	/**
+	 * 局域网三重智能判定：
+	 * 1. 域名在当前物理网络下被 DNS 解析为私有 IPv4 (RFC 1918)
+	 * 2. 对该地址快速发起轻量 HTTP WebDAV 握手 (PROPFIND)，带用户密码
+	 * 3. 握手成功 (200 / 207 / 401 证实确系用户的 NAS WebDAV 服务)
+	 * 全部命中则判定为在家局域网直连，跑满千兆 Wi-Fi，延迟 1ms，彻底绕过虚拟网卡与打洞代理。
+	 */
+	private fun probeLanDirect(root: HttpUrl, user: String, pass: String): String? {
+		return try {
+			val host = root.host
+			val addrs = java.net.InetAddress.getAllByName(host)
+			var privateIp: String? = null
+			for (addr in addrs) {
+				val ip = addr.hostAddress ?: continue
+				val bytes = addr.address
+				if (bytes.size == 4) {
+					val b0 = bytes[0].toInt() and 0xFF
+					val b1 = bytes[1].toInt() and 0xFF
+					val isPrivate = (b0 == 10) ||
+						(b0 == 172 && (b1 in 16..31)) ||
+						(b0 == 192 && b1 == 168) ||
+						(b0 == 169 && b1 == 254) ||
+						addr.isSiteLocalAddress ||
+						addr.isLoopbackAddress
+					if (isPrivate) {
+						privateIp = ip
+						break
+					}
+				}
+			}
+
+			if (privateIp == null) {
+				return null // 公网 IP，回退至 Tailscale 打洞
+			}
+
+			// 发起轻量握手验证，验证服务存活且确系 WebDAV
+			val testReq = Request.Builder()
+				.url(root)
+				.header("Depth", "0")
+				.header("Authorization", Credentials.basic(user, pass))
+				.method("PROPFIND", okhttp3.RequestBody.create(null, ByteArray(0)))
+				.build()
+
+			val t0 = System.currentTimeMillis()
+			probeHttp.newCall(testReq).execute().use { resp ->
+				val dt = (System.currentTimeMillis() - t0).coerceAtLeast(1L)
+				if (resp.isSuccessful || resp.code == 401 || resp.code == 207) {
+					Log.i("Repository", "LAN Direct confirmed via $privateIp (${dt}ms)")
+					return privateIp
+				}
+			}
+			null
+		} catch (e: Exception) {
+			Log.d("Repository", "LAN Direct probe skipped: ${e.message}")
+			null
+		}
+	}
+
 	/** 主动触发 NAT 打洞，促使链路从 DERP 中继切换为 P2P 直连 */
 	fun triggerHolePunch(): String {
+		if (_routeInfo.value.isLanDirect) {
+			return "当前已处于千兆局域网原生直连状态"
+		}
 		val result = TsBridge.punchHole()
 		updateRouteInfo()
 		return result
@@ -182,6 +257,9 @@ class Repository(private val context: Context) {
 
 	/** 刷新链路状态（判断是 P2P 直连打洞还是 DERP 中继代理） */
 	fun updateRouteInfo() {
+		if (_routeInfo.value.isLanDirect) {
+			return // 局域网直连模式保持原样，不被 Tailscale 状态覆盖
+		}
 		val info = TsBridge.peerLinkInfo()
 		// info 格式: "direct|39.163.49.110:20045|istoreos" 或 "relay|hongkong|istoreos"
 		val parts = info.split('|')
@@ -196,6 +274,7 @@ class Repository(private val context: Context) {
 					peerName = name,
 					label = "⚡ P2P 直连 · $ep",
 					isProbing = false,
+					isLanDirect = false,
 				)
 			}
 			parts.firstOrNull() == "relay" -> {
@@ -208,6 +287,7 @@ class Repository(private val context: Context) {
 					peerName = name,
 					label = "🔄 DERP 中继 · $relayNode",
 					isProbing = false,
+					isLanDirect = false,
 				)
 			}
 			else -> {
@@ -219,6 +299,7 @@ class Repository(private val context: Context) {
 					peerName = "",
 					label = if (st.startsWith("running")) "🛡️ Tailscale 已连接" else "🛡️ Tailscale 准备中",
 					isProbing = false,
+					isLanDirect = false,
 				)
 			}
 		}

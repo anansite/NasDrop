@@ -82,6 +82,18 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import android.content.Intent
+import android.widget.Toast
+import androidx.core.content.FileProvider
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import com.nasdrop.NasDb
 import com.nasdrop.DavEntry
 import com.nasdrop.app
 import kotlinx.coroutines.delay
@@ -97,45 +109,252 @@ fun ImageViewer(
 	startIndex: Int,
 	urlOf: (String) -> String?,
 	onBack: () -> Unit,
+	onSaveToGallery: ((DavEntry, (Boolean, String) -> Unit) -> Unit)? = null,
+	onShare: ((DavEntry, (java.io.File?) -> Unit) -> Unit)? = null,
+	onDelete: ((DavEntry) -> Unit)? = null,
 ) {
-	if (images.isEmpty()) return
-	val pager = rememberPagerState(initialPage = startIndex.coerceIn(0, images.lastIndex)) {
-		images.size
+	val context = LocalContext.current
+	var imageList by remember(images) { mutableStateOf(images) }
+	if (imageList.isEmpty()) {
+		LaunchedEffect(Unit) { onBack() }
+		return
 	}
-	val current = images[pager.currentPage.coerceIn(0, images.lastIndex)]
 
-	Box(Modifier.fillMaxSize().background(Color.Black)) {
-		HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
-			val entry = images[page]
+	val pager = rememberPagerState(initialPage = startIndex.coerceIn(0, imageList.lastIndex)) {
+		imageList.size
+	}
+	val current = imageList.getOrNull(pager.currentPage.coerceIn(0, imageList.lastIndex)) ?: return
+
+	var controlsVisible by remember { mutableStateOf(true) }
+	var showInfoDialog by remember { mutableStateOf(false) }
+	var showDeleteDialog by remember { mutableStateOf(false) }
+	var isSaving by remember { mutableStateOf(false) }
+	var isSharing by remember { mutableStateOf(false) }
+
+	Box(
+		Modifier
+			.fillMaxSize()
+			.background(Color.Black)
+			.pointerInput(Unit) {
+				detectTapGestures(onTap = { controlsVisible = !controlsVisible })
+			},
+	) {
+		HorizontalPager(
+			state = pager,
+			modifier = Modifier.fillMaxSize(),
+			userScrollEnabled = true,
+		) { page ->
+			val entry = imageList.getOrNull(page) ?: return@HorizontalPager
 			ZoomableImage(url = urlOf(entry.path), name = entry.name)
 		}
 
-		TopAppBar(
-			title = {
-				Column {
-					Text(
-						current.displayName,
-						style = MaterialTheme.typography.titleSmall,
-						maxLines = 1,
-						overflow = TextOverflow.Ellipsis,
-					)
-					Text(
-						"${pager.currentPage + 1} / ${images.size}",
-						style = MaterialTheme.typography.bodySmall,
-					)
+		// 顶栏
+		AnimatedVisibility(
+			visible = controlsVisible,
+			enter = fadeIn(),
+			exit = fadeOut(),
+			modifier = Modifier.align(Alignment.TopCenter),
+		) {
+			TopAppBar(
+				title = {
+					Column {
+						Text(
+							current.displayName,
+							style = MaterialTheme.typography.titleSmall,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+						)
+						Text(
+							"${pager.currentPage + 1} / ${imageList.size}",
+							style = MaterialTheme.typography.bodySmall,
+						)
+					}
+				},
+				navigationIcon = {
+					IconButton(onClick = onBack) {
+						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回")
+					}
+				},
+				colors = TopAppBarDefaults.topAppBarColors(
+					containerColor = Color.Black.copy(alpha = 0.55f),
+					titleContentColor = Color.White,
+					navigationIconContentColor = Color.White,
+				),
+			)
+		}
+
+		// 底部大厂级专业操作栏
+		AnimatedVisibility(
+			visible = controlsVisible,
+			enter = fadeIn(),
+			exit = fadeOut(),
+			modifier = Modifier.align(Alignment.BottomCenter),
+		) {
+			Surface(
+				color = Color.Black.copy(alpha = 0.65f),
+				contentColor = Color.White,
+				modifier = Modifier.fillMaxWidth(),
+			) {
+				Row(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(horizontal = 16.dp, vertical = 12.dp),
+					horizontalArrangement = Arrangement.SpaceEvenly,
+					verticalAlignment = Alignment.CenterVertically,
+				) {
+					// 1. 保存原图到手机相册
+					Column(
+						horizontalAlignment = Alignment.CenterHorizontally,
+						modifier = Modifier
+							.clip(RoundedCornerShape(8.dp))
+							.pointerInput(Unit) {
+								detectTapGestures {
+									if (isSaving) return@detectTapGestures
+									isSaving = true
+									Toast.makeText(context, "正在下载保存原图…", Toast.LENGTH_SHORT).show()
+									if (onSaveToGallery != null) {
+										onSaveToGallery(current) { ok, msg ->
+											isSaving = false
+											Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+										}
+									} else {
+										isSaving = false
+										Toast.makeText(context, "暂不支持保存", Toast.LENGTH_SHORT).show()
+									}
+								}
+							}
+							.padding(horizontal = 8.dp, vertical = 4.dp),
+					) {
+						Icon(Icons.Rounded.Download, contentDescription = "存相册", tint = Color.White)
+						Spacer(Modifier.height(4.dp))
+						Text("存相册", style = MaterialTheme.typography.labelSmall, color = Color.White)
+					}
+
+					// 2. 一键系统微信/QQ分享
+					Column(
+						horizontalAlignment = Alignment.CenterHorizontally,
+						modifier = Modifier
+							.clip(RoundedCornerShape(8.dp))
+							.pointerInput(Unit) {
+								detectTapGestures {
+									if (isSharing) return@detectTapGestures
+									isSharing = true
+									Toast.makeText(context, "正在准备分享…", Toast.LENGTH_SHORT).show()
+									if (onShare != null) {
+										onShare(current) { file ->
+											isSharing = false
+											if (file != null && file.exists()) {
+												try {
+													val uri = FileProvider.getUriForFile(
+														context,
+														"${context.packageName}.fileprovider",
+														file,
+													)
+													val intent = Intent(Intent.ACTION_SEND).apply {
+														type = "image/*"
+														putExtra(Intent.EXTRA_STREAM, uri)
+														addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+													}
+													context.startActivity(Intent.createChooser(intent, "分享图片至"))
+												} catch (e: Exception) {
+													Toast.makeText(context, "分享失败：${e.message}", Toast.LENGTH_SHORT).show()
+												}
+											} else {
+												Toast.makeText(context, "获取图片失败", Toast.LENGTH_SHORT).show()
+											}
+										}
+									} else {
+										isSharing = false
+									}
+								}
+							}
+							.padding(horizontal = 8.dp, vertical = 4.dp),
+					) {
+						Icon(Icons.Rounded.Share, contentDescription = "分享", tint = Color.White)
+						Spacer(Modifier.height(4.dp))
+						Text("分享", style = MaterialTheme.typography.labelSmall, color = Color.White)
+					}
+
+					// 3. 原图详情信息
+					Column(
+						horizontalAlignment = Alignment.CenterHorizontally,
+						modifier = Modifier
+							.clip(RoundedCornerShape(8.dp))
+							.pointerInput(Unit) {
+								detectTapGestures { showInfoDialog = true }
+							}
+							.padding(horizontal = 8.dp, vertical = 4.dp),
+					) {
+						Icon(Icons.Rounded.Info, contentDescription = "详情", tint = Color.White)
+						Spacer(Modifier.height(4.dp))
+						Text("详情", style = MaterialTheme.typography.labelSmall, color = Color.White)
+					}
+
+					// 4. 删除当前图片
+					Column(
+						horizontalAlignment = Alignment.CenterHorizontally,
+						modifier = Modifier
+							.clip(RoundedCornerShape(8.dp))
+							.pointerInput(Unit) {
+								detectTapGestures { showDeleteDialog = true }
+							}
+							.padding(horizontal = 8.dp, vertical = 4.dp),
+					) {
+						Icon(Icons.Rounded.Delete, contentDescription = "删除", tint = Color(0xFFFF5252))
+						Spacer(Modifier.height(4.dp))
+						Text("删除", style = MaterialTheme.typography.labelSmall, color = Color(0xFFFF5252))
+					}
 				}
-			},
-			navigationIcon = {
-				IconButton(onClick = onBack) {
-					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回")
-				}
-			},
-			colors = TopAppBarDefaults.topAppBarColors(
-				containerColor = Color.Black.copy(alpha = 0.45f),
-				titleContentColor = Color.White,
-				navigationIconContentColor = Color.White,
-			),
-		)
+			}
+		}
+
+		// 详情弹窗
+		if (showInfoDialog) {
+			AlertDialog(
+				onDismissRequest = { showInfoDialog = false },
+				title = { Text("图片详情", fontWeight = FontWeight.Bold) },
+				text = {
+					Column {
+						Text("名称: ${current.name}", style = MaterialTheme.typography.bodyMedium)
+						Spacer(Modifier.height(8.dp))
+						Text("大小: ${current.sizeHuman}", style = MaterialTheme.typography.bodyMedium)
+						Spacer(Modifier.height(8.dp))
+						Text("路径: ${current.path}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
+					}
+				},
+				confirmButton = {
+					TextButton(onClick = { showInfoDialog = false }) { Text("关闭") }
+				},
+			)
+		}
+
+		// 删除确认弹窗
+		if (showDeleteDialog) {
+			AlertDialog(
+				onDismissRequest = { showDeleteDialog = false },
+				title = { Text("确认彻底删除？") },
+				text = { Text("确定要从 NAS 中删除该图片吗？此操作无法撤销。\n${current.name}") },
+				confirmButton = {
+					Button(
+						onClick = {
+							showDeleteDialog = false
+							val target = current
+							onDelete?.invoke(target)
+							val remaining = imageList.filterNot { it.path == target.path }
+							if (remaining.isEmpty()) {
+								onBack()
+							} else {
+								imageList = remaining
+							}
+						},
+						colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252)),
+					) { Text("彻底删除") }
+				},
+				dismissButton = {
+					TextButton(onClick = { showDeleteDialog = false }) { Text("取消") }
+				},
+			)
+		}
 	}
 }
 
@@ -211,6 +430,10 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 	var hudText by remember { mutableStateOf("") }
 	var hudVisible by remember { mutableStateOf(false) }
 
+	val nasDb = remember { NasDb.getInstance(context) }
+	val savedProgress = remember(entry.path) { nasDb.getVideoProgress(entry.path) }
+	var showResumeTip by remember { mutableStateOf(savedProgress > 3000L) }
+
 	val player = remember(url) {
 		val factory = DefaultMediaSourceFactory(context)
 			.setDataSourceFactory(OkHttpDataSource.Factory(http))
@@ -220,11 +443,32 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 			.apply {
 				playWhenReady = true
 				setMediaItem(MediaItem.fromUri(url ?: ""))
+				if (savedProgress > 3000L) {
+					seekTo(savedProgress)
+				}
 				prepare()
 			}
 	}
 
-	// 播放器状态监听
+	// 自动隐藏续播提示
+	LaunchedEffect(showResumeTip) {
+		if (showResumeTip) {
+			delay(3000)
+			showResumeTip = false
+		}
+	}
+
+	// 周期性同步播放进度到 NasDb
+	LaunchedEffect(player) {
+		while (true) {
+			delay(3000)
+			if (player.isPlaying) {
+				nasDb.saveVideoProgress(entry.path, player.currentPosition, player.duration)
+			}
+		}
+	}
+
+	// 播放器状态监听与退出记忆
 	DisposableEffect(player) {
 		val listener = object : Player.Listener {
 			override fun onIsPlayingChanged(playing: Boolean) {
@@ -236,6 +480,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 		}
 		player.addListener(listener)
 		onDispose {
+			nasDb.saveVideoProgress(entry.path, player.currentPosition, player.duration)
 			player.removeListener(listener)
 			player.release()
 		}
@@ -637,6 +882,34 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 							)
 						}
 					}
+				}
+			}
+		}
+
+		// 自动续播浮动提示胶囊
+		AnimatedVisibility(
+			visible = showResumeTip,
+			enter = fadeIn(),
+			exit = fadeOut(),
+			modifier = Modifier
+				.align(Alignment.BottomStart)
+				.padding(start = 20.dp, bottom = 90.dp),
+		) {
+			Surface(
+				color = Color(0xCC1E293B),
+				shape = RoundedCornerShape(20.dp),
+				shadowElevation = 4.dp,
+			) {
+				Row(
+					modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+					verticalAlignment = Alignment.CenterVertically,
+				) {
+					Text(
+						text = "⏱️ 已自动恢复至上次播放进度 ${formatTime(savedProgress)}",
+						color = Color.White,
+						fontSize = 12.sp,
+						fontWeight = FontWeight.Medium,
+					)
 				}
 			}
 		}

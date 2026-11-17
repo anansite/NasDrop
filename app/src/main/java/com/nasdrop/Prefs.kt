@@ -51,6 +51,8 @@ class Prefs(private val context: Context) {
 		val hostname = stringPreferencesKey("hostname")
 		val authKey = stringPreferencesKey("auth_key")
 		val trustAllCerts = booleanPreferencesKey("trust_all_certs")
+		val viewMode = stringPreferencesKey("view_mode")
+		val sortOrder = stringPreferencesKey("sort_order")
 	}
 
 	val settings: Flow<Settings> = context.dataStore.data.map { it.toSettings() }
@@ -87,6 +89,16 @@ class Prefs(private val context: Context) {
 
 	suspend fun setLastDir(dir: String) {
 		context.dataStore.edit { it[Keys.lastDir] = dir.trim('/') }
+	}
+
+	suspend fun getViewMode(): String? = context.dataStore.data.map { it[Keys.viewMode] }.first()
+	suspend fun setViewMode(mode: String) {
+		context.dataStore.edit { it[Keys.viewMode] = mode }
+	}
+
+	suspend fun getSortOrder(): String? = context.dataStore.data.map { it[Keys.sortOrder] }.first()
+	suspend fun setSortOrder(order: String) {
+		context.dataStore.edit { it[Keys.sortOrder] = order }
 	}
 
 	private fun Preferences.toSettings(): Settings {
