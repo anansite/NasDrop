@@ -16,6 +16,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -69,8 +70,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -133,39 +134,13 @@ fun ImageViewer(
 	}
 	val current = imageList.getOrNull(pager.currentPage.coerceIn(0, imageList.lastIndex)) ?: return
 
-	// 统一解码尺寸 = 屏幕像素。预取和实际显示用**同一个 Size**，
-	// Coil 的内存缓存 key 才能对上：否则预取按原始尺寸解码、显示按 view 尺寸解码，
-	// 两份结果互不命中，预取等于白做（还得再解码一次，就是"变清晰慢"的真实原因）。
-	val config = LocalConfiguration.current
-	val targetSize = remember(config.screenWidthPx, config.screenHeightPx) {
-		Size(config.screenWidthPx.toFloat(), config.screenHeightPx.toFloat())
-	}
-
-	// 预热原图：进入看图/翻页时就把 当前±1 张原图提交给 Coil 预加载。
-	// 带上 targetSize 后预取结果直接落在内存缓存，翻页/回看时命中即显示，无需再解码。
-	val imageLoader = context.app.repo.imageLoader
-	val currentPage = pager.currentPage
-	LaunchedEffect(currentPage, targetSize) {
-		val center = currentPage.coerceIn(0, imageList.lastIndex)
-		for (i in (center - 1)..(center + 1)) {
-			val e = imageList.getOrNull(i) ?: continue
-			val u = urlOf(e.path) ?: continue
-			imageLoader.enqueue(
-				ImageRequest.Builder(context)
-					.data(u)
-					.size(targetSize)
-					.build()
-			)
-		}
-	}
-
 	var controlsVisible by remember { mutableStateOf(true) }
 	var showInfoDialog by remember { mutableStateOf(false) }
 	var showDeleteDialog by remember { mutableStateOf(false) }
 	var isSaving by remember { mutableStateOf(false) }
 	var isSharing by remember { mutableStateOf(false) }
 
-	Box(
+	BoxWithConstraints(
 		Modifier
 			.fillMaxSize()
 			.background(Color.Black)
@@ -173,6 +148,32 @@ fun ImageViewer(
 				detectTapGestures(onTap = { controlsVisible = !controlsVisible })
 			},
 	) {
+		// 统一解码尺寸 = 当前约束的实际像素。
+		// 预取和实际显示用**同一个 Size**，Coil 的内存缓存 key 才能对上：否则预取按原始
+		// 尺寸解码、显示按 view 尺寸解码，两份结果互不命中，预取等于白做——那正是
+		// "点开后还要等一会儿才清晰"的真实原因。而且 Coil 默认会按原始尺寸解码手机
+		// 上动辄 4000px 宽的大图，解码时间和内存都翻几倍。
+		val targetSize = with(LocalDensity.current) {
+			Size(maxWidth.roundToPx().coerceAtLeast(1), maxHeight.roundToPx().coerceAtLeast(1))
+		}
+
+		// 预热原图：进入看图/翻页时就把 当前±1 张原图提交给 Coil 预加载。
+		// 带上 targetSize 后预取结果直接落在内存缓存，翻页/回看时命中即显示，无需再解码。
+		val imageLoader = context.app.repo.imageLoader
+		val currentPage = pager.currentPage
+		LaunchedEffect(currentPage, targetSize) {
+			val center = currentPage.coerceIn(0, imageList.lastIndex)
+			for (i in (center - 1)..(center + 1)) {
+				val e = imageList.getOrNull(i) ?: continue
+				val u = urlOf(e.path) ?: continue
+				imageLoader.enqueue(
+					ImageRequest.Builder(context)
+						.data(u)
+						.size(targetSize)
+						.build()
+				)
+			}
+		}
 		HorizontalPager(
 			state = pager,
 			modifier = Modifier.fillMaxSize(),
