@@ -382,64 +382,33 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 		}
 
-		// 单个文件传完（PUT 已成功）→ 立刻乐观插入列表，做到"传完即见"。
-		// 这一步不等任何网络刷新，是解决"上传完成后还不能立即刷新出来"的关键：
-		// 之前要等整批结束 → notifyFinished → collect → doRefresh 两次网络往返，
-		// 隧道稍抖就变成"等半天才出现"。
+		// 单文件上传生命周期 → 立刻乐观插入列表 / 回滚 / 后台校正。
+		// 分三段处理是这一版的关键：
+		//  - SENT（字节写完）就插：用户不用再盯着"等待服务端写入"那几秒到几十秒；
+		//  - CONFIRMED（201 到手）只做静默校正 + 给该目录补拉缩略图；
+		//  - FAILED 回滚，绝不留下点开就 404 的幻影。
 		// 用独立 Dispatchers.IO 而不是 workerDispatcher（只有 4 个槽）：
 		// 这几个 collect 是长期挂起的关键路径，上传高峰期 tasks 进度回调会频繁占用槽位，
 		// 一旦槽位被占满，"文件传完"这条事件就可能延迟甚至饿死，用户就看不到新文件。
 		viewModelScope.launch(Dispatchers.IO) {
-			Uploads.fileUploadedEvent.collect { f ->
+			Uploads.fileLifecycle.collect { f ->
 				val dirKey = f.dir.trim('/')
 				val entryPath = if (dirKey.isEmpty()) f.name else "$dirKey/${f.name}"
-				val fresh = DavEntry(
-					name = f.name,
-					path = entryPath,
-					isDir = false,
-					size = if (f.size > 0) f.size else 0L,
-					modified = System.currentTimeMillis(),
-				)
-				// 1) 目录缓存：写进去，保证用户之后进入该目录能立刻看到（不必等重扫）
-				dirCache[dirKey]?.let { list ->
-					dirCache[dirKey] = list.filterNot { it.name == f.name } + fresh
-				}
-				// 2) 当前正停在这个目录 → 直接进可见列表
-				if (path.trim('/') == dirKey) {
-					withContext(Dispatchers.Main) {
-						entries = entries.filterNot { it.name == f.name } + fresh
-					}
-				}
-				// 3) 相册 / 影音页各自的媒体池也要立刻补上，
-				//    否则用户传完图切到"相册"Tab 还是看不到——那是最容易让人以为"没传上去"的场景。
-				val ext = f.name.substringAfterLast('.', "").lowercase()
-				withContext(Dispatchers.Main) {
-					if (ext in DavEntry.IMAGES && allPhotos.isNotEmpty() &&
-						allPhotos.none { it.path == entryPath }
-					) {
-						allPhotos = listOf(fresh) + allPhotos
-					}
-					if (ext in DavEntry.VIDEOS && allVideos.isNotEmpty() &&
-						allVideos.none { it.path == entryPath }
-					) {
-						allVideos = listOf(fresh) + allVideos
-					}
+				when (f.phase) {
+					Uploads.FilePhase.SENT -> optimisticInsert(dirKey, entryPath, f.name, f.size)
+					Uploads.FilePhase.CONFIRMED -> onUploadConfirmed(dirKey, entryPath, f.name, f.size)
+					Uploads.FilePhase.FAILED -> rollbackUpload(dirKey, entryPath, f.name)
 				}
 			}
 		}
 
 		viewModelScope.launch(Dispatchers.IO) {
 			Uploads.uploadCompletedEvent.collect {
-				// 整批结束：清缓存并静默校正一次。网络响应才是唯一真相，
-				// 用来纠正乐观插入的 size / 修改时间，并补上服务端可能改名的情况。
+				// 整批结束：只把当前目录重列一次做最终校正。
 				// 绝不再 scanGlobalMedia()——它会串行列几十个目录，在慢速隧道里要几十秒，
 				// 表现为"上传完一直在云端校验"（其实是客户端在全量重扫，不是服务端慢）。
 				dirCache.remove(path)
 				refreshSilent()
-				if (hasScannedMedia) mediaDirty = true
-				// 相册/影音页的缓存也失效，否则切过去还是旧列表
-				if (selectedAlbumPath.isNotBlank()) dirCache.remove(selectedAlbumPath)
-				if (selectedMediaPath.isNotBlank()) dirCache.remove(selectedMediaPath)
 			}
 		}
 		viewModelScope.launch(workerDispatcher) {
@@ -449,6 +418,109 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** 媒体池是否需要因上传而重扫（惰性，切页面时才消费） */
 	@Volatile private var mediaDirty = false
+
+	/**
+	 * 最近上传失败的路径 → 时间戳。
+	 * SENT/CONFIRMED/FAILED 三条事件理论上有序，但它们由不同协程派发，
+	 * 边界情况下 FAILED 可能先到；没有这层保护就会留下一个点开即 404 的幻影条目。
+	 */
+	private val failedUploads = ConcurrentHashMap<String, Long>()
+
+	/**
+	 * 一次性操作提示（移动/重命名/新建/删除的结果）。
+	 * 旧实现只把错误写进 [error]，而 error 在界面上根本没有渲染——
+	 * 于是"移动文件失败"在用户看来就是"点了完全没反应"。这个字段由 UI 用 Toast 消费。
+	 */
+	var uiMessage by mutableStateOf<String?>(null)
+		private set
+
+	fun consumeMessage(): String? {
+		val m = uiMessage
+		uiMessage = null
+		return m
+	}
+
+	private fun toast(msg: String) {
+		viewModelScope.launch(Dispatchers.Main) { uiMessage = msg }
+	}
+
+	/** 字节写完就乐观插入：目录缓存、当前列表、相册池、影音池四处同时补齐 */
+	private suspend fun optimisticInsert(dirKey: String, entryPath: String, name: String, size: Long) {
+		val recentFail = failedUploads[entryPath]
+		if (recentFail != null && System.currentTimeMillis() - recentFail < 60_000L) return
+
+		val fresh = DavEntry(
+			name = name,
+			path = entryPath,
+			isDir = false,
+			size = if (size > 0) size else 0L,
+			modified = System.currentTimeMillis(),
+		)
+		val ext = name.substringAfterLast('.', "").lowercase()
+		withContext(Dispatchers.Main) {
+			// 1) 目录缓存：写进去，保证之后进入该目录能立刻看到（不必等重扫）
+			dirCache[dirKey]?.let { list ->
+				dirCache[dirKey] = list.filterNot { it.path == entryPath } + fresh
+			}
+			// 2) 当前正停在这个目录 → 直接进可见列表
+			if (path.trim('/') == dirKey) {
+				entries = entries.filterNot { it.path == entryPath } + fresh
+			}
+			// 3) 相册 / 影音页各自的媒体池无条件补上。
+			//    旧版这里写着 `allVideos.isNotEmpty()` 的前置条件——如果用户此前没进过
+			//    影音页（池子是空的），刚传完的视频就**永远不会出现**，看起来像"没传上去"。
+			if (ext in DavEntry.IMAGES && allPhotos.none { it.path == entryPath }) {
+				allPhotos = listOf(fresh) + allPhotos
+			}
+			if (ext in DavEntry.VIDEOS && allVideos.none { it.path == entryPath }) {
+				allVideos = listOf(fresh) + allVideos
+			}
+		}
+	}
+
+	/** 服务端确认（201）：只做静默校正与该目录的缩略图补拉，不再全量重扫 */
+	private suspend fun onUploadConfirmed(dirKey: String, entryPath: String, name: String, size: Long) {
+		dirCache.remove(dirKey)
+		// 只为这个目录问一次 fs/list：服务端缩略图 + 原生直链 sign 一次性拿到。
+		// 没有这一步，刚上传的图片只能回退成几 MB 的原图当缩略图（一片灰的元凶）。
+		prefetchThumbsAsync(dirKey, listOf(DavEntry(name, entryPath, false, size, 0L)))
+		if (path.trim('/') == dirKey) {
+			refreshSilent()
+		} else {
+			refreshMediaPools(dirKey)
+		}
+	}
+
+	/**
+	 * 只重列"被上传的那个目录"，把它补进相册/影音池。
+	 * 相比 scanGlobalMedia()（把根目录和每个子目录都串行列一遍，隧道下要几十秒），
+	 * 这是一次请求，恰好够用：上传只会新增，池子做并集即可。
+	 */
+	private suspend fun refreshMediaPools(dirKey: String) {
+		if (!hasScannedMedia) return // 池子还没建过，用户进页面时自然扫到
+		withContext(Dispatchers.IO) {
+			runCatching {
+				val fresh = clientOf(app.prefs.current()).list(dirKey)
+				dirCache[dirKey] = fresh
+				withContext(Dispatchers.Main) { collectMediaFrom(fresh) }
+			}
+		}
+	}
+
+	/** 上传最终失败：把乐观插入的那条彻底清掉 */
+	private suspend fun rollbackUpload(dirKey: String, entryPath: String, name: String) {
+		failedUploads[entryPath] = System.currentTimeMillis()
+		withContext(Dispatchers.Main) {
+			dirCache[dirKey]?.let { list ->
+				dirCache[dirKey] = list.filterNot { it.path == entryPath }
+			}
+			entries = entries.filterNot { it.path == entryPath }
+			allPhotos = allPhotos.filterNot { it.path == entryPath }
+			allVideos = allVideos.filterNot { it.path == entryPath }
+			LocalThumbs.forget(entryPath)
+			uiMessage = "「$name」上传失败"
+		}
+	}
 
 	/** 惰性按需媒体扫描：用户切换到相册或影音页面时才触发，首屏启动完全零负载 */
 	fun ensureMediaScanned(force: Boolean = false) {
@@ -538,20 +610,31 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	/** 列表缩略图专用：命中 OpenList 服务端缩略图时返回真图片直链，否则回退原图地址。
-	 *  读取 thumbRevision 建立 Compose 快照依赖，异步缩略图就绪后自动重组刷新。 */
+	 *  读取 thumbRevision / LocalThumbs.revision 建立 Compose 快照依赖，异步缩略图就绪后自动重组刷新。
+	 *
+	 *  优先级：**刚上传文件的本地小图** > 服务端真缩略图 > 原图。
+	 *  本地图放最前是因为刚 PUT 完的文件服务端还没生成缩略图，而此时拿原图当缩略图
+	 *  等于在列表里下好几 MB——用户看到的就是"传完了，可是图片一直是灰的"。
+	 */
 	fun thumbnailUrlFor(entryPath: String): String? {
+		@Suppress("UNUSED_VARIABLE") val localRev = LocalThumbs.revision
+		val key = entryPath.trim('/')
+		LocalThumbs.get(key)?.let { return android.net.Uri.fromFile(it).toString() }
 		@Suppress("UNUSED_VARIABLE") val revision = thumbRevision
-		return client?.thumbnailUrl(entryPath)?.toString()
+		return client?.thumbnailUrl(key)?.toString()
 	}
 
 	/**
-	 * 看图器垫底层专用：只给**真正的服务端缩略图**，没有就返回 null。
+	 * 看图器垫底层专用：本地小图 > **真正的服务端缩略图**，没有就返回 null。
 	 * 不能复用 thumbnailUrlFor —— 那对图片会回退成原图 WebDAV 地址，
 	 * 而原图层走的是 /p/?sign= 直链，两个 URL 不互命中缓存，等于把原图下两遍。
 	 */
 	fun serverThumbUrlFor(entryPath: String): String? {
+		@Suppress("UNUSED_VARIABLE") val localRev = LocalThumbs.revision
+		val key = entryPath.trim('/')
+		LocalThumbs.get(key)?.let { return android.net.Uri.fromFile(it).toString() }
 		@Suppress("UNUSED_VARIABLE") val revision = thumbRevision
-		return client?.serverThumbUrl(entryPath)?.toString()
+		return client?.serverThumbUrl(key)?.toString()
 	}
 
 	fun loginUrl(): String = authUrl
@@ -677,6 +760,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					updateDir.deleteRecursively()
 				}
 			}
+			// 上传时生成的本地缩略图只服务"刚上传"这个窗口，7 天后清掉
+			LocalThumbs.cleanup(app)
 		}
 	}
 
@@ -759,22 +844,44 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				}
 			}
 			dirCache.clear()
+			LocalThumbs.forget(*targetPaths.toTypedArray())
 			onDone(okCount, failCount)
+			if (failCount > 0) uiMessage = "删除完成：成功 $okCount 项，失败 $failCount 项"
 			refresh()
 		}
 	}
 
-	fun batchMove(targetDir: String, onDone: () -> Unit = {}) {
+	fun batchMove(targetDir: String, onDone: (Int, Int) -> Unit = { _, _ -> }) {
 		val targets = selectedEntries.toList()
 		if (targets.isEmpty()) return
-		mutate { c ->
-			for (item in targets) {
-				val dest = join(targetDir, item.name)
-				c.move(item.path, dest)
-			}
-		}
+		val paths = targets.map { it.path }
+		val pathSet = paths.toSet()
+		// 乐观：先从列表移除，避免"批量移动完还挂在原地"
+		entries = entries.filterNot { it.path in pathSet }
 		exitMultiSelect()
-		onDone()
+		viewModelScope.launch {
+			var okCount = 0
+			var failCount = 0
+			val s = app.prefs.current()
+			withContext(Dispatchers.IO) {
+				val c = client ?: app.repo.client(s).also { client = it }
+				for (item in targets) {
+					try {
+						c.move(item.path, join(targetDir, item.name))
+						okCount++
+					} catch (_: Throwable) {
+						failCount++
+					}
+				}
+			}
+			dirCache.clear()
+			LocalThumbs.forget(*paths.toTypedArray())
+			pruneMediaPools(paths)
+			mediaDirty = true
+			refreshSilent()
+			if (failCount > 0) uiMessage = "移动完成：成功 $okCount 项，失败 $failCount 项"
+			onDone(okCount, failCount)
+		}
 	}
 
 	fun batchDownload(context: Context, onDone: () -> Unit = {}) {
@@ -1136,6 +1243,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				selectedAlbumPath = ""
 			}
 		}
+		LocalThumbs.forget(folder.path)
+		pruneMediaPools(listOf(folder.path))
 	}
 
 	fun deleteMediaFolder(folder: DavEntry) {
@@ -1145,6 +1254,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				selectedMediaPath = ""
 			}
 		}
+		LocalThumbs.forget(folder.path)
+		pruneMediaPools(listOf(folder.path))
 	}
 
 	fun delete(entry: DavEntry, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
@@ -1155,30 +1266,64 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		selectedEntries = selectedEntries.filterNot { it.path == entry.path }.toSet()
 
 		viewModelScope.launch {
-			try {
-				val s = app.prefs.current()
-				withContext(Dispatchers.IO) {
-					val c = client ?: app.repo.client(s).also { client = it }
-					c.delete(entry.path, entry.isDir)
-				}
-				dirCache.clear()
+			val err = runRemote { it.delete(entry.path, entry.isDir) }
+			dirCache.clear()
+			LocalThumbs.forget(entry.path)
+			if (err == null) {
 				onResult(true, null)
-				refresh()
-			} catch (t: Throwable) {
-				error = t.message ?: t.javaClass.simpleName
-				onResult(false, t.message ?: "删除失败")
-				refresh()
+			} else {
+				uiMessage = "删除失败：$err"
+				onResult(false, err)
+			}
+			refresh()
+		}
+	}
+
+	fun rename(entry: DavEntry, newName: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+		val dest = join(entry.path.substringBeforeLast('/', ""), newName)
+		entries = entries.filterNot { it.path == entry.path }
+		viewModelScope.launch {
+			val err = runRemote { it.move(entry.path, dest) }
+			dirCache.clear()
+			LocalThumbs.forget(entry.path)
+			pruneMediaPools(listOf(entry.path))
+			mediaDirty = true // 改名后路径变了，相册/影音池下次进页面时校正
+			refreshSilent()
+			if (err == null) {
+				onResult(true, "已重命名为 $newName")
+			} else {
+				uiMessage = "重命名失败：$err"
+				onResult(false, err)
 			}
 		}
 	}
 
-	fun rename(entry: DavEntry, newName: String) = mutate {
-		it.move(entry.path, join(entry.path.substringBeforeLast('/', ""), newName))
-	}
-
-	fun move(entry: DavEntry, targetDir: String) = mutate {
+	/**
+	 * 移动单个文件/文件夹。
+	 *
+	 * 结果通过 [onResult] 异步回传——旧版调用方是"先弹 Toast 说成功了，再去请求"，
+	 * 而这个请求其实会因为 Destination 头的问题被服务端 502 掉，于是变成
+	 * "提示已移动成功，但文件还在原地"。
+	 */
+	fun move(entry: DavEntry, targetDir: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
 		val dest = join(targetDir, entry.name)
-		it.move(entry.path, dest)
+		// 乐观：当前列表里立刻消失，避免"点完没有任何反应"的错觉
+		entries = entries.filterNot { it.path == entry.path }
+		viewModelScope.launch {
+			val err = runRemote { it.move(entry.path, dest) }
+			dirCache.clear()
+			if (err == null) {
+				LocalThumbs.forget(entry.path)
+				pruneMediaPools(listOf(entry.path))
+				mediaDirty = true // 目标目录的相册/影音归属变了，下次进页面时校正
+				refreshSilent()
+				onResult(true, "已移动到 /${targetDir.ifEmpty { "根目录" }}")
+			} else {
+				refreshSilent() // 回滚乐观删除
+				uiMessage = "移动失败：$err"
+				onResult(false, err)
+			}
+		}
 	}
 
 	fun rememberDir(dir: String) {
@@ -1195,20 +1340,43 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
+	/** 执行一次远端写操作，返回 null 表示成功，否则是错误文案。统一在这里兜住异常。 */
+	private suspend fun runRemote(block: suspend (WebDavClient) -> Unit): String? {
+		return try {
+			val s = app.prefs.current()
+			withContext(Dispatchers.IO) {
+				val c = client ?: app.repo.client(s).also { client = it }
+				block(c)
+			}
+			null
+		} catch (t: Throwable) {
+			t.message ?: t.javaClass.simpleName
+		}
+	}
+
+	/** 从相册/影音池里摘掉一批路径（含其子项），用于删除/移动后的即时校正 */
+	private fun pruneMediaPools(paths: Collection<String>) {
+		if (paths.isEmpty()) return
+		fun hit(p: String) = paths.any { p == it || p.startsWith("$it/") }
+		allPhotos = allPhotos.filterNot { hit(it.path) }
+		allVideos = allVideos.filterNot { hit(it.path) }
+	}
+
+	/**
+	 * 远端变更统一入口（新建/删除相册等）。
+	 *
+	 * 与旧版的区别：
+	 *  1) 失败不再静默——旧版把异常塞进 error，而 error 在界面上没有任何渲染，
+	 *     所以"移动/新建失败"在用户看来就是"点了完全没反应"；
+	 *  2) 成功后只刷新当前目录，不再 scanGlobalMedia() 全量重扫（根目录 + 每个子目录
+	 *     串行列一遍，隧道下几十秒，期间列表还可能被更旧的数据覆盖）。
+	 */
 	private fun mutate(action: suspend (WebDavClient) -> Unit) {
 		viewModelScope.launch {
-			try {
-				val s = app.prefs.current()
-				withContext(Dispatchers.IO) {
-					val c = client ?: app.repo.client(s).also { client = it }
-					action(c)
-				}
-				dirCache.clear()
-				open(path)
-				scanGlobalMedia()
-			} catch (t: Throwable) {
-				error = t.message ?: t.javaClass.simpleName
-			}
+			val err = runRemote(action)
+			dirCache.clear()
+			refreshSilent()
+			if (err != null) uiMessage = "操作失败：$err"
 		}
 	}
 

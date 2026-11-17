@@ -108,6 +108,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -175,6 +176,16 @@ fun BrowserScreen(
 ) {
 	val context = LocalContext.current
 	val routeInfo by vm.routeInfo.collectAsState()
+
+	// 一次性操作提示（移动/重命名/删除/新建的真实结果）。
+	// 旧版把失败信息写进 vm.error，而 error 从未被渲染——用户看到的只是"点了没反应"。
+	val pendingMessage = vm.uiMessage
+	LaunchedEffect(pendingMessage) {
+		if (pendingMessage != null) {
+			Toast.makeText(context, pendingMessage, Toast.LENGTH_SHORT).show()
+			vm.consumeMessage()
+		}
+	}
 
 	// 模态弹窗状态
 	var activeEntryForAction by remember { mutableStateOf<DavEntry?>(null) }
@@ -584,7 +595,13 @@ fun BrowserScreen(
 					onClick = {
 						val target = (newBaseName.trim() + extension).trim()
 						if (target.isNotBlank() && target != entry.name) {
-							vm.rename(entry, target)
+							vm.rename(entry, target) { ok, msg ->
+								Toast.makeText(
+									context,
+									if (ok) "已重命名为: $target" else "重命名失败: $msg",
+									Toast.LENGTH_SHORT,
+								).show()
+							}
 						}
 						activeEntryForRename = null
 					},
@@ -603,9 +620,15 @@ fun BrowserScreen(
 			folderPaths = vm.allFolderPaths,
 			currentPath = vm.path,
 			onSelectTarget = { destDir ->
-				vm.move(entry, destDir)
 				activeEntryForMove = null
-				Toast.makeText(context, "已成功移动到: /${destDir.ifEmpty { "根目录" }}", Toast.LENGTH_SHORT).show()
+				// 结果异步回传：只有真的 MOVE 成功才说"已移动"
+				vm.move(entry, destDir) { ok, msg ->
+					Toast.makeText(
+						context,
+						if (ok) "已移动到: /${destDir.ifEmpty { "根目录" }}" else "移动失败: $msg",
+						Toast.LENGTH_SHORT,
+					).show()
+				}
 			},
 			onDismiss = { activeEntryForMove = null },
 		)
@@ -644,11 +667,18 @@ fun BrowserScreen(
 			folderPaths = vm.allFolderPaths,
 			currentPath = vm.path,
 			onSelectTarget = { destDir ->
-				val count = vm.selectedEntries.size
-				vm.batchMove(destDir) {
-					Toast.makeText(context, "已将 $count 项内容移动到: /${destDir.ifEmpty { "根目录" }}", Toast.LENGTH_SHORT).show()
-				}
 				showBatchMoveSheet = false
+				vm.batchMove(destDir) { okCount, failCount ->
+					Toast.makeText(
+						context,
+						if (failCount == 0) {
+							"已移动 $okCount 项到: /${destDir.ifEmpty { "根目录" }}"
+						} else {
+							"移动完成: 成功 $okCount 项, 失败 $failCount 项"
+						},
+						Toast.LENGTH_SHORT,
+					).show()
+				}
 			},
 			onDismiss = { showBatchMoveSheet = false },
 		)

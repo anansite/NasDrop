@@ -322,11 +322,21 @@ class WebDavClient(
 		}
 	}
 
+	/**
+	 * 移动 / 重命名。
+	 *
+	 * Destination 只给**路径**（/dav/movies/a.jpg），不带 scheme 和 host——这是实测结论：
+	 * OpenList 前置的 nginx 会校验 Destination 的主机名必须与请求的 Host 完全一致，
+	 * 只要不一致（哪怕同一个域名换个端口）就直接 502 Bad Gateway；而隧道模式下我们请求的
+	 * Host 是 127.0.0.1:<本地端口>、服务端看到的 Host 是真实域名，必然不一致。
+	 * 这正是"移动文件完全没反应"的根因。只给路径则两种模式都返回 201。
+	 */
 	fun move(from: String, to: String) {
+		val destination = urlFor(to).encodedPath
 		val req = Request.Builder()
 			.url(urlFor(from))
 			.method("MOVE", null)
-			.header("Destination", urlFor(to).toString())
+			.header("Destination", destination)
 			.header("Overwrite", "T")
 			.build()
 		metaCall(req).execute().use {
@@ -371,28 +381,42 @@ class WebDavClient(
 	/**
 	 * 上传一个 content:// 或 file:// 的 Uri 到 remoteDir 下，保留原文件名。
 	 * 进度回调 (已发送, 总大小)，总大小未知时为 -1。
+	 *
+	 * [onBodySent] 在**全部字节写进 socket** 的那一刻回调一次（只回调一次）。
+	 * 它与"服务端返回 201"之间可能隔着一段落盘/rename 的时间，UI 用它在 100% 时
+	 * 立刻把文件乐观显示出来，而不是卡在"等待服务端写入"。
 	 */
-	fun upload(context: Context, uri: Uri, remoteDir: String, onProgress: (Long, Long) -> Unit) {
+	fun upload(
+		context: Context,
+		uri: Uri,
+		remoteDir: String,
+		onProgress: (Long, Long) -> Unit,
+		onBodySent: () -> Unit = {},
+	) {
 		val name = Query.nameOf(context, uri)
 		val total = Query.sizeOf(context, uri)
 		val path = listOf(remoteDir.trim('/'), name).filter { it.isNotEmpty() }.joinToString("/")
+		val bodySentOnce = java.util.concurrent.atomic.AtomicBoolean(false)
 
-		// body 工厂：每次 PUT 调用都新建（409 重试时需要重新读 Uri 输入流）。
-		fun newBody() = object : RequestBody() {
+		// body 工厂：每次 PUT 调用都新建（重试时需要重新读 Uri 输入流）。
+		// written 记录"这次尝试实际写出去多少字节"——决定失败后能不能安全重传，
+		// 见下面 putOnce 的注释。
+		fun newBody(written: java.util.concurrent.atomic.AtomicLong) = object : RequestBody() {
 			override fun contentType() = context.contentResolver.getType(uri)?.toMediaTypeOrNull()
 			override fun contentLength() = total
 			override fun writeTo(sink: BufferedSink) {
 				val input = context.contentResolver.openInputStream(uri)
 					?: throw IOException("无法读取：$uri")
+				var sent = 0L
 				input.use { ins ->
 					val buf = ByteArray(64 * 1024)
-					var sent = 0L
 					var lastReport = 0L
 					while (true) {
 						val n = ins.read(buf)
 						if (n <= 0) break
 						sink.write(buf, 0, n)
 						sent += n
+						written.addAndGet(n.toLong())
 						// 进度节流：每 1MB 或结束时才回调，避免每 64KB 一次
 						// Uploads.update（Compose 状态写入）拖慢上传、卡顿界面。
 						if (sent - lastReport >= 1024 * 1024 || (total > 0 && sent >= total)) {
@@ -401,28 +425,37 @@ class WebDavClient(
 						}
 					}
 				}
+				if (total <= 0 || sent >= total) {
+					if (bodySentOnce.compareAndSet(false, true)) onBodySent()
+				}
 			}
 		}
 
 		val url = urlFor(path)
 
 		/**
-		 * 执行一次 PUT。返回 true=成功；抛 DavException(409) 或 IOException（服务端在读
-		 * 完 body 前就断开）都视为"可能需要先建父目录"。其他异常直接抛出。
+		 * 执行一次 PUT，返回 (是否成功, 本次已写出字节数, HTTP 码；0 表示传输层失败)。
+		 *
+		 * 已写出字节数是关键：旧实现把所有 IOException 都当成"可能缺父目录"从而无条件
+		 * 重传一遍，于是一个传到 99% 断掉的视频会**从头再传一次**——用户看到的就是
+		 * "传完了又从头开始/传完还要等很久"。现在只有"服务端明确 409"或"一个字节都没
+		 * 写出去"（连接是死的）才重试，写过数据就如实失败，让用户决定而不是偷偷重传。
 		 */
-		fun putOnce(): Boolean = try {
-			http.newCall(Request.Builder().url(url).put(newBody()).build()).execute().use {
-				when {
-					it.isSuccessful -> true
-					it.code == 409 -> throw DavException(409, "父目录不存在")
-					else -> throw DavException(it.code, "上传失败")
+		fun putOnce(): PutResult {
+			val written = java.util.concurrent.atomic.AtomicLong(0)
+			return try {
+				http.newCall(Request.Builder().url(url).put(newBody(written)).build()).execute().use {
+					when {
+						it.isSuccessful -> PutResult(true, written.get(), it.code)
+						it.code == 409 -> PutResult(false, written.get(), 409)
+						else -> throw DavException(it.code, "上传失败")
+					}
 				}
+			} catch (e: DavException) {
+				if (e.code == 409) PutResult(false, written.get(), 409) else throw e
+			} catch (e: java.io.IOException) {
+				PutResult(false, written.get(), 0)
 			}
-		} catch (e: DavException) {
-			if (e.code == 409) false else throw e
-		} catch (e: java.io.IOException) {
-			// 服务端可能在读完大文件 body 前就因 409 断开；无法区分，统一按"重试一次"处理
-			false
 		}
 
 		// 大文件先确认父目录存在。
@@ -433,13 +466,24 @@ class WebDavClient(
 			runCatching { ensureParentDirs(remoteDir) }
 		}
 
-		// 先直接 PUT（正常目录零额外开销）；失败则建父目录后重试一次。
-		// 这样既修视频传到 Movies 的 409，又不给每次正常上传平白加 RTT。
-		if (!putOnce()) {
+		// 先直接 PUT（正常目录零额外开销）；只有"明确 409"或"一个字节都没发出去"才重试。
+		val first = putOnce()
+		if (!first.ok) {
+			val retryable = first.code == 409 || first.written < 1L * 1024 * 1024
+			if (!retryable) {
+				// 已经传了实打实的数据再断：重传等于让用户重新等一遍，不如如实报错。
+				throw IOException("传输中断（已发送 ${first.written / 1024 / 1024}MB），请重试")
+			}
 			ensureParentDirs(remoteDir)
-			if (!putOnce()) throw DavException(409, "上传失败：父目录创建后仍失败")
+			val second = putOnce()
+			if (!second.ok) {
+				throw DavException(second.code.takeIf { it > 0 } ?: 409, "上传失败：父目录创建后仍失败")
+			}
 		}
 	}
+
+	/** 单次 PUT 的结果：成功与否、已写出字节数、HTTP 码（0 = 传输层异常） */
+	private class PutResult(val ok: Boolean, val written: Long, val code: Int)
 
 	/** 逐级创建远端父目录：MKCOL 每级路径，405（已存在）/409 都算成功。空目录直接返回。 */
 	private fun ensureParentDirs(remoteDir: String) {

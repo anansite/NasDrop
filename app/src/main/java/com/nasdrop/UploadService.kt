@@ -101,22 +101,49 @@ class UploadService : Service() {
 			scope.launch {
 				semaphore.withPermit {
 					val name = Uploads.tasks.value.getOrNull(i)?.name ?: "文件"
-					var lastNotified = 0L
-					try {
-						client.upload(this@UploadService, uri, dir) { sent, total ->
-							Uploads.update(i) { it.copy(sent = sent, total = total) }
-							if (sent - lastNotified >= 512 * 1024 || (total > 0 && sent >= total)) {
-								lastNotified = sent
-								post(build("正在上传「$name」", if (total > 0) sent to total else null, false))
+					val dirKey = dir.trim('/')
+					val entryPath = if (dirKey.isEmpty()) name else "$dirKey/$name"
+					val ext = name.substringAfterLast('.', "").lowercase()
+					val isVideo = ext in DavEntry.VIDEOS
+					val isImage = ext in DavEntry.IMAGES
+
+					// 本地缩略图与上传并行跑：等字节传完时它早就好了，
+					// 于是"传完那一刻"列表里就是真图，而不是一片灰（视频连图都没有）。
+					// 万一它晚到，LocalThumbs.revision 自增会触发列表重组自动换上。
+					launch {
+						runCatching {
+							if (isVideo || isImage) {
+								LocalThumbs.ensure(this@UploadService, uri, entryPath, isVideo)
 							}
 						}
+					}
+
+					var lastNotified = 0L
+					try {
+						client.upload(
+							this@UploadService,
+							uri,
+							dir,
+							onProgress = { sent, total ->
+								Uploads.update(i) { it.copy(sent = sent, total = total) }
+								if (sent - lastNotified >= 512 * 1024 || (total > 0 && sent >= total)) {
+									lastNotified = sent
+									post(build("正在上传「$name」", if (total > 0) sent to total else null, false))
+								}
+							},
+							onBodySent = {
+								// 字节已全部写出：立刻乐观插入列表，把"等服务端写入"这段
+								// 不可控的等待从用户视野里去掉。201 到了再做一次静默校正。
+								Uploads.notifyFile(dirKey, name, size, Uploads.FilePhase.SENT)
+							},
+						)
 						Uploads.update(i) { it.copy(done = true) }
-						// PUT 一拿到成功响应就立刻广播：ViewModel 会把这条乐观插进列表，
-						// 用户不用等整批结束、也不用等一次网络刷新就能看到新文件。
-						Uploads.notifyFileUploaded(dir, name, size)
+						Uploads.notifyFile(dirKey, name, size, Uploads.FilePhase.CONFIRMED)
 						synchronized(this@UploadService) { ok++ }
 					} catch (t: Throwable) {
 						Uploads.update(i) { it.copy(done = true, error = t.message ?: t.javaClass.simpleName) }
+						// 回滚乐观插入，不留一个点开就 404 的幻影文件
+						Uploads.notifyFile(dirKey, name, size, Uploads.FilePhase.FAILED)
 						synchronized(this@UploadService) { failed++ }
 					}
 				}
@@ -136,7 +163,7 @@ class UploadService : Service() {
 			ok == 0 -> "上传失败，共 $failed 个"
 			else -> "$ok 个成功，$failed 个失败"
 		}
-		val largeIcon = runCatching { BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher) }.getOrNull()
+		val largeIcon = this.largeIcon
 		val n = NotificationCompat.Builder(this, CHANNEL)
 			.setSmallIcon(R.drawable.ic_notification)
 			.apply { if (largeIcon != null) setLargeIcon(largeIcon) }
@@ -158,11 +185,19 @@ class UploadService : Service() {
 
 	private fun post(n: Notification) = manager().notify(NOTIF_ID, n)
 
+	/**
+	 * 通知大图标只解码一次。
+	 * 旧实现在每次进度回调（每 512KB 一次）里都 decodeResource 一遍，上传 300MB 就是
+	 * 几百次解码，全部压在上传线程上——纯属自己拖慢自己。
+	 */
+	private val largeIcon by lazy {
+		runCatching { BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher) }.getOrNull()
+	}
+
 	private fun build(text: String, progress: Pair<Long, Long>?, indeterminate: Boolean): Notification {
-		val largeIcon = runCatching { BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher) }.getOrNull()
 		val b = NotificationCompat.Builder(this, CHANNEL)
 			.setSmallIcon(R.drawable.ic_notification)
-			.apply { if (largeIcon != null) setLargeIcon(largeIcon) }
+			.apply { largeIcon?.let { setLargeIcon(it) } }
 			.setContentTitle("NasDrop")
 			.setContentText(text)
 			.setOngoing(indeterminate)

@@ -36,20 +36,29 @@ object Uploads {
 	val uploadCompletedEvent = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 2)
 
 	/**
-	 * 单个文件上传成功（PUT 已拿到成功响应）就立刻广播一条。
+	 * 单个文件的上传生命周期。
 	 *
-	 * 之所以不等整批结束：用户传 3 个视频时，第一个传完就该立刻出现在列表里，
-	 * 而不是等最后一个、再等一次网络刷新。ViewModel 收到后直接把这条记录
-	 * **乐观插入**目录缓存与当前列表，做到"传完即见"，网络刷新只做后台校正。
+	 * 为什么要分三态，而不是只在 PUT 返回后广播一次：
+	 * 字节写完（SENT）≠ 服务端返回 201（CONFIRMED）。实测服务端在大文件收完后还要
+	 * 落盘/rename 一小段时间，这段时间旧实现只能干等，UI 上就是"已发送完成，等待服务端写入…"
+	 * 卡很久。现在 SENT 的那一刻就把文件乐观插进列表（本地缩略图已经就绪），
+	 * 201 到达后再做一次静默校正；真失败则回滚掉这条，不留幻影。
 	 *
-	 * 不用 replay —— 它是增量事件，重放会让 ViewModel 重复插入同一条。
+	 * 不用 replay —— 增量事件，重放会让 ViewModel 重复插入同一条。
 	 */
-	val fileUploadedEvent = MutableSharedFlow<UploadedFile>(extraBufferCapacity = 32)
+	val fileLifecycle = MutableSharedFlow<FileEvent>(extraBufferCapacity = 64)
 
-	data class UploadedFile(val dir: String, val name: String, val size: Long)
+	enum class FilePhase { SENT, CONFIRMED, FAILED }
 
-	fun notifyFileUploaded(dir: String, name: String, size: Long) {
-		fileUploadedEvent.tryEmit(UploadedFile(dir.trim('/'), name, size))
+	data class FileEvent(
+		val dir: String,
+		val name: String,
+		val size: Long,
+		val phase: FilePhase,
+	)
+
+	fun notifyFile(dir: String, name: String, size: Long, phase: FilePhase) {
+		fileLifecycle.tryEmit(FileEvent(dir.trim('/'), name, size, phase))
 	}
 
 	@Synchronized
