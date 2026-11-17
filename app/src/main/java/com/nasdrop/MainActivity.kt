@@ -68,6 +68,18 @@ class MainActivity : ComponentActivity() {
 				if (app.prefs.current().password.isEmpty()) route = Route.Settings
 			}
 
+			// 从后台回到前台：tsnet 隧道可能已随后台进程断开，用持久化状态原地重连
+			val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+			androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+				val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+					if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+						vm.reconnectIfNeeded()
+					}
+				}
+				lifecycleOwner.lifecycle.addObserver(observer)
+				onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+			}
+
 			val login: () -> Unit = {
 				val url = vm.loginUrl()
 				if (url.isEmpty()) {
@@ -116,6 +128,7 @@ class MainActivity : ComponentActivity() {
 						images = r.list,
 						startIndex = r.index,
 						urlOf = { vm.urlFor(it) },
+						thumbOf = { vm.thumbnailUrlFor(it) },
 						onBack = { route = Route.Browser },
 						onSaveToGallery = { entry, cb -> vm.saveImageToGallery(entry, cb) },
 						onShare = { entry, cb -> vm.prepareShareImage(entry, cb) },

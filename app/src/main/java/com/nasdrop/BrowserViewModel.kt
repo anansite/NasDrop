@@ -243,9 +243,40 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			else String.format(Locale.ROOT, "%.0f KB/s", total / 1024.0)
 		}
 
-	private var client: WebDavClient? = null
+	@Volatile private var client: WebDavClient? = null
 	private val dirCache = ConcurrentHashMap<String, List<DavEntry>>()
 	private var transferJob: Job? = null
+
+	/**
+	 * 缩略图版本号：异步补齐缩略图直链后自增，触发使用 thumbnailUrlFor 的 Composable 重组。
+	 * thumbUrls 本身只是 WebDavClient 内的普通 Map，Compose 无法观察其变化——
+	 * 没有这个版本号，就会出现"缩略图明明加载好了列表却不刷新"的假死现象。
+	 */
+	private var thumbRevision by mutableStateOf(0)
+		private set
+
+	/**
+	 * 取 client 并挂上缩略图就绪回调（每个实例只挂一次）。
+	 * 回调在后台线程触发；mutableStateOf 的写线程安全，Compose 会自动安排重组。
+	 */
+	private fun clientOf(s: Settings): WebDavClient {
+		val c = client ?: app.repo.client(s).also { client = it }
+		if (c.onThumbnailsLoaded == null) {
+			c.onThumbnailsLoaded = { thumbRevision++ }
+		}
+		return c
+	}
+
+	/**
+	 * 后台异步补齐某目录的缩略图直链。列目录先返回、UI 先渲染，缩略图随后流入，
+	 * 两条链路解耦——慢速隧道里不再互相拖累。
+	 */
+	private fun prefetchThumbsAsync(path: String, items: List<DavEntry>) {
+		viewModelScope.launch(workerDispatcher) {
+			val s = app.prefs.current()
+			clientOf(s).prefetchThumbnails(path, items)
+		}
+	}
 
 	val isRoot: Boolean get() = path.isEmpty()
 	val needsLogin: Boolean get() = linkStatus.contains("等待登录")
@@ -351,7 +382,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 		viewModelScope.launch(workerDispatcher) {
 			Uploads.uploadCompletedEvent.collect {
+				// 上传可能落在任意目录：清掉整个目录缓存 + 重扫全局媒体池，
+				// 否则新文件要等手动下拉或重建页面才出现（"上传完等一会儿"的根因）。
+				dirCache.clear()
 				refreshSilent()
+				if (hasScannedMedia) scanGlobalMedia()
 			}
 		}
 		viewModelScope.launch(workerDispatcher) {
@@ -368,10 +403,29 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
+	/**
+	 * 从后台回到前台时调用：若 tsnet 隧道已断，用持久化状态原地重连并即时刷新。
+	 * 报告 true 表示确实重连过（供 UI 决定是否提示）。
+	 */
+	fun reconnectIfNeeded(onReconnected: (Boolean) -> Unit = {}) {
+		viewModelScope.launch(workerDispatcher) {
+			val s = app.prefs.current()
+			val reconnected = app.repo.reconnectTunnelIfNeeded(s)
+			if (reconnected) {
+				// 端口变了，VM 手里的旧 client 指向死端口，必须丢弃
+				client = null
+				dirCache.clear()
+				refreshSilent()
+			}
+			withContext(Dispatchers.Main) { onReconnected(reconnected) }
+		}
+	}
+
 	/** 统一整合链路监听、自愈与激进直连打洞 */
 	private fun startUnifiedLinkMonitor() {
 		viewModelScope.launch(workerDispatcher) {
 			var lastDirect = false
+			var lastReconnectCheck = 0L
 			while (isActive) {
 				pollPeerStatus()
 				val info = app.repo.routeInfo.value
@@ -381,6 +435,19 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				if (isReady) {
 					if (entries.isEmpty() || (!lastDirect && isNowDirect)) {
 						open(path)
+					}
+				} else if (TsBridge.available) {
+					// 后台隧道掉线自愈：每 ~12s 检查一次，失败不打扰用户，
+					// 连上后自动重列目录，用户回到前台看到的就是最新数据。
+					val now = System.currentTimeMillis()
+					if (now - lastReconnectCheck > 12_000L) {
+						lastReconnectCheck = now
+						val s = app.prefs.current()
+						if (app.repo.reconnectTunnelIfNeeded(s)) {
+							client = null
+							dirCache.clear()
+							refreshSilent()
+						}
 					}
 				}
 				lastDirect = isNowDirect
@@ -399,8 +466,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	fun urlFor(entryPath: String): String? = client?.urlFor(entryPath)?.toString()
 
-	/** 列表缩略图专用：命中 OpenList 服务端缩略图时返回真图片直链，否则回退原图地址 */
-	fun thumbnailUrlFor(entryPath: String): String? = client?.thumbnailUrl(entryPath)?.toString()
+	/** 列表缩略图专用：命中 OpenList 服务端缩略图时返回真图片直链，否则回退原图地址。
+	 *  读取 thumbRevision 建立 Compose 快照依赖，异步缩略图就绪后自动重组刷新。 */
+	fun thumbnailUrlFor(entryPath: String): String? {
+		@Suppress("UNUSED_VARIABLE") val revision = thumbRevision
+		return client?.thumbnailUrl(entryPath)?.toString()
+	}
 
 	fun loginUrl(): String = authUrl
 
@@ -815,8 +886,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			try {
 				val s = app.prefs.current()
 				val fresh = withContext(Dispatchers.IO) {
-					val c = client ?: app.repo.client(s).also { client = it }
-					c.list(target)
+					clientOf(s).list(target)
 				}
 				dirCache[target] = fresh
 				error = null
@@ -826,6 +896,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				}
 				collectMediaFrom(fresh)
 				updateFolderPaths(fresh)
+				// 列目录已呈现，缩略图放到后台慢慢补，绝不阻塞列表
+				prefetchThumbsAsync(target, fresh)
 			} catch (t: Throwable) {
 				if (cached == null) {
 					error = t.message ?: t.javaClass.simpleName
@@ -874,7 +946,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		withContext(Dispatchers.IO) {
 			try {
 				val s = app.prefs.current()
-				val c = client ?: app.repo.client(s).also { client = it }
+				val c = clientOf(s)
 				val target = path
 				val fresh = c.list(target)
 				dirCache[target] = fresh
@@ -884,16 +956,19 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				}
 				collectMediaFrom(fresh)
 				updateFolderPaths(fresh)
+				prefetchThumbsAsync(target, fresh)
 
 				if (selectedAlbumPath.isNotBlank()) {
 					val albumFresh = c.list(selectedAlbumPath)
 					dirCache[selectedAlbumPath] = albumFresh
 					collectMediaFrom(albumFresh)
+					prefetchThumbsAsync(selectedAlbumPath, albumFresh)
 				}
 				if (selectedMediaPath.isNotBlank()) {
 					val mediaFresh = c.list(selectedMediaPath)
 					dirCache[selectedMediaPath] = mediaFresh
 					collectMediaFrom(mediaFresh)
+					prefetchThumbsAsync(selectedMediaPath, mediaFresh)
 				}
 			} catch (_: Throwable) {
 			}
@@ -1033,6 +1108,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch {
 			dirCache.clear()
 			app.repo.invalidate()
+			client = null  // repo 已停隧道并清缓存，VM 里的旧 client 指向死端口，必须丢弃重建
 			open(path)
 			scanGlobalMedia()
 		}
@@ -1097,10 +1173,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		withContext(Dispatchers.IO) {
 			try {
 				val s = app.prefs.current()
-				val c = app.repo.client(s)
+				val c = clientOf(s)
 				val rootEntries = scanSemaphore.withPermit { c.list("") }
 				collectMediaFrom(rootEntries)
 				updateFolderPaths(rootEntries)
+				prefetchThumbsAsync("", rootEntries)
 
 				val albums = mutableListOf<DavEntry>()
 				val mediaAlbums = mutableListOf<DavEntry>()
@@ -1112,6 +1189,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						dirCache[dir.path] = sub
 						collectMediaFrom(sub)
 						updateFolderPaths(sub)
+						prefetchThumbsAsync(dir.path, sub)
 
 						if (dir.name.equals("Photos", ignoreCase = true) || dir.name == "相册") {
 							albums.addAll(sub.filter { it.isDir })
@@ -1122,6 +1200,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 									dirCache[subDir.path] = subSub
 									collectMediaFrom(subSub)
 									updateFolderPaths(subSub)
+									prefetchThumbsAsync(subDir.path, subSub)
 								}
 							}
 						} else if (dir.name.equals("Movies", ignoreCase = true) || dir.name == "影视" || dir.name == "影音") {
@@ -1133,6 +1212,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 									dirCache[subDir.path] = subSub
 									collectMediaFrom(subSub)
 									updateFolderPaths(subSub)
+									prefetchThumbsAsync(subDir.path, subSub)
 								}
 							}
 						} else {

@@ -68,12 +68,12 @@ object UpdateManager {
 					Log.w("UpdateManager", "API candidate failed: ${e.message}")
 				}
 			}
-			val body = jsonStr ?: return@withContext null
-			Log.i("UpdateManager", "Got body length: ${body.length}")
-			val obj = JSONObject(body)
+			val json = jsonStr ?: return@withContext null
+			Log.i("UpdateManager", "Got body length: ${json.length}")
+			val obj = JSONObject(json)
 
 			val tagName = obj.optString("tag_name", "").trim().removePrefix("v").removePrefix("V")
-			val body = obj.optString("body", "优化与常规 Bug 修复")
+			val releaseNotes = obj.optString("body", "优化与常规 Bug 修复")
 
 			// 查找 .apk 资源
 			val assets = obj.optJSONArray("assets") ?: return@withContext null
@@ -95,7 +95,7 @@ object UpdateManager {
 			if (isNewer(tagName, currentVersion)) {
 				UpdateInfo(
 					versionName = tagName,
-					releaseNotes = body,
+					releaseNotes = releaseNotes,
 					apkUrl = apkUrl,
 					apkSize = apkSize,
 				)

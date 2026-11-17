@@ -30,8 +30,10 @@ object Uploads {
 	private val _tasks = MutableStateFlow<List<UploadTask>>(emptyList())
 	val tasks: StateFlow<List<UploadTask>> = _tasks
 
-	// 上传全部结束通知流（通知前台页面自动刷新）
-	val uploadCompletedEvent = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 2)
+	// 上传全部结束通知流（通知前台页面自动刷新）。
+	// replay = 1：上传服务在后台完成时，前台 Activity/ViewModel 可能刚刚重建、
+	// 尚未订阅；replay=0 会把事件直接丢掉，表现为"传完了要等一会儿/手动刷新才出现"。
+	val uploadCompletedEvent = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 2)
 
 	@Synchronized
 	fun begin(items: List<Pair<String, String>>) {

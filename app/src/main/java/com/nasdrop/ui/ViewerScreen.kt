@@ -83,6 +83,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import android.content.Intent
 import android.widget.Toast
 import androidx.core.content.FileProvider
@@ -109,6 +110,8 @@ fun ImageViewer(
 	images: List<DavEntry>,
 	startIndex: Int,
 	urlOf: (String) -> String?,
+	/** 列表已加载的服务端缩略图直链，作为原图加载期间/失败时的即时垫底图 */
+	thumbOf: ((String) -> String?)? = null,
 	onBack: () -> Unit,
 	onSaveToGallery: ((DavEntry, (Boolean, String) -> Unit) -> Unit)? = null,
 	onShare: ((DavEntry, (java.io.File?) -> Unit) -> Unit)? = null,
@@ -146,7 +149,11 @@ fun ImageViewer(
 			userScrollEnabled = true,
 		) { page ->
 			val entry = imageList.getOrNull(page) ?: return@HorizontalPager
-			ZoomableImage(url = urlOf(entry.path), name = entry.name)
+			ZoomableImage(
+				url = urlOf(entry.path),
+				thumbUrl = thumbOf?.invoke(entry.path),
+				name = entry.name,
+			)
 		}
 
 		// 顶栏
@@ -360,48 +367,110 @@ fun ImageViewer(
 }
 
 @Composable
-private fun ZoomableImage(url: String?, name: String) {
+private fun ZoomableImage(url: String?, thumbUrl: String?, name: String) {
 	var scale by remember { mutableFloatStateOf(1f) }
 	var dx by remember { mutableFloatStateOf(0f) }
 	var dy by remember { mutableFloatStateOf(0f) }
+	val context = LocalContext.current
+
+	// 原图加载态：loading / 失败重试。切图（url 变化）时全部复位。
+	var loadFailed by remember(url) { mutableStateOf(false) }
+	var retryKey by remember(url) { mutableIntStateOf(0) }
+	var isLoading by remember(url) { mutableStateOf(true) }
+
+	// 每次 url / retryKey 变化重建请求；retryKey 让失败后能强制重新拉取（带 CachePolicy 绕过坏缓存）
+	val fullRequest = remember(url, retryKey) {
+		ImageRequest.Builder(context)
+			.data(url)
+			.memoryCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
+			.diskCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
+			.crossfade(true)
+			.build()
+	}
 
 	Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-		AsyncImage(
-			model = url,
-			contentDescription = name,
-			contentScale = ContentScale.Fit,
-			modifier = Modifier
-				.fillMaxSize()
-				.graphicsLayer {
-					scaleX = scale
-					scaleY = scale
-					translationX = dx
-					translationY = dy
-				}
-				.pointerInput(Unit) {
-					detectTransformGestures { _, pan, zoom, _ ->
-						scale = (scale * zoom).coerceIn(1f, 6f)
-						if (scale > 1f) {
-							dx += pan.x
-							dy += pan.y
-						} else {
-							dx = 0f
-							dy = 0f
+		// 第 1 层：列表已缓存的服务端缩略图，几乎瞬间可见，杜绝黑屏空窗
+		if (!thumbUrl.isNullOrBlank() && thumbUrl != url) {
+			AsyncImage(
+				model = thumbUrl,
+				contentDescription = null,
+				contentScale = ContentScale.Fit,
+				modifier = Modifier.fillMaxSize(),
+			)
+		}
+
+		// 第 2 层：原图（可缩放）。缩略图垫底时即使原图还没到也有画面。
+		if (!url.isNullOrBlank() && !loadFailed) {
+			AsyncImage(
+				model = fullRequest,
+				contentDescription = name,
+				contentScale = ContentScale.Fit,
+				onLoading = { isLoading = true },
+				onSuccess = { isLoading = false; loadFailed = false },
+				onError = { isLoading = false; loadFailed = true },
+				modifier = Modifier
+					.fillMaxSize()
+					.graphicsLayer {
+						scaleX = scale
+						scaleY = scale
+						translationX = dx
+						translationY = dy
+					}
+					.pointerInput(Unit) {
+						detectTransformGestures { _, pan, zoom, _ ->
+							scale = (scale * zoom).coerceIn(1f, 6f)
+							if (scale > 1f) {
+								dx += pan.x
+								dy += pan.y
+							} else {
+								dx = 0f
+								dy = 0f
+							}
 						}
 					}
-				}
-				.pointerInput(Unit) {
-					detectTapGestures(
-						onDoubleTap = {
-							if (scale > 1f) {
-								scale = 1f; dx = 0f; dy = 0f
-							} else {
-								scale = 2.5f
-							}
-						},
-					)
-				}.padding(0.dp),
-		)
+					.pointerInput(Unit) {
+						detectTapGestures(
+							onDoubleTap = {
+								if (scale > 1f) {
+									scale = 1f; dx = 0f; dy = 0f
+								} else {
+									scale = 2.5f
+								}
+							},
+						)
+					},
+			)
+		}
+
+		// 原图仍在加载且没有缩略图垫底时，给个明确的菊花，避免"点了没反应"
+		if (isLoading && !loadFailed && thumbUrl.isNullOrBlank()) {
+			androidx.compose.material3.CircularProgressIndicator(
+				color = Color.White,
+				modifier = Modifier.size(36.dp),
+			)
+		}
+
+		// 加载失败（且无缩略图兜底）：明确提示 + 点击重试，绝不静默黑屏
+		if (loadFailed && thumbUrl.isNullOrBlank()) {
+			Column(
+				horizontalAlignment = Alignment.CenterHorizontally,
+				verticalArrangement = Arrangement.spacedBy(12.dp),
+				modifier = Modifier
+					.clip(RoundedCornerShape(12.dp))
+					.background(Color(0xCC1E293B))
+					.pointerInput(Unit) {
+						detectTapGestures(onTap = {
+							loadFailed = false
+							isLoading = true
+							retryKey++
+						})
+					}
+					.padding(horizontal = 24.dp, vertical = 18.dp),
+			) {
+				Text("图片加载失败", color = Color.White, fontWeight = FontWeight.Bold)
+				Text("点击重试", color = Color(0xFF9DB4D0), fontSize = 13.sp)
+			}
+		}
 	}
 }
 

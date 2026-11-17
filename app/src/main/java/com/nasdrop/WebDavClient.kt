@@ -97,7 +97,14 @@ class WebDavClient(
 	/** OpenList 服务端缩略图：path(相对WebDAV根,无首尾斜杠) -> 带 sign 的 /d/...?type=thumb 直链 */
 	private val thumbUrls = java.util.concurrent.ConcurrentHashMap<String, String>()
 	@Volatile private var openListToken: String? = null
-	@Volatile private var thumbAuthTried = false
+	/** 上次登录失败的时间戳：冷却期内不重复打卡，但过期后必须重试（见 ensureOpenListToken） */
+	@Volatile private var thumbAuthFailedAt = 0L
+	/**
+	 * 缩略图批量就绪回调，参数是本次新增了缩略图直链的相对路径集合。
+	 * ViewModel 收到后自增 Compose 状态触发重组——否则 thumbUrls 只是普通 Map，
+	 * 异步补齐后 Compose 无从得知，表现为"缩略图明明加载了却不显示"。
+	 */
+	var onThumbnailsLoaded: ((Set<String>) -> Unit)? = null
 
 	fun urlFor(path: String, dir: Boolean = false): HttpUrl {
 		val b = base.newBuilder()
@@ -118,7 +125,7 @@ class WebDavClient(
 		return if (ext in DavEntry.IMAGES) urlFor(path) else null
 	}
 
-	/** 列目录。path 为空表示根 */
+	/** 列目录。path 为空表示根。只做 PROPFIND，绝不在此阻塞拉缩略图。 */
 	fun list(path: String): List<DavEntry> {
 		val req = Request.Builder()
 			.url(urlFor(path, dir = true))
@@ -129,18 +136,17 @@ class WebDavClient(
 		http.newCall(req).execute().use { resp ->
 			if (!resp.isSuccessful) throw DavException(resp.code, "列目录失败")
 			val stream = resp.body?.byteStream() ?: throw DavException(resp.code, "空响应")
-			val result = parse(stream, path)
-			// 列表拿到后同步补充服务端缩略图映射（有缓存 + token 复用，失败静默回退原图）。
-			loadThumbnails(path, result)
-			return result
+			return parse(stream, path)
 		}
 	}
 
 	/**
 	 * 通过 OpenList 私有 API 拉取当前目录的缩略图直链，建立 path -> thumbUrl 映射。
+	 * 由 ViewModel 在列目录拿到数据、UI 已经渲染出来之后，放到后台线程调用，
+	 * 这样慢速隧道里"列目录"和"缩略图"两条链路互不阻塞（这是缩略图慢的根因之一）。
 	 * 纯增强：任何失败（非 OpenList 服务、无网络、无缩略图）都静默跳过，列表照常显示。
 	 */
-	private fun loadThumbnails(dirPath: String, entries: List<DavEntry>) {
+	fun prefetchThumbnails(dirPath: String, entries: List<DavEntry>) {
 		val origin = apiOrigin ?: return
 		// 只为包含图片/视频的目录发起请求，纯文档目录零开销
 		if (entries.none { it.isImage || it.isVideo }) return
@@ -155,10 +161,13 @@ class WebDavClient(
 				.post(body)
 				.build()
 			http.newCall(req).execute().use { resp ->
+				// token 过期：立刻作废，下次 prefetch 会重新登录，避免整个会话再无缩略图
+				if (resp.code == 401) openListToken = null
 				if (!resp.isSuccessful) return
 				val text = resp.body?.string() ?: return
 				val content = org.json.JSONObject(text).optJSONObject("data")?.optJSONArray("content") ?: return
 				val prefix = if (dirPath.isEmpty()) "" else "$dirPath/"
+				val added = HashSet<String>()
 				for (i in 0 until content.length()) {
 					val item = content.optJSONObject(i) ?: continue
 					val name = item.optString("name")
@@ -167,21 +176,26 @@ class WebDavClient(
 						// thumb 直链是服务端返回的公网绝对地址。统一把 origin 换成本客户端的
 						// base origin：直连模式=原域名；bridge 模式=127.0.0.1:port。
 						// 否则 bridge 模式下 Coil 会拿公网域名直连 100.x 而失败。
-						val rewritten = rewriteThumbOrigin(thumb)
-						thumbUrls[prefix + name] = rewritten
+						val key = prefix + name
+						thumbUrls[key] = rewriteThumbOrigin(thumb)
+						added += key
 					}
 				}
+				if (added.isNotEmpty()) onThumbnailsLoaded?.invoke(added)
 			}
 		} catch (_: Exception) {
 			// 缩略图是可选增强，任何异常都不影响主流程
 		}
 	}
 
-	/** 登录 OpenList 换 token；token 进程内复用，失败只尝试一次避免每次列目录都打卡 */
+	/** 登录 OpenList 换 token；token 进程内复用。失败只进入 30s 冷却，冷却结束后一定会重试。 */
+	@Synchronized
 	private fun ensureOpenListToken(origin: HttpUrl): String? {
 		openListToken?.let { return it }
-		if (thumbAuthTried || apiUser.isEmpty()) return null
-		thumbAuthTried = true
+		if (apiUser.isEmpty()) return null
+		val now = System.currentTimeMillis()
+		if (now - thumbAuthFailedAt < 30_000L) return null
+		thumbAuthFailedAt = now
 		return try {
 			val body = """{"username":"${jsonEscape(apiUser)}","password":"${jsonEscape(apiPassword)}"}"""
 				.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())

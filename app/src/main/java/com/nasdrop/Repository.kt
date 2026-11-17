@@ -320,6 +320,47 @@ class Repository(private val context: Context) {
 		}
 	}
 
+	/**
+	 * 隧道自愈：App 退到后台/进程被杀后，tsnet 节点会随进程断开；回到前台时
+	 * 用 files/tsnet 里持久化的节点状态原地重连（通常无需重新去浏览器授权）。
+	 * 必须在后台线程调用（JNI + 可能的网络等待）。返回 true 表示发生了重连、
+	 * 本地端口可能变化，调用方必须丢弃旧 client 并重建。
+	 */
+	fun reconnectTunnelIfNeeded(settings: Settings): Boolean {
+		if (!settings.useTailscale || !TsBridge.available) return false
+		// 已确认局域网/公网原生直连，本就没走隧道，无需重连
+		if (directConfirmed != null || lanConfirmedIp != null) return false
+
+		val st = TsBridge.status()
+		if (st.startsWith("running") && TsBridge.port > 0) {
+			updateRouteInfo()
+			return false
+		}
+		// 正在登录/启动中：交给既有异步流程，别打断
+		if (st == "needs-login" || st == "starting") return false
+
+		val root = settings.baseUrl.toHttpUrlOrNull() ?: return false
+		val origin = root.newBuilder().encodedPath("/").query(null).fragment(null).build().toString()
+		val p = if (TsBridge.port > 0) {
+			TsBridge.retry()
+		} else {
+			TsBridge.setInsecureTls(settings.trustAllCerts)
+			TsBridge.start(context, settings.hostname, settings.authKey, origin)
+		}
+		if (p > 0) {
+			bridgeToken = TsBridge.token
+			// 端口可能变了：丢弃缓存 client，下次 client() 用新端口重建 base（见 cachedKey 逻辑）
+			synchronized(this) {
+				cached = null
+				cachedKey = ""
+			}
+			updateRouteInfo()
+			Log.i("Repository", "隧道自愈重连成功，新端口 $p")
+			return true
+		}
+		return false
+	}
+
 	/** 主动触发 NAT 打洞，促使链路从 DERP 中继切换为 P2P 直连 */
 	fun triggerHolePunch(): String {
 		if (_routeInfo.value.isLanDirect) {

@@ -129,6 +129,32 @@ object TsBridge {
 		}
 	}
 
+	/**
+	 * 用上次的参数原地重连（Go 侧 Retry：Stop 后用缓存参数再 Start）。
+	 * 供后台/被杀恢复后自愈调用——tsnet 节点状态在 files/tsnet 里持久化，
+	 * 重连通常无需重新去浏览器授权。返回新的本地端口，0 表示失败/无上次参数。
+	 * 注意端口可能变化，调用方需让 Repository 重建 client（base 里的端口会变）。
+	 */
+	@Synchronized
+	fun retry(): Int {
+		val c = load() ?: return 0
+		return try {
+			val p = when (val r = find(c, "retry")?.invoke(null)) {
+				is Number -> r.toInt()
+				else -> 0
+			}
+			if (p > 0) {
+				port = p
+				token = invokeString("token")
+				Log.i(TAG, "bridge 重连成功，新本地端口 $p")
+			}
+			p
+		} catch (t: Throwable) {
+			Log.w(TAG, "bridge 重连失败", unwrap(t))
+			0
+		}
+	}
+
 	/** idle / starting / needs-login / running:100.x.x.x / error: xxx */
 	fun status(): String = invokeString("status")
 
