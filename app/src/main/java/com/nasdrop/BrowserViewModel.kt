@@ -198,10 +198,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		private set
 
 	var selectedEntries by mutableStateOf<Set<DavEntry>>(emptySet())
+		private set
 
 	val selectedPaths: Set<String>
 		get() = selectedEntries.map { it.path }.toSet()
-		private set
 
 	// ========== 传输管理中心状态 ==========
 	private var downloadTasks by mutableStateOf<List<TransferTask>>(emptyList())

@@ -12,8 +12,11 @@ android {
 		applicationId = "com.nasdrop"
 		minSdk = 26
 		targetSdk = 35
-		versionCode = 1
-		versionName = "0.1.0"
+		val runNumber = providers.environmentVariable("GITHUB_RUN_NUMBER").orNull?.toIntOrNull()
+			?: providers.environmentVariable("BUILD_NUMBER").orNull?.toIntOrNull()
+			?: 25
+		versionCode = runNumber
+		versionName = "1.0.$runNumber"
 	}
 
 	// 仓库里放了一张固定的自签名证书，这样每次 CI 打出来的包签名一致，
