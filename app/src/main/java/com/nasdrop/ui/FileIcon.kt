@@ -2,13 +2,16 @@ package com.nasdrop.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Android
 import androidx.compose.material.icons.rounded.CameraAlt
+import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderZip
@@ -17,36 +20,36 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Fill
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.nasdrop.DavEntry
 import com.nasdrop.FileCategory
 
 /**
- * 智能文件缩略图 / 图标：
- * - 若为图片，尝试加载真实高清缩略图，并带优雅圆角与阴影；
- * - 加载中或失败时自动平滑回退至商业级矢量微渐变图标；
- * - 文件夹与其他文件类型渲染定制微渐变图标。
+ * 夸克风格智能文件缩略图 / 图标：
+ * - 图片/视频：尝试加载高清缩略图与海报，带精致圆角（微小圆角）；视频带半透明播放角标；
+ * - 文档：支持专属视觉徽标（PDF 红标、Word 蓝标 W、Excel 绿标 X、PPT 橙标 P、APK 绿色安卓标、ZIP 压缩包）；
+ * - 文件夹：暖黄微渐变网盘文件夹。
  */
 @Composable
 fun FileThumbnail(
@@ -55,46 +58,277 @@ fun FileThumbnail(
 	size: Dp = 44.dp,
 	modifier: Modifier = Modifier,
 ) {
-	val cornerRadius = size * 0.28f
+	val cornerRadius = 6.dp
 
-	if (entry.isImage) {
-		val url = urlOf(entry.path)
-		var isError by remember(entry.path) { mutableStateOf(false) }
+	when {
+		// 1. 图片真实缩略图
+		entry.isImage -> {
+			val url = urlOf(entry.path)
+			var isError by remember(entry.path) { mutableStateOf(false) }
 
-		if (!isError && !url.isNullOrBlank()) {
+			if (!isError && !url.isNullOrBlank()) {
+				Box(
+					modifier = modifier
+						.size(size)
+						.clip(RoundedCornerShape(cornerRadius))
+						.background(Color(0xFFF2F3F5)),
+					contentAlignment = Alignment.Center,
+				) {
+					AsyncImage(
+						model = url,
+						contentDescription = entry.name,
+						contentScale = ContentScale.Crop,
+						onError = { isError = true },
+						modifier = Modifier.fillMaxSize(),
+					)
+				}
+			} else {
+				FileIconByEntry(entry = entry, size = size, modifier = modifier)
+			}
+		}
+
+		// 2. 视频（如果有缩略图则展示缩略图，且右上角/中央带微小半透明播放角标）
+		entry.isVideo -> {
+			val url = urlOf(entry.path)
+			var isError by remember(entry.path) { mutableStateOf(false) }
+
+			if (!isError && !url.isNullOrBlank()) {
+				Box(
+					modifier = modifier
+						.size(size)
+						.clip(RoundedCornerShape(cornerRadius))
+						.background(Color(0xFF1D2129)),
+					contentAlignment = Alignment.Center,
+				) {
+					AsyncImage(
+						model = url,
+						contentDescription = entry.name,
+						contentScale = ContentScale.Crop,
+						onError = { isError = true },
+						modifier = Modifier.fillMaxSize(),
+					)
+					// 微小半透明播放三角形覆盖层
+					Box(
+						modifier = Modifier
+							.size(size * 0.45f)
+							.clip(RoundedCornerShape(size * 0.2f))
+							.background(Color.Black.copy(alpha = 0.45f)),
+						contentAlignment = Alignment.Center,
+					) {
+						Icon(
+							imageVector = Icons.Rounded.PlayArrow,
+							contentDescription = "播放",
+							tint = Color.White,
+							modifier = Modifier.size(size * 0.32f),
+						)
+					}
+				}
+			} else {
+				FileIconByEntry(entry = entry, size = size, modifier = modifier)
+			}
+		}
+
+		// 3. 其他文件类型
+		else -> {
+			FileIconByEntry(entry = entry, size = size, modifier = modifier)
+		}
+	}
+}
+
+/**
+ * 依据 DavEntry 的具体后缀渲染夸克同款高辨识度专属卡片图标
+ */
+@Composable
+fun FileIconByEntry(
+	entry: DavEntry,
+	size: Dp = 44.dp,
+	modifier: Modifier = Modifier,
+) {
+	val ext = entry.ext.lowercase()
+
+	when {
+		// 文件夹
+		entry.isDir -> {
+			if (entry.isAlbum) {
+				val brush = Brush.linearGradient(listOf(Color(0xFFFF6B8B), Color(0xFFFF3D71)))
+				GradientBadge(size = size, brush = brush, modifier = modifier) {
+					Icon(Icons.Rounded.CameraAlt, contentDescription = "相册", tint = Color.White, modifier = Modifier.size(size * 0.54f))
+				}
+			} else {
+				FolderVectorIcon(size = size, modifier = modifier)
+			}
+		}
+
+		// PDF 夸克同款红白卡片
+		ext == "pdf" -> {
+			QuarkDocBadge(
+				size = size,
+				bgColor = Color(0xFFFFF0F0),
+				borderColor = Color(0xFFFFCDD2),
+				brandColor = Color(0xFFE53935),
+				label = "PDF",
+				modifier = modifier,
+			)
+		}
+
+		// Word 夸克同款蓝白卡片 W
+		ext in listOf("doc", "docx") -> {
+			QuarkDocBadge(
+				size = size,
+				bgColor = Color(0xFFF0F5FF),
+				borderColor = Color(0xFFADC6FF),
+				brandColor = Color(0xFF2F54EB),
+				label = "W",
+				modifier = modifier,
+			)
+		}
+
+		// Excel 夸克同款绿白卡片 X
+		ext in listOf("xls", "xlsx", "csv") -> {
+			QuarkDocBadge(
+				size = size,
+				bgColor = Color(0xFFF6FFED),
+				borderColor = Color(0xFFB7EB8F),
+				brandColor = Color(0xFF52C41A),
+				label = "X",
+				modifier = modifier,
+			)
+		}
+
+		// PPT 夸克同款橙白卡片 P
+		ext in listOf("ppt", "pptx") -> {
+			QuarkDocBadge(
+				size = size,
+				bgColor = Color(0xFFFFF7E6),
+				borderColor = Color(0xFFFFD591),
+				brandColor = Color(0xFFFA8C16),
+				label = "P",
+				modifier = modifier,
+			)
+		}
+
+		// APK 安卓应用专属卡片
+		ext == "apk" -> {
 			Box(
 				modifier = modifier
 					.size(size)
-					.shadow(elevation = 2.dp, shape = RoundedCornerShape(cornerRadius), ambientColor = Color.Black.copy(alpha = 0.1f), spotColor = Color.Black.copy(alpha = 0.1f))
-					.clip(RoundedCornerShape(cornerRadius))
-					.background(Color(0xFFE5E6EB)),
+					.clip(RoundedCornerShape(6.dp))
+					.background(Color(0xFFE8F8F2))
+					.border(0.5.dp, Color(0xFFB5ECD7), RoundedCornerShape(6.dp)),
 				contentAlignment = Alignment.Center,
 			) {
-				AsyncImage(
-					model = url,
-					contentDescription = entry.name,
-					contentScale = ContentScale.Crop,
-					onError = { isError = true },
-					modifier = Modifier.fillMaxSize(),
+				Icon(
+					imageVector = Icons.Rounded.Android,
+					contentDescription = "APK",
+					tint = Color(0xFF00B578),
+					modifier = Modifier.size(size * 0.62f),
 				)
 			}
-		} else {
-			FileIcon(category = FileCategory.Image, isDir = false, size = size, modifier = modifier)
 		}
-	} else {
-		FileIcon(
-			category = entry.category,
-			isDir = entry.isDir,
-			isAlbum = entry.isAlbum,
-			size = size,
-			modifier = modifier,
+
+		// 代码与网页（php, js, html, css, py, json, xml, sh）
+		ext in listOf("php", "js", "html", "htm", "css", "py", "java", "kt", "go", "json", "xml", "sh") -> {
+			Box(
+				modifier = modifier
+					.size(size)
+					.clip(RoundedCornerShape(6.dp))
+					.background(Color(0xFFFFFBE6))
+					.border(0.5.dp, Color(0xFFFFE58F), RoundedCornerShape(6.dp)),
+				contentAlignment = Alignment.Center,
+			) {
+				Icon(
+					imageVector = Icons.Rounded.Code,
+					contentDescription = "代码",
+					tint = Color(0xFFD48806),
+					modifier = Modifier.size(size * 0.54f),
+				)
+			}
+		}
+
+		// 视频（若无缩略图回退为深邃海报蓝卡片）
+		entry.isVideo -> {
+			val brush = Brush.linearGradient(listOf(Color(0xFF391085), Color(0xFF1D2129)))
+			GradientBadge(size = size, brush = brush, modifier = modifier) {
+				Icon(Icons.Rounded.PlayArrow, contentDescription = "视频", tint = Color.White, modifier = Modifier.size(size * 0.58f))
+			}
+		}
+
+		// 音频音乐
+		entry.isAudio -> {
+			val brush = Brush.linearGradient(listOf(Color(0xFF52C41A), Color(0xFF237804)))
+			GradientBadge(size = size, brush = brush, modifier = modifier) {
+				Icon(Icons.Rounded.MusicNote, contentDescription = "音频", tint = Color.White, modifier = Modifier.size(size * 0.54f))
+			}
+		}
+
+		// 压缩包
+		entry.isArchive -> {
+			val brush = Brush.linearGradient(listOf(Color(0xFFB37FEB), Color(0xFF722ED1)))
+			GradientBadge(size = size, brush = brush, modifier = modifier) {
+				Icon(Icons.Rounded.FolderZip, contentDescription = "压缩包", tint = Color.White, modifier = Modifier.size(size * 0.54f))
+			}
+		}
+
+		// 通用文件
+		else -> {
+			FileIcon(category = entry.category, isDir = false, isAlbum = false, size = size, modifier = modifier)
+		}
+	}
+}
+
+/**
+ * 夸克网盘同款经典文档标签卡（白底、微边框、彩色主品牌字母）
+ */
+@Composable
+private fun QuarkDocBadge(
+	size: Dp,
+	bgColor: Color,
+	borderColor: Color,
+	brandColor: Color,
+	label: String,
+	modifier: Modifier = Modifier,
+) {
+	Box(
+		modifier = modifier
+			.size(size)
+			.clip(RoundedCornerShape(6.dp))
+			.background(bgColor)
+			.border(0.5.dp, borderColor, RoundedCornerShape(6.dp)),
+		contentAlignment = Alignment.Center,
+	) {
+		Text(
+			text = label,
+			color = brandColor,
+			fontWeight = FontWeight.Black,
+			fontSize = if (label.length > 2) (size.value * 0.28f).sp else (size.value * 0.44f).sp,
+			fontFamily = FontFamily.SansSerif,
 		)
 	}
 }
 
 /**
- * 商业级 2.5D / Duotone 微渐变网盘矢量图标组件。
- * 彻底告别丑陋廉价的系统 Emoji，对标一线商业网盘质感。
+ * 渐变底板徽章容器
+ */
+@Composable
+private fun GradientBadge(
+	size: Dp,
+	brush: Brush,
+	modifier: Modifier = Modifier,
+	content: @Composable () -> Unit,
+) {
+	Box(
+		modifier = modifier
+			.size(size)
+			.clip(RoundedCornerShape(6.dp))
+			.background(brush),
+		contentAlignment = Alignment.Center,
+	) {
+		content()
+	}
+}
+
+/**
+ * 兼容旧组件的 FileIcon
  */
 @Composable
 fun FileIcon(
@@ -104,180 +338,80 @@ fun FileIcon(
 	size: Dp = 44.dp,
 	modifier: Modifier = Modifier,
 ) {
-	val cornerRadius = size * 0.28f
-
 	when {
-		// 1. 专属智能相册
 		isDir && isAlbum -> {
-			val brush = Brush.linearGradient(
-				colors = listOf(Color(0xFFFF6B8B), Color(0xFFFF3D71)),
-				start = Offset.Zero,
-				end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
-			)
-			GradientIconContainer(size = size, cornerRadius = cornerRadius, brush = brush, shadowColor = Color(0xFFFF3D71).copy(alpha = 0.25f), modifier = modifier) {
-				Icon(
-					imageVector = Icons.Rounded.CameraAlt,
-					contentDescription = "相册",
-					tint = Color.White,
-					modifier = Modifier.size(size * 0.54f),
-				)
+			val brush = Brush.linearGradient(listOf(Color(0xFFFF6B8B), Color(0xFFFF3D71)))
+			GradientBadge(size = size, brush = brush, modifier = modifier) {
+				Icon(Icons.Rounded.CameraAlt, contentDescription = "相册", tint = Color.White, modifier = Modifier.size(size * 0.54f))
 			}
 		}
-
-		// 2. 常规文件夹（琥珀暖黄渐变 + 圆润折角质感）
 		isDir -> {
 			FolderVectorIcon(size = size, modifier = modifier)
 		}
-
-		// 3. 高清视频（火粉渐变 + 居中播放三角胶囊）
 		category == FileCategory.Video -> {
-			val brush = Brush.linearGradient(
-				colors = listOf(Color(0xFFFF85C0), Color(0xFFEB2F96)),
-				start = Offset.Zero,
-				end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
-			)
-			GradientIconContainer(size = size, cornerRadius = cornerRadius, brush = brush, shadowColor = Color(0xFFEB2F96).copy(alpha = 0.25f), modifier = modifier) {
-				Icon(
-					imageVector = Icons.Rounded.PlayArrow,
-					contentDescription = "视频",
-					tint = Color.White,
-					modifier = Modifier.size(size * 0.58f),
-				)
+			val brush = Brush.linearGradient(listOf(Color(0xFF391085), Color(0xFF1D2129)))
+			GradientBadge(size = size, brush = brush, modifier = modifier) {
+				Icon(Icons.Rounded.PlayArrow, contentDescription = "视频", tint = Color.White, modifier = Modifier.size(size * 0.58f))
 			}
 		}
-
-		// 4. 图片文件（极光青蓝渐变 + 山川太阳）
 		category == FileCategory.Image -> {
-			val brush = Brush.linearGradient(
-				colors = listOf(Color(0xFF36CFC9), Color(0xFF08979C)),
-				start = Offset.Zero,
-				end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
-			)
-			GradientIconContainer(size = size, cornerRadius = cornerRadius, brush = brush, shadowColor = Color(0xFF08979C).copy(alpha = 0.25f), modifier = modifier) {
-				Icon(
-					imageVector = Icons.Rounded.Image,
-					contentDescription = "图片",
-					tint = Color.White,
-					modifier = Modifier.size(size * 0.54f),
-				)
+			val brush = Brush.linearGradient(listOf(Color(0xFF13C2C2), Color(0xFF08979C)))
+			GradientBadge(size = size, brush = brush, modifier = modifier) {
+				Icon(Icons.Rounded.Image, contentDescription = "图片", tint = Color.White, modifier = Modifier.size(size * 0.54f))
 			}
 		}
-
-		// 5. 办公文档（商务钴蓝渐变 + 规整文本条）
 		category == FileCategory.Document -> {
-			val brush = Brush.linearGradient(
-				colors = listOf(Color(0xFF597EF7), Color(0xFF1D39C4)),
-				start = Offset.Zero,
-				end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
+			QuarkDocBadge(
+				size = size,
+				bgColor = Color(0xFFF0F5FF),
+				borderColor = Color(0xFFADC6FF),
+				brandColor = Color(0xFF2F54EB),
+				label = "DOC",
+				modifier = modifier,
 			)
-			GradientIconContainer(size = size, cornerRadius = cornerRadius, brush = brush, shadowColor = Color(0xFF1D39C4).copy(alpha = 0.25f), modifier = modifier) {
-				Icon(
-					imageVector = Icons.Rounded.Description,
-					contentDescription = "文档",
-					tint = Color.White,
-					modifier = Modifier.size(size * 0.54f),
-				)
-			}
 		}
-
-		// 6. 音乐音频（薄荷翠绿渐变 + 动感音符）
 		category == FileCategory.Audio -> {
-			val brush = Brush.linearGradient(
-				colors = listOf(Color(0xFF52C41A), Color(0xFF237804)),
-				start = Offset.Zero,
-				end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
-			)
-			GradientIconContainer(size = size, cornerRadius = cornerRadius, brush = brush, shadowColor = Color(0xFF52C41A).copy(alpha = 0.25f), modifier = modifier) {
-				Icon(
-					imageVector = Icons.Rounded.MusicNote,
-					contentDescription = "音频",
-					tint = Color.White,
-					modifier = Modifier.size(size * 0.54f),
-				)
+			val brush = Brush.linearGradient(listOf(Color(0xFF52C41A), Color(0xFF237804)))
+			GradientBadge(size = size, brush = brush, modifier = modifier) {
+				Icon(Icons.Rounded.MusicNote, contentDescription = "音频", tint = Color.White, modifier = Modifier.size(size * 0.54f))
 			}
 		}
-
-		// 7. 压缩文件（神秘典雅紫渐变 + 压缩包拉链）
 		category == FileCategory.Archive -> {
-			val brush = Brush.linearGradient(
-				colors = listOf(Color(0xFFB37FEB), Color(0xFF722ED1)),
-				start = Offset.Zero,
-				end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
-			)
-			GradientIconContainer(size = size, cornerRadius = cornerRadius, brush = brush, shadowColor = Color(0xFF722ED1).copy(alpha = 0.25f), modifier = modifier) {
-				Icon(
-					imageVector = Icons.Rounded.FolderZip,
-					contentDescription = "压缩包",
-					tint = Color.White,
-					modifier = Modifier.size(size * 0.54f),
-				)
+			val brush = Brush.linearGradient(listOf(Color(0xFFB37FEB), Color(0xFF722ED1)))
+			GradientBadge(size = size, brush = brush, modifier = modifier) {
+				Icon(Icons.Rounded.FolderZip, contentDescription = "压缩包", tint = Color.White, modifier = Modifier.size(size * 0.54f))
 			}
 		}
-
-		// 8. 其他普通文件（柔和银灰渐变）
 		else -> {
-			val brush = Brush.linearGradient(
-				colors = listOf(Color(0xFF8C9BAE), Color(0xFF5F6E82)),
-				start = Offset.Zero,
-				end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
-			)
-			GradientIconContainer(size = size, cornerRadius = cornerRadius, brush = brush, shadowColor = Color(0xFF5F6E82).copy(alpha = 0.2f), modifier = modifier) {
-				Icon(
-					imageVector = Icons.Rounded.Description,
-					contentDescription = "文件",
-					tint = Color.White,
-					modifier = Modifier.size(size * 0.54f),
-				)
+			Box(
+				modifier = modifier
+					.size(size)
+					.clip(RoundedCornerShape(6.dp))
+					.background(Color(0xFFF2F3F5))
+					.border(0.5.dp, Color(0xFFE5E6EB), RoundedCornerShape(6.dp)),
+				contentAlignment = Alignment.Center,
+			) {
+				Icon(Icons.Rounded.Description, contentDescription = "文件", tint = Color(0xFF86909C), modifier = Modifier.size(size * 0.54f))
 			}
 		}
 	}
 }
 
 /**
- * 渐变底板容器封装
+ * 夸克同款清爽网盘文件夹矢量图标（带柔和折角与内衬）
  */
 @Composable
-private fun GradientIconContainer(
-	size: Dp,
-	cornerRadius: Dp,
-	brush: Brush,
-	shadowColor: Color,
-	modifier: Modifier = Modifier,
-	content: @Composable () -> Unit,
-) {
-	Box(
-		modifier = modifier
-			.size(size)
-			.shadow(elevation = 3.dp, shape = RoundedCornerShape(cornerRadius), ambientColor = shadowColor, spotColor = shadowColor)
-			.clip(RoundedCornerShape(cornerRadius))
-			.background(brush),
-		contentAlignment = Alignment.Center,
-	) {
-		content()
-	}
-}
-
-/**
- * 定制高保真微渐变网盘文件夹矢量图标（带圆润折角与内衬）
- */
-@Composable
-private fun FolderVectorIcon(
+fun FolderVectorIcon(
 	size: Dp,
 	modifier: Modifier = Modifier,
 ) {
-	val cornerRadius = size * 0.26f
-	val backBrush = Brush.linearGradient(
-		colors = listOf(Color(0xFFFFB300), Color(0xFFF57C00)),
-	)
-	val frontBrush = Brush.linearGradient(
-		colors = listOf(Color(0xFFFFCA28), Color(0xFFFFA000)),
-	)
+	val backBrush = Brush.linearGradient(listOf(Color(0xFFFFB300), Color(0xFFF57C00)))
+	val frontBrush = Brush.linearGradient(listOf(Color(0xFFFFCA28), Color(0xFFFFA000)))
 
 	Box(
 		modifier = modifier
 			.size(size)
-			.shadow(elevation = 3.dp, shape = RoundedCornerShape(cornerRadius), ambientColor = Color(0xFFFFA000).copy(alpha = 0.3f), spotColor = Color(0xFFFFA000).copy(alpha = 0.3f))
-			.clip(RoundedCornerShape(cornerRadius))
+			.clip(RoundedCornerShape(6.dp))
 			.background(backBrush),
 		contentAlignment = Alignment.Center,
 	) {
@@ -299,10 +433,10 @@ private fun FolderVectorIcon(
 
 			// 顶部微高光线条
 			drawLine(
-				color = Color.White.copy(alpha = 0.45f),
+				color = Color.White.copy(alpha = 0.5f),
 				start = Offset(w * 0.08f, h * 0.38f),
 				end = Offset(w * 0.40f, h * 0.38f),
-				strokeWidth = 2.dp.toPx(),
+				strokeWidth = 1.5.dp.toPx(),
 			)
 		}
 	}

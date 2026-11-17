@@ -37,9 +37,16 @@ enum class MainTab {
 }
 
 enum class ViewMode {
-	Cards,   // 详细卡片视图
-	Compact, // 极简紧凑列表
+	Cards,   // 夸克式极简纯净列表
+	Compact, // 紧凑列表
 	Grid,    // 2列宫格大图
+}
+
+enum class SortOrder(val label: String) {
+	ModifiedDesc("按修改时间 ↓"),
+	ModifiedAsc("按修改时间 ↑"),
+	NameAsc("按名称 A-Z"),
+	SizeDesc("按文件大小 ↓"),
 }
 
 data class TimelineGroup(
@@ -105,8 +112,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var selectedCategory by mutableStateOf(FileCategory.All)
 		private set
 
-	/** 视图模式：详细卡片 vs 紧凑列表 vs 宫格大图 */
+	/** 视图模式：夸克式极简列表 vs 宫格大图 */
 	var viewMode by mutableStateOf(ViewMode.Cards)
+		private set
+
+	/** 夸克同款排序方式：按修改时间 / 按名称 / 按大小 */
+	var sortOrder by mutableStateOf(SortOrder.ModifiedDesc)
 		private set
 
 	/** 全局搜索关键词 */
@@ -236,8 +247,15 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				FileCategory.Archive -> entries.filter { !it.isDir && it.isArchive }
 			}
 
-			if (searchQuery.isBlank()) return baseList
-			return baseList.filter { it.name.contains(searchQuery.trim(), ignoreCase = true) }
+			val raw = if (searchQuery.isBlank()) baseList else baseList.filter { it.name.contains(searchQuery.trim(), ignoreCase = true) }
+
+			// 夸克排序逻辑：文件夹置顶，内部按用户所选排序
+			return when (sortOrder) {
+				SortOrder.ModifiedDesc -> raw.sortedWith(compareBy<DavEntry> { !it.isDir }.thenByDescending { it.modified })
+				SortOrder.ModifiedAsc -> raw.sortedWith(compareBy<DavEntry> { !it.isDir }.thenBy { it.modified })
+				SortOrder.NameAsc -> raw.sortedWith(compareBy<DavEntry> { !it.isDir }.thenBy { it.name.lowercase(Locale.ROOT) })
+				SortOrder.SizeDesc -> raw.sortedWith(compareBy<DavEntry> { !it.isDir }.thenByDescending { it.size })
+			}
 		}
 
 	/** 相册时间线分组数据（按拍摄/修改日期降序） */
@@ -305,11 +323,20 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		selectedCategory = cat
 	}
 
+	fun toggleViewMode() {
+		viewMode = if (viewMode == ViewMode.Cards) ViewMode.Grid else ViewMode.Cards
+	}
+
 	fun cycleViewMode() {
-		viewMode = when (viewMode) {
-			ViewMode.Cards -> ViewMode.Compact
-			ViewMode.Compact -> ViewMode.Grid
-			ViewMode.Grid -> ViewMode.Cards
+		toggleViewMode()
+	}
+
+	fun cycleSortOrder() {
+		sortOrder = when (sortOrder) {
+			SortOrder.ModifiedDesc -> SortOrder.ModifiedAsc
+			SortOrder.ModifiedAsc -> SortOrder.NameAsc
+			SortOrder.NameAsc -> SortOrder.SizeDesc
+			SortOrder.SizeDesc -> SortOrder.ModifiedDesc
 		}
 	}
 

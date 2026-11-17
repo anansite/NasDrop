@@ -415,38 +415,52 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 
 					HorizontalDivider(color = Color(0xFFF0F2F5), thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
 
-					// 节点重连与授权状态
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.SpaceBetween,
-					) {
-						Column(modifier = Modifier.weight(1f)) {
-							Text(text = "穿透节点状态", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-							Text(text = vm.linkStatus.ifEmpty { "探测中..." }, fontSize = 11.sp, color = Color(0xFF86909C))
-						}
-						Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-							TextButton(onClick = {
-								vm.reloadSettings()
-								Toast.makeText(context, "正在尝试重新握手...", Toast.LENGTH_SHORT).show()
-							}) {
-								Text("重连", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-							}
-							if (vm.needsLogin) {
-								Button(
-									onClick = {
-										val url = vm.loginUrl()
-										if (url.isNotEmpty()) {
-											CustomTabsIntent.Builder().build().launchUrl(context, url.toUri())
-										}
-									},
-									colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
-									shape = RoundedCornerShape(12.dp),
-									contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-								) {
-									Text("去授权", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+					// 节点重连与授权状态（分行自适应全宽，杜绝长文案在手机窄屏上严重折行）
+					Column(modifier = Modifier.fillMaxWidth()) {
+						Row(
+							modifier = Modifier.fillMaxWidth(),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.SpaceBetween,
+						) {
+							Text(text = "穿透节点与链路状态", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+							Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+								TextButton(onClick = {
+									vm.reloadSettings()
+									Toast.makeText(context, "正在尝试重新握手...", Toast.LENGTH_SHORT).show()
+								}) {
+									Text("重连", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+								}
+								if (vm.needsLogin) {
+									Button(
+										onClick = {
+											val url = vm.loginUrl()
+											if (url.isNotEmpty()) {
+												CustomTabsIntent.Builder().build().launchUrl(context, url.toUri())
+											}
+										},
+										colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
+										shape = RoundedCornerShape(12.dp),
+										contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+									) {
+										Text("去授权", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+									}
 								}
 							}
+						}
+						Spacer(modifier = Modifier.height(6.dp))
+						Box(
+							modifier = Modifier
+								.fillMaxWidth()
+								.clip(RoundedCornerShape(8.dp))
+								.background(Color(0xFFF7F8FA))
+								.padding(horizontal = 10.dp, vertical = 8.dp),
+						) {
+							Text(
+								text = vm.linkStatus.ifEmpty { "节点探测与测速中..." },
+								fontSize = 12.sp,
+								color = Color(0xFF4E5969),
+								lineHeight = 16.sp,
+							)
 						}
 					}
 				}

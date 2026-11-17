@@ -132,6 +132,7 @@ import com.nasdrop.DavEntry
 import com.nasdrop.FileCategory
 import com.nasdrop.MainTab
 import com.nasdrop.RouteInfo
+import com.nasdrop.SortOrder
 import com.nasdrop.TransferStatus
 import com.nasdrop.TransferTask
 import com.nasdrop.UploadService
@@ -310,6 +311,10 @@ fun BrowserScreen(
 						activeTransferCount = vm.activeTransferCount,
 						onUpAlbum = { vm.upAlbum() },
 						onCreateAlbum = { activeCreateType = CreateDialogType.Album },
+						onDeleteCurrentAlbum = {
+							val cur = vm.allAlbumFolders.find { it.path == vm.selectedAlbumPath }
+							if (cur != null) activeFolderForDelete = Pair(cur, true)
+						},
 						onRefresh = { vm.refresh() },
 						onOpenTransferSheet = { showTransferSheet = true },
 					)
@@ -322,6 +327,10 @@ fun BrowserScreen(
 						activeTransferCount = vm.activeTransferCount,
 						onUpMedia = { vm.upMedia() },
 						onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
+						onDeleteCurrentMedia = {
+							val cur = vm.allMediaFolders.find { it.path == vm.selectedMediaPath }
+							if (cur != null) activeFolderForDelete = Pair(cur, false)
+						},
 						onRefresh = { vm.refresh() },
 						onOpenTransferSheet = { showTransferSheet = true },
 					)
@@ -690,6 +699,7 @@ private fun PhotosTopBar(
 	activeTransferCount: Int = 0,
 	onUpAlbum: () -> Unit,
 	onCreateAlbum: () -> Unit,
+	onDeleteCurrentAlbum: (() -> Unit)? = null,
 	onRefresh: () -> Unit,
 	onOpenTransferSheet: () -> Unit,
 ) {
@@ -711,16 +721,23 @@ private fun PhotosTopBar(
 				) {
 					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部相册", tint = Color(0xFF2A72F6), modifier = Modifier.size(18.dp))
 				}
-				Text("相册", fontSize = 14.sp, color = Color(0xFF86909C), modifier = Modifier.clickable(onClick = onUpAlbum))
+				Text("全部相册", fontSize = 14.sp, color = Color(0xFF86909C), modifier = Modifier.clickable(onClick = onUpAlbum))
 				Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = Color(0xFFC9CDD4), modifier = Modifier.size(14.dp))
 				Text(selectedAlbumName, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1)
 			} else {
+				Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, tint = Color(0xFFFF3D71), modifier = Modifier.size(20.dp))
+				Spacer(modifier = Modifier.width(2.dp))
 				Text("云端相册", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
 				Text("· $count 张", fontSize = 12.sp, color = Color(0xFF86909C))
 			}
 		}
 
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+			if (selectedAlbumName.isNotBlank() && onDeleteCurrentAlbum != null) {
+				IconButton(onClick = onDeleteCurrentAlbum, modifier = Modifier.size(32.dp)) {
+					Icon(Icons.Rounded.Delete, contentDescription = "删除当前相册", tint = Color(0xFFFF4D4F), modifier = Modifier.size(19.dp))
+				}
+			}
 			IconButton(onClick = onCreateAlbum, modifier = Modifier.size(32.dp)) {
 				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属相册", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
@@ -752,6 +769,7 @@ private fun MediaTopBar(
 	activeTransferCount: Int = 0,
 	onUpMedia: () -> Unit,
 	onCreateMediaFolder: () -> Unit,
+	onDeleteCurrentMedia: (() -> Unit)? = null,
 	onRefresh: () -> Unit,
 	onOpenTransferSheet: () -> Unit,
 ) {
@@ -763,7 +781,7 @@ private fun MediaTopBar(
 			.background(Color.White)
 			.padding(horizontal = 14.dp),
 		verticalAlignment = Alignment.CenterVertically,
-		horizontalArrangement = Arrangement.SpaceBetween,
+		horangement = Arrangement.SpaceBetween,
 	) {
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
 			if (selectedMediaName.isNotBlank()) {
@@ -773,16 +791,23 @@ private fun MediaTopBar(
 				) {
 					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部影视", tint = Color(0xFF2A72F6), modifier = Modifier.size(18.dp))
 				}
-				Text("影音", fontSize = 14.sp, color = Color(0xFF86909C), modifier = Modifier.clickable(onClick = onUpMedia))
+				Text("全部影视", fontSize = 14.sp, color = Color(0xFF86909C), modifier = Modifier.clickable(onClick = onUpMedia))
 				Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = Color(0xFFC9CDD4), modifier = Modifier.size(14.dp))
 				Text(selectedMediaName, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1)
 			} else {
+				Icon(Icons.Rounded.VideoLibrary, contentDescription = null, tint = Color(0xFF722ED1), modifier = Modifier.size(20.dp))
+				Spacer(modifier = Modifier.width(2.dp))
 				Text("影音视界", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
 				Text("· $count 部", fontSize = 12.sp, color = Color(0xFF86909C))
 			}
 		}
 
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+			if (selectedMediaName.isNotBlank() && onDeleteCurrentMedia != null) {
+				IconButton(onClick = onDeleteCurrentMedia, modifier = Modifier.size(32.dp)) {
+					Icon(Icons.Rounded.Delete, contentDescription = "删除当前影集", tint = Color(0xFFFF4D4F), modifier = Modifier.size(19.dp))
+				}
+			}
 			IconButton(onClick = onCreateMediaFolder, modifier = Modifier.size(32.dp)) {
 				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属影集", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
@@ -872,26 +897,24 @@ private fun FilesTopBar(
 	Column(
 		modifier = Modifier
 			.fillMaxWidth()
-			.background(Color(0xFFF7F8FA))
-			.padding(vertical = 4.dp),
+			.background(Color.White),
 	) {
-		// 第 1 行：面包屑路径主标题 + 5 个高频紧凑按钮 (搜索/视图切换/多选/新建/传输列表)
+		// 第 1 行：夸克同款极简单层顶栏（返回/标题 + 搜索 + 新建 + 刷新 + 传输列表）
 		Row(
 			modifier = Modifier
 				.fillMaxWidth()
-				.height(44.dp)
+				.height(46.dp)
 				.padding(horizontal = 14.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
 			if (isSearchActive) {
-				// 展开态搜索条：原地平滑无缝展开
+				// 原地平滑展开搜索条
 				Surface(
 					shape = RoundedCornerShape(20.dp),
-					color = Color.White,
-					shadowElevation = 1.dp,
+					color = Color(0xFFF7F8FA),
 					modifier = Modifier
 						.weight(1f)
-						.height(38.dp),
+						.height(36.dp),
 				) {
 					Row(
 						modifier = Modifier.padding(horizontal = 10.dp),
@@ -901,7 +924,7 @@ private fun FilesTopBar(
 						Icon(Icons.Rounded.Search, contentDescription = null, tint = Color(0xFF2A72F6), modifier = Modifier.size(18.dp))
 						BasicTextField(
 							value = vm.searchQuery,
-							onValueChange = { vm.searchQuery = it },
+						onValueChange = { vm.searchQuery = it },
 							singleLine = true,
 							modifier = Modifier.weight(1f),
 							decorationBox = { innerTextField ->
@@ -932,131 +955,77 @@ private fun FilesTopBar(
 					Text("取消", fontSize = 13.sp, color = Color(0xFF2A72F6), fontWeight = FontWeight.Bold)
 				}
 			} else {
-				// 常态：左侧一体化面包屑路径主标题
+				// 常态：左侧标题与返回
 				Row(
 					modifier = Modifier.weight(1f),
 					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
 				) {
 					if (parts.isNotEmpty()) {
 						IconButton(
 							onClick = onUp,
-							modifier = Modifier.size(32.dp),
+							modifier = Modifier.size(30.dp),
 						) {
 							Icon(
 								imageVector = Icons.Rounded.ArrowBack,
 								contentDescription = "返回上一级",
-								tint = Color(0xFF2A72F6),
+								tint = Color(0xFF1D2129),
 								modifier = Modifier.size(20.dp),
 							)
 						}
-						Spacer(modifier = Modifier.width(2.dp))
-					}
-
-					LazyRow(
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(4.dp),
-					) {
-						item {
-							val isCurrent = parts.isEmpty()
-							Row(
-								verticalAlignment = Alignment.CenterVertically,
-								modifier = Modifier
-									.clip(RoundedCornerShape(6.dp))
-									.clickable(onClick = { onNavigate("") })
-									.padding(horizontal = 4.dp, vertical = 4.dp),
-							) {
-								Icon(
-									Icons.Rounded.FolderOpen,
-									contentDescription = null,
-									tint = if (isCurrent) Color(0xFF2A72F6) else Color(0xFF4E5969),
-									modifier = Modifier.size(18.dp),
-								)
-								Spacer(modifier = Modifier.width(4.dp))
-								Text(
-									"我的文件",
-									fontSize = 16.sp,
-									fontWeight = FontWeight.Bold,
-									color = if (isCurrent) Color(0xFF1D2129) else Color(0xFF4E5969),
-								)
-							}
-						}
-
-						items(parts.indices.toList()) { i ->
-							Icon(
-								Icons.Rounded.ChevronRight,
-								contentDescription = null,
-								tint = Color(0xFFC9CDD4),
-								modifier = Modifier.size(14.dp),
-							)
-							val isLast = i == parts.size - 1
-							val p = parts.take(i + 1).joinToString("/")
-							Text(
-								text = parts[i],
-								fontSize = 15.sp,
-								fontWeight = if (isLast) FontWeight.Bold else FontWeight.Medium,
-								color = if (isLast) Color(0xFF1D2129) else Color(0xFF4E5969),
-								modifier = Modifier
-									.clip(RoundedCornerShape(6.dp))
-									.clickable(onClick = { onNavigate(p) })
-									.padding(horizontal = 4.dp, vertical = 4.dp),
-							)
-						}
+						Text(
+							text = parts.last(),
+							fontSize = 17.sp,
+							fontWeight = FontWeight.Bold,
+							color = Color(0xFF1D2129),
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+						)
+					} else {
+						Icon(
+							imageVector = Icons.Rounded.FolderOpen,
+							contentDescription = null,
+							tint = Color(0xFF2A72F6),
+							modifier = Modifier.size(22.dp),
+						)
+						Text(
+							text = "我的文件",
+							fontSize = 18.sp,
+							fontWeight = FontWeight.Bold,
+							color = Color(0xFF1D2129),
+						)
 					}
 				}
 
-				// 右侧 5 个紧凑高频按钮：搜索、视图切换、多选、新建、传输列表
+				// 右侧极简 4 操作
 				Row(
 					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(1.dp),
+					horizontalArrangement = Arrangement.spacedBy(2.dp),
 				) {
-					// 搜索
 					IconButton(
 						onClick = { isSearchActive = true },
-						modifier = Modifier.size(34.dp),
+						modifier = Modifier.size(32.dp),
 					) {
-						Icon(Icons.Rounded.Search, contentDescription = "搜索", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
+						Icon(Icons.Rounded.Search, contentDescription = "搜索", tint = Color(0xFF4E5969), modifier = Modifier.size(20.dp))
 					}
-
-					// 视图切换
-					IconButton(
-						onClick = onToggleViewMode,
-						modifier = Modifier.size(34.dp),
-					) {
-						Icon(
-							imageVector = when (vm.viewMode) {
-								ViewMode.Cards -> Icons.Rounded.ViewAgenda
-								ViewMode.Compact -> Icons.Rounded.ViewHeadline
-								ViewMode.Grid -> Icons.Rounded.GridView
-							},
-							contentDescription = "切换视图",
-							tint = Color(0xFF4E5969),
-							modifier = Modifier.size(19.dp),
-						)
-					}
-
-					// 新建文件夹
 					IconButton(
 						onClick = onCreateFolder,
-						modifier = Modifier.size(34.dp),
+						modifier = Modifier.size(32.dp),
 					) {
-						Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建文件夹", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
+						Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建文件夹", tint = Color(0xFF4E5969), modifier = Modifier.size(20.dp))
 					}
-
-					// 刷新
 					IconButton(
 						onClick = { vm.refresh() },
-						modifier = Modifier.size(34.dp),
+						modifier = Modifier.size(32.dp),
 					) {
-						Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
+						Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969), modifier = Modifier.size(20.dp))
 					}
-
-					// 传输中心（采用下载云图标，避免误认为刷新）
 					IconButton(
 						onClick = onOpenTransferSheet,
-						modifier = Modifier.size(34.dp),
+						modifier = Modifier.size(32.dp),
 					) {
 						Box(contentAlignment = Alignment.Center) {
-							Icon(Icons.Rounded.CloudDownload, contentDescription = "传输列表", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
+							Icon(Icons.Rounded.CloudDownload, contentDescription = "传输列表", tint = Color(0xFF4E5969), modifier = Modifier.size(20.dp))
 							if (vm.activeTransferCount > 0) {
 								Box(
 									modifier = Modifier
@@ -1072,13 +1041,85 @@ private fun FilesTopBar(
 			}
 		}
 
-		Spacer(modifier = Modifier.height(2.dp))
+		// 第 2 行：夸克同款精致面包屑路径（固定 26dp 高度，平滑杜绝高度跳动）
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.height(26.dp)
+				.padding(horizontal = 14.dp),
+			verticalAlignment = Alignment.CenterVertically,
+		) {
+			LazyRow(
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
+			) {
+				item {
+					val isCurrent = parts.isEmpty()
+					Text(
+						text = "NAS 私有云",
+						fontSize = 12.sp,
+						color = if (isCurrent) Color(0xFF2A72F6) else Color(0xFF86909C),
+						modifier = Modifier
+							.clip(RoundedCornerShape(4.dp))
+							.clickable { onNavigate("") }
+							.padding(horizontal = 2.dp, vertical = 2.dp),
+					)
+				}
+				items(parts.indices.toList()) { i ->
+					Text("/", fontSize = 11.sp, color = Color(0xFFC9CDD4))
+					val isLast = i == parts.size - 1
+					val p = parts.take(i + 1).joinToString("/")
+					Text(
+						text = parts[i],
+						fontSize = 12.sp,
+						color = if (isLast) Color(0xFF1D2129) else Color(0xFF86909C),
+						fontWeight = if (isLast) FontWeight.Bold else FontWeight.Normal,
+						modifier = Modifier
+							.clip(RoundedCornerShape(4.dp))
+							.clickable { onNavigate(p) }
+							.padding(horizontal = 2.dp, vertical = 2.dp),
+					)
+				}
+			}
+		}
 
-		// 第 2 行：全宽可横滑分类胶囊（无遮挡，全部、图片、视频、文档、音频、压缩包均完整流畅滚动）
-		CategoryFilterRow(
-			selected = vm.selectedCategory,
-			onSelect = { vm.selectCategory(it) },
-		)
+		// 第 3 行：夸克同款排序与视图切换条（左侧：按修改时间 ↓；右侧：纯线框四宫格图标）
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.height(32.dp)
+				.padding(horizontal = 14.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.SpaceBetween,
+		) {
+			Row(
+				modifier = Modifier
+					.clip(RoundedCornerShape(6.dp))
+					.clickable { vm.cycleSortOrder() }
+					.padding(vertical = 4.dp),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
+			) {
+				Text(
+					text = vm.sortOrder.label,
+					fontSize = 12.sp,
+					fontWeight = FontWeight.Medium,
+					color = Color(0xFF4E5969),
+				)
+			}
+
+			IconButton(
+				onClick = onToggleViewMode,
+				modifier = Modifier.size(28.dp),
+			) {
+				Icon(
+					imageVector = if (vm.viewMode == ViewMode.Cards) Icons.Rounded.GridView else Icons.Rounded.ViewHeadline,
+					contentDescription = "切换视图",
+					tint = Color(0xFF4E5969),
+					modifier = Modifier.size(19.dp),
+				)
+			}
+		}
 	}
 }
 
@@ -1277,24 +1318,24 @@ private fun FileBrowserContent(
 								onClick = { onOpenEntry(entry) },
 								onLongClick = { onLongClickEntry(entry) },
 							)
-							.padding(horizontal = 16.dp, vertical = 9.dp),
+							.padding(horizontal = 14.dp, vertical = 7.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(12.dp),
 					) {
-						// 左侧精致图标（微圆角，与夸克一致）
+						// 左侧夸克同款文件徽标（微圆角，专属卡片或视频封面）
 						FileThumbnail(entry = entry, urlOf = { vm.urlFor(it) }, size = 42.dp)
 
-						// 中间主标题与单行元数据
+						// 中间主标题与单行元数据（保留完整文件名，如 LibreTV播放器.mp4）
 						Column(modifier = Modifier.weight(1f)) {
 							Text(
-								text = entry.displayName,
+								text = entry.name,
 								fontSize = 14.sp,
 								fontWeight = FontWeight.Medium,
 								color = Color(0xFF1D2129),
 								maxLines = 1,
 								overflow = TextOverflow.Ellipsis,
 							)
-							Spacer(modifier = Modifier.height(3.dp))
+							Spacer(modifier = Modifier.height(2.dp))
 							Text(
 								text = formatMeta(entry),
 								fontSize = 11.sp,
@@ -1304,20 +1345,32 @@ private fun FileBrowserContent(
 							)
 						}
 
-						// 右侧操作：多选时显示圆圈选择框，常态时显示更多菜单点
+						// 右侧操作：夸克同款空心圆圈勾选 + 更多菜单点
 						if (isMulti) {
 							SelectCheckbox(isSelected = isSelected)
 						} else {
-							IconButton(
-								onClick = { onOpenAction(entry) },
-								modifier = Modifier.size(28.dp),
-							) {
-								Icon(
-									Icons.Rounded.MoreVert,
-									contentDescription = "更多",
-									tint = Color(0xFFC9CDD4),
-									modifier = Modifier.size(18.dp),
+							Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+								// 夸克同款轻量空心圆圈（点击直接进入多选并选中）
+								Box(
+									modifier = Modifier
+										.size(20.dp)
+										.clip(CircleShape)
+										.border(1.dp, Color(0xFFC9CDD4), CircleShape)
+										.clickable {
+											vm.enterMultiSelect(entry)
+										},
 								)
+								IconButton(
+									onClick = { onOpenAction(entry) },
+									modifier = Modifier.size(24.dp),
+								) {
+									Icon(
+										Icons.Rounded.MoreVert,
+										contentDescription = "更多",
+										tint = Color(0xFFC9CDD4),
+										modifier = Modifier.size(16.dp),
+									)
+								}
 							}
 						}
 					}
@@ -2525,17 +2578,22 @@ private fun CompactTabItem(
 }
 
 internal fun formatMeta(entry: DavEntry): String {
-	val dateStr = if (entry.modified > 0) formatDate(entry.modified) else ""
+	val dateStr = if (entry.modified > 0) formatQuarkDate(entry.modified) else ""
 	if (entry.isDir) {
-		return if (dateStr.isNotEmpty()) "文件夹 · $dateStr" else "文件夹"
+		return if (dateStr.isNotEmpty()) "$dateStr  文件夹" else "文件夹"
 	}
-	val ext = entry.name.substringAfterLast('.', "").uppercase(Locale.ROOT)
 	val sizeStr = formatSize(entry.size)
-	val parts = mutableListOf<String>()
-	if (sizeStr != "--") parts.add(sizeStr)
-	if (ext.isNotEmpty() && ext.length <= 5) parts.add(ext)
-	if (dateStr.isNotEmpty()) parts.add(dateStr)
-	return parts.joinToString(" · ")
+	return when {
+		dateStr.isNotEmpty() && sizeStr != "--" -> "$dateStr  $sizeStr"
+		dateStr.isNotEmpty() -> dateStr
+		else -> sizeStr
+	}
+}
+
+internal fun formatQuarkDate(millis: Long): String {
+	if (millis <= 0) return ""
+	val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+	return sdf.format(Date(millis))
 }
 
 internal fun formatSize(bytes: Long): String {
