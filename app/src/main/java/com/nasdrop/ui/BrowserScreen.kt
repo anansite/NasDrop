@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -272,6 +273,7 @@ fun BrowserScreen(
 				MainTab.Files -> {
 					FilesTopBar(
 						vm = vm,
+						onUpload = { filePicker.launch(arrayOf("*/*")) },
 						onOpenTransferSheet = { showTransferSheet = true },
 						onToggleViewMode = { vm.cycleViewMode() },
 						onToggleMultiSelect = {
@@ -289,6 +291,7 @@ fun BrowserScreen(
 						count = vm.currentAlbumPhotos.size,
 						selectedAlbumName = vm.selectedAlbumPath.substringAfterLast('/'),
 						activeTransferCount = vm.activeTransferCount,
+						onUploadPhoto = { photoPicker.launch(arrayOf("image/*")) },
 						onUpAlbum = { vm.upAlbum() },
 						onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 						onDeleteCurrentAlbum = {
@@ -305,6 +308,7 @@ fun BrowserScreen(
 						count = vm.currentMediaVideos.size,
 						selectedMediaName = vm.selectedMediaPath.substringAfterLast('/'),
 						activeTransferCount = vm.activeTransferCount,
+						onUploadVideo = { videoPicker.launch(arrayOf("video/*")) },
 						onUpMedia = { vm.upMedia() },
 						onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
 						onDeleteCurrentMedia = {
@@ -753,6 +757,7 @@ private fun PhotosTopBar(
 	count: Int,
 	selectedAlbumName: String,
 	activeTransferCount: Int = 0,
+	onUploadPhoto: () -> Unit,
 	onUpAlbum: () -> Unit,
 	onCreateAlbum: () -> Unit,
 	onDeleteCurrentAlbum: (() -> Unit)? = null,
@@ -789,6 +794,9 @@ private fun PhotosTopBar(
 		}
 
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+			IconButton(onClick = onUploadPhoto, modifier = Modifier.size(32.dp)) {
+				Icon(Icons.Rounded.PhotoCamera, contentDescription = "上传照片", tint = Color(0xFFFF3D71), modifier = Modifier.size(20.dp))
+			}
 			if (selectedAlbumName.isNotBlank() && onDeleteCurrentAlbum != null) {
 				IconButton(onClick = onDeleteCurrentAlbum, modifier = Modifier.size(32.dp)) {
 					Icon(Icons.Rounded.Delete, contentDescription = "删除当前相册", tint = Color(0xFFFF4D4F), modifier = Modifier.size(19.dp))
@@ -823,6 +831,7 @@ private fun MediaTopBar(
 	count: Int,
 	selectedMediaName: String,
 	activeTransferCount: Int = 0,
+	onUploadVideo: () -> Unit,
 	onUpMedia: () -> Unit,
 	onCreateMediaFolder: () -> Unit,
 	onDeleteCurrentMedia: (() -> Unit)? = null,
@@ -859,6 +868,9 @@ private fun MediaTopBar(
 		}
 
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+			IconButton(onClick = onUploadVideo, modifier = Modifier.size(32.dp)) {
+				Icon(Icons.Rounded.Movie, contentDescription = "上传视频", tint = Color(0xFF722ED1), modifier = Modifier.size(20.dp))
+			}
 			if (selectedMediaName.isNotBlank() && onDeleteCurrentMedia != null) {
 				IconButton(onClick = onDeleteCurrentMedia, modifier = Modifier.size(32.dp)) {
 					Icon(Icons.Rounded.Delete, contentDescription = "删除当前影集", tint = Color(0xFFFF4D4F), modifier = Modifier.size(19.dp))
@@ -937,6 +949,7 @@ private fun NetworkTopBar(
 @Composable
 private fun FilesTopBar(
 	vm: BrowserViewModel,
+	onUpload: () -> Unit,
 	onOpenTransferSheet: () -> Unit,
 	onToggleViewMode: () -> Unit,
 	onToggleMultiSelect: () -> Unit,
@@ -1053,11 +1066,17 @@ private fun FilesTopBar(
 					}
 				}
 
-				// 右侧极简 4 操作
+				// 右侧极简操作（上传 + 搜索 + 新建 + 刷新 + 传输中心）
 				Row(
 					verticalAlignment = Alignment.CenterVertically,
 					horizontalArrangement = Arrangement.spacedBy(2.dp),
 				) {
+					IconButton(
+						onClick = onUpload,
+						modifier = Modifier.size(32.dp),
+					) {
+						Icon(Icons.Rounded.CloudUpload, contentDescription = "上传文件", tint = Color(0xFF2A72F6), modifier = Modifier.size(21.dp))
+					}
 					IconButton(
 						onClick = { isSearchActive = true },
 						modifier = Modifier.size(32.dp),
@@ -2803,63 +2822,66 @@ private fun DraggableUploadFab(
 ) {
 	if (currentTab == MainTab.Me) return
 
-	val density = LocalDensity.current
-	val configuration = LocalConfiguration.current
-	val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
-	val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+	BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+		val density = LocalDensity.current
+		val boxWidthPx = constraints.maxWidth.toFloat()
+		val boxHeightPx = constraints.maxHeight.toFloat()
 
-	val fabSizeDp = 52.dp
-	val fabSizePx = with(density) { fabSizeDp.toPx() }
-	val marginPx = with(density) { 16.dp.toPx() }
+		val fabSizeDp = 52.dp
+		val fabSizePx = with(density) { fabSizeDp.toPx() }
+		val marginPx = with(density) { 16.dp.toPx() }
 
-	var offsetX by remember { mutableFloatStateOf(screenWidthPx - fabSizePx - marginPx) }
-	var offsetY by remember { mutableFloatStateOf(screenHeightPx - fabSizePx - with(density) { 100.dp.toPx() }) }
-	var isDragging by remember { mutableStateOf(false) }
+		// 默认吸附在可视区右下角：距离右边缘 16dp，距离底部 16dp
+		var offsetX by remember(boxWidthPx) { mutableFloatStateOf((boxWidthPx - fabSizePx - marginPx).coerceAtLeast(0f)) }
+		var offsetY by remember(boxHeightPx) { mutableFloatStateOf((boxHeightPx - fabSizePx - marginPx).coerceAtLeast(0f)) }
+		var isDragging by remember { mutableStateOf(false) }
 
-	val (bgColor, icon, label) = when (currentTab) {
-		MainTab.Files -> Triple(Color(0xFF2A72F6), Icons.Rounded.CloudUpload, "上传文件")
-		MainTab.Photos -> Triple(Color(0xFFFF3D71), Icons.Rounded.PhotoCamera, "上传照片")
-		MainTab.Media -> Triple(Color(0xFF722ED1), Icons.Rounded.Movie, "上传视频")
-		MainTab.Me -> Triple(Color.Transparent, Icons.Rounded.Add, "")
-	}
+		val (bgColor, icon, label) = when (currentTab) {
+			MainTab.Files -> Triple(Color(0xFF2A72F6), Icons.Rounded.CloudUpload, "上传文件")
+			MainTab.Photos -> Triple(Color(0xFFFF3D71), Icons.Rounded.PhotoCamera, "上传照片")
+			MainTab.Media -> Triple(Color(0xFF722ED1), Icons.Rounded.Movie, "上传视频")
+			MainTab.Me -> Triple(Color.Transparent, Icons.Rounded.Add, "")
+		}
 
-	Surface(
-		shape = CircleShape,
-		color = bgColor,
-		shadowElevation = if (isDragging) 12.dp else 6.dp,
-		modifier = Modifier
-			.offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-			.size(fabSizeDp)
-			.pointerInput(currentTab) {
-				detectDragGestures(
-					onDragStart = { isDragging = true },
-					onDragEnd = {
-						isDragging = false
-						val centerX = offsetX + fabSizePx / 2
-						offsetX = if (centerX < screenWidthPx / 2) marginPx else (screenWidthPx - fabSizePx - marginPx)
-					},
-					onDragCancel = { isDragging = false },
-					onDrag = { change, dragAmount ->
-						change.consume()
-						offsetX = (offsetX + dragAmount.x).coerceIn(marginPx, screenWidthPx - fabSizePx - marginPx)
-						offsetY = (offsetY + dragAmount.y).coerceIn(
-							marginPx + with(density) { 50.dp.toPx() },
-							screenHeightPx - fabSizePx - with(density) { 70.dp.toPx() }
-						)
-					}
-				)
-			}
-			.clickable {
-				when (currentTab) {
-					MainTab.Files -> onUploadFile()
-					MainTab.Photos -> onUploadPhoto()
-					MainTab.Media -> onUploadVideo()
-					MainTab.Me -> {}
+		Surface(
+			shape = CircleShape,
+			color = bgColor,
+			shadowElevation = if (isDragging) 12.dp else 6.dp,
+			modifier = Modifier
+				.offset {
+					val curX = offsetX.coerceIn(marginPx, (boxWidthPx - fabSizePx - marginPx).coerceAtLeast(marginPx))
+					val curY = offsetY.coerceIn(marginPx, (boxHeightPx - fabSizePx - marginPx).coerceAtLeast(marginPx))
+					IntOffset(curX.roundToInt(), curY.roundToInt())
 				}
-			},
-	) {
-		Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-			Icon(imageVector = icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(24.dp))
+				.size(fabSizeDp)
+				.pointerInput(currentTab, boxWidthPx, boxHeightPx) {
+					detectDragGestures(
+						onDragStart = { isDragging = true },
+						onDragEnd = {
+							isDragging = false
+							val centerX = offsetX + fabSizePx / 2
+							offsetX = if (centerX < boxWidthPx / 2) marginPx else (boxWidthPx - fabSizePx - marginPx)
+						},
+						onDragCancel = { isDragging = false },
+						onDrag = { change, dragAmount ->
+							change.consume()
+							offsetX = (offsetX + dragAmount.x).coerceIn(marginPx, boxWidthPx - fabSizePx - marginPx)
+							offsetY = (offsetY + dragAmount.y).coerceIn(marginPx, boxHeightPx - fabSizePx - marginPx)
+						}
+					)
+				}
+				.clickable {
+					when (currentTab) {
+						MainTab.Files -> onUploadFile()
+						MainTab.Photos -> onUploadPhoto()
+						MainTab.Media -> onUploadVideo()
+						MainTab.Me -> {}
+					}
+				},
+		) {
+			Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+				Icon(imageVector = icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(24.dp))
+			}
 		}
 	}
 }
