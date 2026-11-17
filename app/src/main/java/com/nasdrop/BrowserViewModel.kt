@@ -725,6 +725,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	fun refresh() {
 		dirCache.remove(path)
 		open(path)
+		if (selectedAlbumPath.isNotBlank()) dirCache.remove(selectedAlbumPath)
+		if (selectedMediaPath.isNotBlank()) dirCache.remove(selectedMediaPath)
+		if (hasScannedMedia || currentTab == MainTab.Photos || currentTab == MainTab.Media) {
+			hasScannedMedia = true
+			viewModelScope.launch(scanDispatcher) {
+				scanGlobalMedia()
+			}
+		}
 	}
 
 	fun cd(entry: DavEntry) {

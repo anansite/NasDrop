@@ -143,6 +143,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.input.pointer.pointerInput
 import com.nasdrop.ViewMode
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -426,7 +429,6 @@ fun BrowserScreen(
 						onUploadPhoto = { photoPicker.launch(arrayOf("image/*", "video/*")) },
 						onUploadVideo = { videoPicker.launch(arrayOf("video/*")) },
 					)
-				}
 				}
 			}
 		}
@@ -2071,7 +2073,13 @@ private fun TransferCenterSheet(
 				) {
 					items(tasks, key = { it.id }) { task ->
 						val statusText = when (task.status) {
-							TransferStatus.RUNNING -> if (task.isUpload) "正在上传" else "正在下载"
+							TransferStatus.RUNNING -> {
+								if (task.isUpload) {
+									if (task.totalBytes > 0 && task.sentBytes >= task.totalBytes) "正在云端校验存盘..." else "正在上传"
+								} else {
+									"正在下载"
+								}
+							}
 							TransferStatus.QUEUED -> "排队等待中"
 							TransferStatus.PAUSED -> "已暂停"
 							TransferStatus.COMPLETED -> if (task.isUpload) "上传完成" else "下载完成"
@@ -2718,17 +2726,17 @@ private fun CompactTabItem(
 		modifier = modifier
 			.fillMaxHeight()
 			.clickable(onClick = onClick)
-			.padding(vertical = 4.dp),
+			.padding(top = 7.dp, bottom = 3.dp),
 		horizontalAlignment = Alignment.CenterHorizontally,
-		verticalArrangement = Arrangement.Center,
+		verticalArrangement = Arrangement.Bottom,
 	) {
 		Icon(
 			imageVector = icon,
 			contentDescription = title,
 			tint = color,
-			modifier = Modifier.size(21.dp),
+			modifier = Modifier.size(20.dp),
 		)
-		Spacer(modifier = Modifier.height(2.dp))
+		Spacer(modifier = Modifier.height(1.dp))
 		Text(
 			text = title,
 			fontSize = 10.sp,

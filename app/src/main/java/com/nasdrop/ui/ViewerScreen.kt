@@ -4,6 +4,9 @@ import android.app.Activity
 import android.content.Context
 import android.media.AudioManager
 import android.view.WindowManager
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -238,6 +241,28 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 		}
 	}
 
+	// 监听应用与屏幕生命周期：锁屏/后台暂停，解锁/前台恢复播放与重新挂接渲染
+	val lifecycleOwner = LocalLifecycleOwner.current
+	DisposableEffect(lifecycleOwner, player) {
+		val observer = LifecycleEventObserver { _, event ->
+			when (event) {
+				Lifecycle.Event.ON_PAUSE -> {
+					player.pause()
+				}
+				Lifecycle.Event.ON_RESUME -> {
+					if (isPlaying) {
+						player.play()
+					}
+				}
+				else -> {}
+			}
+		}
+		lifecycleOwner.lifecycle.addObserver(observer)
+		onDispose {
+			lifecycleOwner.lifecycle.removeObserver(observer)
+		}
+	}
+
 	// 周期性轮询播放进度
 	LaunchedEffect(player) {
 		while (true) {
@@ -352,7 +377,11 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 				}
 			},
 			update = { view ->
+				if (view.player != player) {
+					view.player = player
+				}
 				view.resizeMode = resizeMode
+				view.onResume()
 			},
 			modifier = Modifier.fillMaxSize(),
 		)
