@@ -148,6 +148,17 @@ class Repository(private val context: Context) {
 
 	fun http(): OkHttpClient = okHttp
 
+	/**
+	 * 只读连通性探测：复用已建立的 client 做一次轻量 PROPFIND。
+	 * 绝不 invalidate / stop 隧道 / 重建 client——测试动作本身不能破坏正在用的连接，
+	 * 这正是旧版「一点测试就卡死无响应」的根因。
+	 * 必须在 IO 线程调用。s 仅在当前还没有 client 时用于一次性建连。
+	 */
+	fun probeConnection(s: Settings) {
+		val c = cached ?: client(s)
+		c.probe()
+	}
+
 	data class DirectProbeResult(val ip: String, val latencyMs: Long, val isLan: Boolean)
 
 	@Volatile

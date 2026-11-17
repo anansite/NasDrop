@@ -84,6 +84,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import coil.request.Priority
 import android.content.Intent
 import android.widget.Toast
 import androidx.core.content.FileProvider
@@ -128,6 +129,21 @@ fun ImageViewer(
 		imageList.size
 	}
 	val current = imageList.getOrNull(pager.currentPage.coerceIn(0, imageList.lastIndex)) ?: return
+
+	// 预热原图：进入看图/翻页时就把 当前±1 张原图压进 Coil 高优先级队列。
+	// 慢速隧道里原图下载需要几秒，提前并行拉取能让首图/翻页尽快从"低清缩略图"切到清晰原图。
+	val imageLoader = context.app.repo.imageLoader
+	val currentPage = pager.currentPage
+	LaunchedEffect(currentPage) {
+		val center = currentPage.coerceIn(0, imageList.lastIndex)
+		for (i in (center - 1)..(center + 1)) {
+			val e = imageList.getOrNull(i) ?: continue
+			val u = urlOf(e.path) ?: continue
+			imageLoader.enqueue(
+				ImageRequest.Builder(context).data(u).priority(Priority.HIGH).build()
+			)
+		}
+	}
 
 	var controlsVisible by remember { mutableStateOf(true) }
 	var showInfoDialog by remember { mutableStateOf(false) }
@@ -382,6 +398,7 @@ private fun ZoomableImage(url: String?, thumbUrl: String?, name: String) {
 	val fullRequest = remember(url, retryKey) {
 		ImageRequest.Builder(context)
 			.data(url)
+			.priority(Priority.HIGH)
 			.memoryCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
 			.diskCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
 			.crossfade(true)

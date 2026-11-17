@@ -17,6 +17,7 @@ import java.io.IOException
 import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 enum class FileCategory(val label: String, val icon: String) {
 	All("全部", "📁"),
@@ -125,6 +126,15 @@ class WebDavClient(
 		return if (ext in DavEntry.IMAGES) urlFor(path) else null
 	}
 
+	/**
+	 * 元数据请求专用：20 秒硬截止（call 级 deadline）。
+	 * 全局 okHttp 的 readTimeout 是 5 分钟（为大文件传输留的），列目录/删改/缩略图
+	 * 这类小请求一旦继承它，隧道抖动时页面就会假死好几分钟。这里单独收紧。
+	 */
+	private fun metaCall(req: Request) = http.newCall(req).also {
+		it.timeout().timeout(20, TimeUnit.SECONDS)
+	}
+
 	/** 列目录。path 为空表示根。只做 PROPFIND，绝不在此阻塞拉缩略图。 */
 	fun list(path: String): List<DavEntry> {
 		val req = Request.Builder()
@@ -133,10 +143,28 @@ class WebDavClient(
 			.method("PROPFIND", PROPFIND_BODY.toRequestBody("application/xml; charset=utf-8".toMediaTypeOrNull()))
 			.build()
 
-		http.newCall(req).execute().use { resp ->
+		metaCall(req).execute().use { resp ->
 			if (!resp.isSuccessful) throw DavException(resp.code, "列目录失败")
 			val stream = resp.body?.byteStream() ?: throw DavException(resp.code, "空响应")
 			return parse(stream, path)
+		}
+	}
+
+	/**
+	 * 轻量连通性探测：只发一个 Depth:0 的 PROPFIND，8 秒硬截止。
+	 * 专供设置页「测试连通性」使用——不列目录、不拉缩略图、不改任何连接状态。
+	 */
+	fun probe() {
+		val req = Request.Builder()
+			.url(urlFor("", dir = true))
+			.header("Depth", "0")
+			.method("PROPFIND", PROPFIND_BODY.toRequestBody("application/xml; charset=utf-8".toMediaTypeOrNull()))
+			.build()
+		val call = http.newCall(req)
+		call.timeout().timeout(8, TimeUnit.SECONDS)
+		call.execute().use { resp ->
+			// WebDAV 成功一般是 207 Multi-Status；2xx/3xx/4xx 都算"服务器可达且协议正常"
+			if (resp.code !in 200..499) throw DavException(resp.code, "服务器返回异常状态 ${resp.code}")
 		}
 	}
 
@@ -160,7 +188,7 @@ class WebDavClient(
 				.header("Authorization", token)
 				.post(body)
 				.build()
-			http.newCall(req).execute().use { resp ->
+			metaCall(req).execute().use { resp ->
 				// token 过期：立刻作废，下次 prefetch 会重新登录，避免整个会话再无缩略图
 				if (resp.code == 401) openListToken = null
 				if (!resp.isSuccessful) return
@@ -203,7 +231,7 @@ class WebDavClient(
 				.url(origin.newBuilder().addPathSegment("api").addPathSegment("auth").addPathSegment("login").build())
 				.post(body)
 				.build()
-			http.newCall(req).execute().use { resp ->
+			metaCall(req).execute().use { resp ->
 				if (!resp.isSuccessful) return null
 				val token = org.json.JSONObject(resp.body?.string() ?: return null)
 					.optJSONObject("data")?.optString("token")
@@ -246,7 +274,7 @@ class WebDavClient(
 			.method("DELETE", null)
 			.header("Depth", "infinity")
 			.build()
-		http.newCall(req).execute().use { resp ->
+		metaCall(req).execute().use { resp ->
 			// 200, 204 为成功；404 表示文件在远端已不存在，也视为成功
 			if (!resp.isSuccessful && resp.code != 404) {
 				throw DavException(resp.code, "删除失败: HTTP ${resp.code}")
@@ -261,7 +289,7 @@ class WebDavClient(
 			.header("Destination", urlFor(to).toString())
 			.header("Overwrite", "T")
 			.build()
-		http.newCall(req).execute().use {
+		metaCall(req).execute().use {
 			if (!it.isSuccessful) throw DavException(it.code, "移动失败")
 		}
 	}
@@ -339,7 +367,7 @@ class WebDavClient(
 
 	private fun exec(method: String, url: HttpUrl) {
 		val req = Request.Builder().url(url).method(method, null).build()
-		http.newCall(req).execute().use {
+		metaCall(req).execute().use {
 			if (!it.isSuccessful) throw DavException(it.code, "$method 失败")
 		}
 	}

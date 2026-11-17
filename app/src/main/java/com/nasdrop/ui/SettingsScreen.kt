@@ -36,6 +36,7 @@ import com.nasdrop.app
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -534,28 +535,32 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 
 			OutlinedButton(
 				onClick = {
-					val s = Settings(
-						baseUrl = baseUrl,
-						user = user,
-						password = password,
-						useTailscale = useTs,
-						connectionMode = connMode,
-						hostname = hostname.ifBlank { "nasdrop-android" },
-						authKey = authKey.trim(),
-						trustAllCerts = trustAll,
-					)
-					save(s)
+					// 只读探测：绝不 save / invalidate / 停隧道。旧版一点测试就 save(s)，
+					// 触发 invalidate→stop 隧道→重建 client→全量扫描，测试动作本身把连接搞断、
+					// 让页面假死无响应。现在测试只验证"当前生效配置"能否连通。
 					testing = true
 					scope.launch {
-						val msg = withContext(Dispatchers.IO) {
-							runCatching { app.repo.client(s).list("") }
-								.fold(
-									onSuccess = { "连上了！根目录共 ${it.size} 项文件" },
-									onFailure = { it.message ?: it.javaClass.simpleName },
-								)
-						}
+						val result = withTimeoutOrNull(12_000) {
+							withContext(Dispatchers.IO) {
+								val effective = app.prefs.current()
+								// 用户改了配置但没保存时，明确提示，避免"测的是旧配置"的错觉
+								val dirty = effective.baseUrl != baseUrl || effective.user != user ||
+									effective.password != password || effective.useTailscale != useTs ||
+									effective.connectionMode != connMode || effective.hostname != hostname ||
+									effective.authKey != authKey.trim() || effective.trustAllCerts != trustAll
+								if (dirty) {
+									"配置已修改但尚未保存，请先点「保存并立即应用」再测试"
+								} else {
+									runCatching { app.repo.probeConnection(effective) }
+										.fold(
+											onSuccess = { "连接正常，服务器响应成功" },
+											onFailure = { "连接失败：${it.message ?: it.javaClass.simpleName}" },
+										)
+								}
+							}
+						} ?: "连接超时（12 秒），隧道尚未就绪或网络不通，请稍后重试"
 						testing = false
-						Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+						Toast.makeText(context, result, Toast.LENGTH_LONG).show()
 					}
 				},
 				enabled = !testing,
@@ -568,7 +573,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 					CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFF2A72F6))
 					Spacer(modifier = Modifier.width(8.dp))
 				}
-				Text(if (testing) "正在双向测试连接..." else "测试连通性", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+				Text(if (testing) "正在测试…" else "测试连通性", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
 			}
 
 			Spacer(modifier = Modifier.height(30.dp))
