@@ -8,6 +8,9 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import okhttp3.ConnectionPool
 import okhttp3.Credentials
 import okhttp3.Dispatcher
@@ -67,6 +70,9 @@ class Repository(private val context: Context) {
 
 	@Volatile
 	private var cached: WebDavClient? = null
+
+	@Volatile
+	private var lanConfirmedIp: String? = null
 
 	private val trustAllCertsManager = object : X509TrustManager {
 		override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
@@ -170,14 +176,19 @@ class Repository(private val context: Context) {
 				isProbing = false,
 				isLanDirect = true,
 			)
-		} else if (TsBridge.available) {
-			val origin = root.newBuilder().encodedPath("/").query(null).fragment(null).build().toString()
-			TsBridge.setInsecureTls(settings.trustAllCerts)
-			val p = TsBridge.start(context, settings.hostname, settings.authKey, origin)
-			if (p > 0) {
-				bridgeToken = TsBridge.token
-				base = "http://127.0.0.1:$p${root.encodedPath}".toHttpUrlOrNull() ?: root
-				updateRouteInfo()
+		} else {
+			// 若当前未知是否为 LAN，触发后台异步极速探测，不阻塞主线程
+			triggerLanProbeAsync(settings)
+
+			if (TsBridge.available) {
+				val origin = root.newBuilder().encodedPath("/").query(null).fragment(null).build().toString()
+				TsBridge.setInsecureTls(settings.trustAllCerts)
+				val p = TsBridge.start(context, settings.hostname, settings.authKey, origin)
+				if (p > 0) {
+					bridgeToken = TsBridge.token
+					base = "http://127.0.0.1:$p${root.encodedPath}".toHttpUrlOrNull() ?: root
+					updateRouteInfo()
+				}
 			}
 		}
 
@@ -187,14 +198,46 @@ class Repository(private val context: Context) {
 		}
 	}
 
+	private fun probeLanDirect(root: HttpUrl, user: String, pass: String): String? {
+		lanConfirmedIp?.let { return it }
+		// 主线程绝不执行同步网络请求，避免 NetworkOnMainThreadException 与卡顿
+		if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+			return null
+		}
+		return doLanProbe(root, user, pass)
+	}
+
+	private fun triggerLanProbeAsync(settings: Settings) {
+		val root = settings.baseUrl.toHttpUrlOrNull() ?: return
+		CoroutineScope(Dispatchers.IO).launch {
+			val ip = doLanProbe(root, settings.user, settings.password)
+			if (ip != null) {
+				lanConfirmedIp = ip
+				synchronized(this@Repository) {
+					cached = WebDavClient(root, okHttp)
+				}
+				_routeInfo.value = RouteInfo(
+					isDirect = true,
+					isRelay = false,
+					endpoint = ip,
+					peerName = "LAN",
+					label = "🏡 局域网直连 · 1ms (千兆原速)",
+					latencyMs = 1L,
+					isProbing = false,
+					isLanDirect = true,
+				)
+			}
+		}
+	}
+
 	/**
 	 * 局域网三重智能判定：
 	 * 1. 域名在当前物理网络下被 DNS 解析为私有 IPv4 (RFC 1918)
-	 * 2. 对该地址快速发起轻量 HTTP WebDAV 握手 (PROPFIND)，带用户密码
+	 * 2. 对该私有地址快速发起轻量 HTTP WebDAV 握手 (PROPFIND)，带用户密码
 	 * 3. 握手成功 (200 / 207 / 401 证实确系用户的 NAS WebDAV 服务)
 	 * 全部命中则判定为在家局域网直连，跑满千兆 Wi-Fi，延迟 1ms，彻底绕过虚拟网卡与打洞代理。
 	 */
-	private fun probeLanDirect(root: HttpUrl, user: String, pass: String): String? {
+	private fun doLanProbe(root: HttpUrl, user: String, pass: String): String? {
 		return try {
 			val host = root.host
 			val addrs = java.net.InetAddress.getAllByName(host)
@@ -310,6 +353,7 @@ class Repository(private val context: Context) {
 	fun invalidate() {
 		cached = null
 		cachedKey = ""
+		lanConfirmedIp = null
 		TsBridge.stop()
 		_routeInfo.value = RouteInfo(false, false, "", "", "已断开", -1, false)
 	}
