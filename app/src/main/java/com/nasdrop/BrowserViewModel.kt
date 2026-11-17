@@ -344,7 +344,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		cleanupOldCache()
 		startTransferWorker()
 
-		viewModelScope.launch(workerDispatcher) {
+		// 上传进度流同样放到独立 IO：它在上传期间每 1MB 就触发一次，
+		// 和目录加载抢 4 个槽位会互相拖慢。
+		viewModelScope.launch(Dispatchers.IO) {
 			val lastSentMap = mutableMapOf<String, Long>()
 			val lastTimeMap = mutableMapOf<String, Long>()
 			Uploads.tasks.collect { list ->
@@ -384,7 +386,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		// 这一步不等任何网络刷新，是解决"上传完成后还不能立即刷新出来"的关键：
 		// 之前要等整批结束 → notifyFinished → collect → doRefresh 两次网络往返，
 		// 隧道稍抖就变成"等半天才出现"。
-		viewModelScope.launch(workerDispatcher) {
+		// 用独立 Dispatchers.IO 而不是 workerDispatcher（只有 4 个槽）：
+		// 这几个 collect 是长期挂起的关键路径，上传高峰期 tasks 进度回调会频繁占用槽位，
+		// 一旦槽位被占满，"文件传完"这条事件就可能延迟甚至饿死，用户就看不到新文件。
+		viewModelScope.launch(Dispatchers.IO) {
 			Uploads.fileUploadedEvent.collect { f ->
 				val dirKey = f.dir.trim('/')
 				val entryPath = if (dirKey.isEmpty()) f.name else "$dirKey/${f.name}"
@@ -423,7 +428,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 		}
 
-		viewModelScope.launch(workerDispatcher) {
+		viewModelScope.launch(Dispatchers.IO) {
 			Uploads.uploadCompletedEvent.collect {
 				// 整批结束：清缓存并静默校正一次。网络响应才是唯一真相，
 				// 用来纠正乐观插入的 size / 修改时间，并补上服务端可能改名的情况。
