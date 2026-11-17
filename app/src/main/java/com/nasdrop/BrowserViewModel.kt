@@ -198,6 +198,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		private set
 
 	var selectedEntries by mutableStateOf<Set<DavEntry>>(emptySet())
+
+	val selectedPaths: Set<String>
+		get() = selectedEntries.map { it.path }.toSet()
 		private set
 
 	// ========== 传输管理中心状态 ==========

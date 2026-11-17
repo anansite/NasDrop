@@ -15,7 +15,7 @@ def get_token():
     return ""
 
 def get_local_sha():
-    res = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
+    res = subprocess.run(["git", "-C", r"C:\Users\admin\WorkBuddy\2026-11-16-15-32-06\nasdrop", "rev-parse", "HEAD"], capture_output=True, text=True)
     return res.stdout.strip()[:7]
 
 class NoAuthRedirect(urllib.request.HTTPRedirectHandler):
@@ -104,11 +104,19 @@ adb_path = r"C:\Program Files\Netease\MuMu\nx_main\adb.exe"
 print("Connecting adb to MuMu (127.0.0.1:16384)...", flush=True)
 subprocess.run([adb_path, "connect", "127.0.0.1:16384"], check=False)
 
-print(f"Installing {latest_apk} to emulator...", flush=True)
-install_res = subprocess.run([adb_path, "-s", "127.0.0.1:16384", "install", "-r", latest_apk], capture_output=True, text=True)
-print("Install output:", install_res.stdout, install_res.stderr, flush=True)
+devs_out = subprocess.run([adb_path, "devices"], capture_output=True, text=True).stdout
+dev_ids = []
+for line in devs_out.splitlines():
+    parts = line.strip().split()
+    if len(parts) >= 2 and parts[1] == "device":
+        dev_ids.append(parts[0])
 
-print("Starting NasDrop MainActivity...", flush=True)
-subprocess.run([adb_path, "-s", "127.0.0.1:16384", "shell", "am", "force-stop", "com.nasdrop"], check=False)
-subprocess.run([adb_path, "-s", "127.0.0.1:16384", "shell", "am", "start", "-n", "com.nasdrop/.MainActivity"], check=False)
-print("Done! NasDrop updated and launched.", flush=True)
+print(f"Found active devices: {dev_ids}", flush=True)
+for dev in dev_ids:
+    print(f"Installing {latest_apk} to device {dev}...", flush=True)
+    install_res = subprocess.run([adb_path, "-s", dev, "install", "-r", latest_apk], capture_output=True, text=True)
+    print(f"Install on {dev}:", install_res.stdout, install_res.stderr, flush=True)
+    subprocess.run([adb_path, "-s", dev, "shell", "am", "force-stop", "com.nasdrop"], check=False)
+    subprocess.run([adb_path, "-s", dev, "shell", "am", "start", "-n", "com.nasdrop/.MainActivity"], check=False)
+
+print("Done! NasDrop updated and launched on all devices.", flush=True)

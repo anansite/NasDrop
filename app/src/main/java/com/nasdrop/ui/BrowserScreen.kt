@@ -310,9 +310,6 @@ fun BrowserScreen(
 						count = vm.currentAlbumPhotos.size,
 						selectedAlbumName = vm.selectedAlbumPath.substringAfterLast('/'),
 						activeTransferCount = vm.activeTransferCount,
-						onToggleMultiSelect = {
-							if (vm.isMultiSelectMode) vm.exitMultiSelect() else vm.enterMultiSelect()
-						},
 						onUpAlbum = { vm.upAlbum() },
 						onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 						onDeleteCurrentAlbum = {
@@ -329,9 +326,6 @@ fun BrowserScreen(
 						count = vm.currentMediaVideos.size,
 						selectedMediaName = vm.selectedMediaPath.substringAfterLast('/'),
 						activeTransferCount = vm.activeTransferCount,
-						onToggleMultiSelect = {
-							if (vm.isMultiSelectMode) vm.exitMultiSelect() else vm.enterMultiSelect()
-						},
 						onUpMedia = { vm.upMedia() },
 						onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
 						onDeleteCurrentMedia = {
@@ -759,7 +753,6 @@ private fun PhotosTopBar(
 	count: Int,
 	selectedAlbumName: String,
 	activeTransferCount: Int = 0,
-	onToggleMultiSelect: () -> Unit = {},
 	onUpAlbum: () -> Unit,
 	onCreateAlbum: () -> Unit,
 	onDeleteCurrentAlbum: (() -> Unit)? = null,
@@ -801,9 +794,6 @@ private fun PhotosTopBar(
 					Icon(Icons.Rounded.Delete, contentDescription = "删除当前相册", tint = Color(0xFFFF4D4F), modifier = Modifier.size(19.dp))
 				}
 			}
-			IconButton(onClick = onToggleMultiSelect, modifier = Modifier.size(32.dp)) {
-				Icon(Icons.Rounded.CheckCircleOutline, contentDescription = "多选管理", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
-			}
 			IconButton(onClick = onCreateAlbum, modifier = Modifier.size(32.dp)) {
 				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属相册", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
@@ -833,7 +823,6 @@ private fun MediaTopBar(
 	count: Int,
 	selectedMediaName: String,
 	activeTransferCount: Int = 0,
-	onToggleMultiSelect: () -> Unit = {},
 	onUpMedia: () -> Unit,
 	onCreateMediaFolder: () -> Unit,
 	onDeleteCurrentMedia: (() -> Unit)? = null,
@@ -874,9 +863,6 @@ private fun MediaTopBar(
 				IconButton(onClick = onDeleteCurrentMedia, modifier = Modifier.size(32.dp)) {
 					Icon(Icons.Rounded.Delete, contentDescription = "删除当前影集", tint = Color(0xFFFF4D4F), modifier = Modifier.size(19.dp))
 				}
-			}
-			IconButton(onClick = onToggleMultiSelect, modifier = Modifier.size(32.dp)) {
-				Icon(Icons.Rounded.CheckCircleOutline, contentDescription = "多选管理", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
 			IconButton(onClick = onCreateMediaFolder, modifier = Modifier.size(32.dp)) {
 				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属影集", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
@@ -1620,7 +1606,6 @@ private fun SelectCheckbox(isSelected: Boolean, modifier: Modifier = Modifier) {
 
 // ==================== 相册与影音 Tab ====================
 
-@Composable
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PhotoTimelineContent(
@@ -1783,7 +1768,6 @@ private fun PhotoTimelineContent(
 	}
 }
 
-@Composable
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MediaStreamContent(
