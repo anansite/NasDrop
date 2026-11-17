@@ -38,11 +38,13 @@ jobs:
           sdkmanager --install "ndk;27.0.12077973" | tail -3
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
 
+      # 固定 Go 版本：用 stable+check-latest 会让版本随时间漂移，
+      # 一旦版本号变了 ~/.cache/go-build 缓存就全部失效，导致每次重编。
+      # 与 go.mod 保持一致即可，升级时手动改这里 + go.mod。
       - name: Go
         uses: actions/setup-go@v5
         with:
-          go-version: 'stable'
-          check-latest: true
+          go-version: '1.27.4'
           cache: false
 
       # Go 模块缓存：tailscale.com 依赖树很大，不缓存的话每次都要重下
@@ -52,18 +54,31 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: go-${{ runner.os }}-${{ hashFiles('go.mod') }}-v1
+          key: go-${{ runner.os }}-${{ hashFiles('go.mod') }}-v2
           restore-keys: |
             go-${{ runner.os }}-
+
+      # gomobile bind 每次要 ~77s（3 个 ABI 交叉编译 + 链接）。
+      # Go 侧代码没变时直接复用上次的 AAR，只有 bridge/*.go、go.mod、go.sum
+      # 变化才重编。日常改 Kotlin 代码（绝大多数情况）可整段跳过。
+      - name: 缓存 Tailscale 桥 AAR
+        id: bridge-cache
+        uses: actions/cache@v4
+        with:
+          path: app/libs/bridge.aar
+          key: bridge-aar-${{ runner.os }}-${{ hashFiles('bridge/**', 'go.mod', 'go.sum', 'build-aar.sh') }}
 
       - name: Gradle 缓存
         uses: gradle/actions/setup-gradle@v4
 
-      # 升级 Tailscale = 改这一行的 --upgrade，Kotlin 侧永远不用动
+      # 升级 Tailscale = 改 go.mod 里的版本（或本地跑 ./build-aar.sh --upgrade），Kotlin 侧永远不用动
+      # 只编 App 实际用到的两个 ABI：arm64-v8a / x86_64。
+      # 原来的 android/arm(32位) 对应 armeabi-v7a，被 abiFilters 过滤掉，纯属白编。
       - name: 编译 Tailscale 桥（gomobile → AAR）
+        if: steps.bridge-cache.outputs.cache-hit != 'true'
         run: |
           chmod +x build-aar.sh
-          ABIS=android/arm64,android/arm,android/amd64 ./build-aar.sh
+          ABIS=android/arm64,android/amd64 ./build-aar.sh
         env:
           GOFLAGS: -mod=mod
 
