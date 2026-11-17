@@ -134,7 +134,7 @@ class MainActivity : ComponentActivity() {
 						images = r.list,
 						startIndex = r.index,
 						urlOf = { vm.directUrlFor(it) },
-						thumbOf = { vm.thumbnailUrlFor(it) },
+						thumbOf = { vm.serverThumbUrlFor(it) },
 						onBack = { route = Route.Browser },
 						onSaveToGallery = { entry, cb -> vm.saveImageToGallery(entry, cb) },
 						onShare = { entry, cb -> vm.prepareShareImage(entry, cb) },

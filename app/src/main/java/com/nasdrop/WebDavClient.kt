@@ -143,8 +143,17 @@ class WebDavClient(
 	}
 
 	/**
-	 * 仅用于列表缩略图展示：命中服务端缩略图缓存时返回缩略图直链（真图片），
-	 * 否则回退到原始 WebDAV 地址。下载/播放/删除等仍走 urlFor()，绝不受影响。
+	 * 只返回**服务端真实生成**的缩略图直链（OpenList /d/...?type=thumb），没有就是 null。
+	 *
+	 * 与 [thumbnailUrl] 的区别：后者对图片会回退到原图地址，那是给列表网格用的；
+	 * 看图器如果拿到"回退后的原图地址"，就会在缩略图垫底层和原图层**各下一次原图**
+	 * （/dav/ 与 /p/ 两个不同 URL，缓存互不命中），白白翻倍流量、拖慢清晰时间。
+	 */
+	fun serverThumbUrl(path: String): HttpUrl? = thumbUrls[path.trim('/')]?.toHttpUrlOrNull()
+
+	/**
+	 * 列表缩略图专用：命中服务端缩略图返回真图片直链，否则图片回退原图地址（视频返回 null）。
+	 * 下载/播放/删除等仍走 urlFor()，绝不受影响。
 	 */
 	fun thumbnailUrl(path: String): HttpUrl? {
 		thumbUrls[path.trim('/')]?.toHttpUrlOrNull()?.let { return it }
@@ -414,6 +423,14 @@ class WebDavClient(
 		} catch (e: java.io.IOException) {
 			// 服务端可能在读完大文件 body 前就因 409 断开；无法区分，统一按"重试一次"处理
 			false
+		}
+
+		// 大文件先确认父目录存在。
+		// 关键：WebDAV 的 409 是服务端判断出来的，但很多实现要**把整个 body 收完**才回
+		// 409。几十上百 MB 的视频因此会白传一遍、再建目录重传一遍，等于双倍时间——
+		// 用户感知就是"传了很久，又从头开始"。小文件不预检，省掉这次 RTT。
+		if (total <= 0 || total >= 8L * 1024 * 1024) {
+			runCatching { ensureParentDirs(remoteDir) }
 		}
 
 		// 先直接 PUT（正常目录零额外开销）；失败则建父目录后重试一次。

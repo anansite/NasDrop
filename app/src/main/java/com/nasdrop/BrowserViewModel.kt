@@ -380,15 +380,61 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 		}
 
+		// 单个文件传完（PUT 已成功）→ 立刻乐观插入列表，做到"传完即见"。
+		// 这一步不等任何网络刷新，是解决"上传完成后还不能立即刷新出来"的关键：
+		// 之前要等整批结束 → notifyFinished → collect → doRefresh 两次网络往返，
+		// 隧道稍抖就变成"等半天才出现"。
+		viewModelScope.launch(workerDispatcher) {
+			Uploads.fileUploadedEvent.collect { f ->
+				val dirKey = f.dir.trim('/')
+				val entryPath = if (dirKey.isEmpty()) f.name else "$dirKey/${f.name}"
+				val fresh = DavEntry(
+					name = f.name,
+					path = entryPath,
+					isDir = false,
+					size = if (f.size > 0) f.size else 0L,
+					modified = System.currentTimeMillis(),
+				)
+				// 1) 目录缓存：写进去，保证用户之后进入该目录能立刻看到（不必等重扫）
+				dirCache[dirKey]?.let { list ->
+					dirCache[dirKey] = list.filterNot { it.name == f.name } + fresh
+				}
+				// 2) 当前正停在这个目录 → 直接进可见列表
+				if (path.trim('/') == dirKey) {
+					withContext(Dispatchers.Main) {
+						entries = entries.filterNot { it.name == f.name } + fresh
+					}
+				}
+				// 3) 相册 / 影音页各自的媒体池也要立刻补上，
+				//    否则用户传完图切到"相册"Tab 还是看不到——那是最容易让人以为"没传上去"的场景。
+				val ext = f.name.substringAfterLast('.', "").lowercase()
+				withContext(Dispatchers.Main) {
+					if (ext in DavEntry.IMAGES && allPhotos.isNotEmpty() &&
+						allPhotos.none { it.path == entryPath }
+					) {
+						allPhotos = listOf(fresh) + allPhotos
+					}
+					if (ext in DavEntry.VIDEOS && allVideos.isNotEmpty() &&
+						allVideos.none { it.path == entryPath }
+					) {
+						allVideos = listOf(fresh) + allVideos
+					}
+				}
+			}
+		}
+
 		viewModelScope.launch(workerDispatcher) {
 			Uploads.uploadCompletedEvent.collect {
-				// 只刷新当前目录：新文件立即可见。
+				// 整批结束：清缓存并静默校正一次。网络响应才是唯一真相，
+				// 用来纠正乐观插入的 size / 修改时间，并补上服务端可能改名的情况。
 				// 绝不再 scanGlobalMedia()——它会串行列几十个目录，在慢速隧道里要几十秒，
 				// 表现为"上传完一直在云端校验"（其实是客户端在全量重扫，不是服务端慢）。
 				dirCache.remove(path)
 				refreshSilent()
-				// 媒体池标记脏：下次真正切到相册/影音页时才增量重扫，把开销挪出上传链路。
 				if (hasScannedMedia) mediaDirty = true
+				// 相册/影音页的缓存也失效，否则切过去还是旧列表
+				if (selectedAlbumPath.isNotBlank()) dirCache.remove(selectedAlbumPath)
+				if (selectedMediaPath.isNotBlank()) dirCache.remove(selectedMediaPath)
 			}
 		}
 		viewModelScope.launch(workerDispatcher) {
@@ -491,6 +537,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	fun thumbnailUrlFor(entryPath: String): String? {
 		@Suppress("UNUSED_VARIABLE") val revision = thumbRevision
 		return client?.thumbnailUrl(entryPath)?.toString()
+	}
+
+	/**
+	 * 看图器垫底层专用：只给**真正的服务端缩略图**，没有就返回 null。
+	 * 不能复用 thumbnailUrlFor —— 那对图片会回退成原图 WebDAV 地址，
+	 * 而原图层走的是 /p/?sign= 直链，两个 URL 不互命中缓存，等于把原图下两遍。
+	 */
+	fun serverThumbUrlFor(entryPath: String): String? {
+		@Suppress("UNUSED_VARIABLE") val revision = thumbRevision
+		return client?.serverThumbUrl(entryPath)?.toString()
 	}
 
 	fun loginUrl(): String = authUrl

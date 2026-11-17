@@ -2217,7 +2217,7 @@ private fun TransferCenterSheet(
 						val statusText = when (task.status) {
 							TransferStatus.RUNNING -> {
 								if (task.isUpload) {
-									if (task.totalBytes > 0 && task.sentBytes >= task.totalBytes) "正在云端校验存盘..." else "正在上传"
+									if (task.totalBytes > 0 && task.sentBytes >= task.totalBytes) "已发送完成，等待服务端写入…" else "正在上传"
 								} else {
 									"正在下载"
 								}

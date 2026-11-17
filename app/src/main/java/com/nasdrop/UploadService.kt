@@ -88,9 +88,16 @@ class UploadService : Service() {
 
 		var ok = 0
 		var failed = 0
-		val semaphore = Semaphore(3) // 最多 3 个任务并行上传，跑满上行带宽且不造成手机卡顿
+		val semaphore = Semaphore(MAX_PARALLEL) // 最多 3 个任务并行上传，跑满上行带宽且不造成手机卡顿
 
-		val jobs = uris.mapIndexed { i, uri ->
+		// 按文件大小降序调度（LPT：最长处理时间优先）。
+		// 用户一次选多个视频时，如果大文件排在队尾，前面几个小文件把带宽占满、
+		// 大文件迟迟开始不了，整体完成时间被最后那个大文件决定——观感就是"传完了还在等"。
+		// 让大文件先拿到通道，整体完成时间最短，也最早让用户看到第一个结果。
+		val queue = uris.mapIndexed { i, uri -> Triple(i, uri, Query.sizeOf(this@UploadService, uri)) }
+			.sortedByDescending { it.third }
+
+		val jobs = queue.map { (i, uri, size) ->
 			scope.launch {
 				semaphore.withPermit {
 					val name = Uploads.tasks.value.getOrNull(i)?.name ?: "文件"
@@ -104,6 +111,9 @@ class UploadService : Service() {
 							}
 						}
 						Uploads.update(i) { it.copy(done = true) }
+						// PUT 一拿到成功响应就立刻广播：ViewModel 会把这条乐观插进列表，
+						// 用户不用等整批结束、也不用等一次网络刷新就能看到新文件。
+						Uploads.notifyFileUploaded(dir, name, size)
 						synchronized(this@UploadService) { ok++ }
 					} catch (t: Throwable) {
 						Uploads.update(i) { it.copy(done = true, error = t.message ?: t.javaClass.simpleName) }
@@ -196,6 +206,9 @@ class UploadService : Service() {
 		private const val NOTIF_ID = 0x4E44
 		private const val EXTRA_URIS = "uris"
 		private const val EXTRA_DIR = "dir"
+
+		/** 并行上传通道数：3 路能跑满上行带宽，又不会因为过多连接抢占导致单文件变慢。 */
+		private const val MAX_PARALLEL = 3
 
 		fun start(context: Context, uris: List<Uri>, dir: String) {
 			val i = Intent(context, UploadService::class.java).apply {

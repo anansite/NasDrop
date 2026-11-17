@@ -62,12 +62,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -85,6 +87,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import coil.size.Size
 import android.content.Intent
 import android.widget.Toast
 import androidx.core.content.FileProvider
@@ -130,17 +133,29 @@ fun ImageViewer(
 	}
 	val current = imageList.getOrNull(pager.currentPage.coerceIn(0, imageList.lastIndex)) ?: return
 
+	// 统一解码尺寸 = 屏幕像素。预取和实际显示用**同一个 Size**，
+	// Coil 的内存缓存 key 才能对上：否则预取按原始尺寸解码、显示按 view 尺寸解码，
+	// 两份结果互不命中，预取等于白做（还得再解码一次，就是"变清晰慢"的真实原因）。
+	val config = LocalConfiguration.current
+	val targetSize = remember(config.screenWidthPx, config.screenHeightPx) {
+		Size(config.screenWidthPx.toFloat(), config.screenHeightPx.toFloat())
+	}
+
 	// 预热原图：进入看图/翻页时就把 当前±1 张原图提交给 Coil 预加载。
-	// 慢速隧道里原图下载需要几秒，提前并行拉取并写进磁盘缓存，能让首图/翻页尽快从
-	// "低清缩略图"切到清晰原图；AsyncImage 用同一 url 时会直接命中缓存。
+	// 带上 targetSize 后预取结果直接落在内存缓存，翻页/回看时命中即显示，无需再解码。
 	val imageLoader = context.app.repo.imageLoader
 	val currentPage = pager.currentPage
-	LaunchedEffect(currentPage) {
+	LaunchedEffect(currentPage, targetSize) {
 		val center = currentPage.coerceIn(0, imageList.lastIndex)
 		for (i in (center - 1)..(center + 1)) {
 			val e = imageList.getOrNull(i) ?: continue
 			val u = urlOf(e.path) ?: continue
-			imageLoader.enqueue(ImageRequest.Builder(context).data(u).build())
+			imageLoader.enqueue(
+				ImageRequest.Builder(context)
+					.data(u)
+					.size(targetSize)
+					.build()
+			)
 		}
 	}
 
@@ -168,6 +183,7 @@ fun ImageViewer(
 				url = urlOf(entry.path),
 				thumbUrl = thumbOf?.invoke(entry.path),
 				name = entry.name,
+				targetSize = targetSize,
 			)
 		}
 
@@ -382,7 +398,7 @@ fun ImageViewer(
 }
 
 @Composable
-private fun ZoomableImage(url: String?, thumbUrl: String?, name: String) {
+private fun ZoomableImage(url: String?, thumbUrl: String?, name: String, targetSize: Size) {
 	var scale by remember { mutableFloatStateOf(1f) }
 	var dx by remember { mutableFloatStateOf(0f) }
 	var dy by remember { mutableFloatStateOf(0f) }
@@ -394,23 +410,47 @@ private fun ZoomableImage(url: String?, thumbUrl: String?, name: String) {
 	var isLoading by remember(url) { mutableStateOf(true) }
 
 	// 每次 url / retryKey 变化重建请求；retryKey 让失败后能强制重新拉取（带 CachePolicy 绕过坏缓存）
-	val fullRequest = remember(url, retryKey) {
+	val fullRequest = remember(url, retryKey, targetSize) {
 		ImageRequest.Builder(context)
 			.data(url)
+			// 明确按屏幕像素解码：Coil 默认会拿原始尺寸（手机上动辄 4000px 宽的大图），
+			// 解码时间和内存都翻几倍，这正是"点开后要等一会儿才清晰"的开销。
+			// 不设 Precision.EXACT：目标尺寸已接近原图，默认的 inSampleSize 路径最快，
+			// 只有降采样到小于目标尺寸才会发虚，而 Coil 不会那样做。
+			.size(targetSize)
+			// 关闭交叉淡入：全局 imageLoader 默认 crossfade(true)，
+			// 淡入的 100~300ms 在用户感知里就是"慢慢变清晰"，去掉后原图一到瞬间就锐利。
+			.crossfade(false)
 			.memoryCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
 			.diskCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
-			.crossfade(true)
 			.build()
 	}
 
 	Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-		// 第 1 层：列表已缓存的服务端缩略图，几乎瞬间可见，杜绝黑屏空窗
+		// 第 1 层：列表已缓存的服务端缩略图（144px）放大铺底。
+		// 加高斯模糊 + 压暗后，它看起来是"有意的磨砂预览"而不是"糊掉的原图"，
+		// 原图瞬间切入时观感是从模糊背景干净地变清晰，不会有一段刺眼的低清过渡。
+		// 模糊依赖 RenderEffect，仅 API 31+ 生效；低版本直接不模糊，靠压暗遮罩过渡。
 		if (!thumbUrl.isNullOrBlank() && thumbUrl != url) {
+			val canBlur = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
 			AsyncImage(
 				model = thumbUrl,
 				contentDescription = null,
-				contentScale = ContentScale.Fit,
-				modifier = Modifier.fillMaxSize(),
+				contentScale = ContentScale.Crop,
+				modifier = Modifier
+					.fillMaxSize()
+					.then(
+						if (canBlur) {
+							Modifier.blur(28.dp, androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded)
+						} else {
+							Modifier
+						}
+					),
+			)
+			Box(
+				Modifier
+					.fillMaxSize()
+					.background(Color.Black.copy(alpha = if (canBlur) 0.18f else 0.35f)),
 			)
 		}
 
