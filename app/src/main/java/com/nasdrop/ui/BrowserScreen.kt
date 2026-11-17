@@ -174,6 +174,8 @@ fun BrowserScreen(
 
 	var activeCreateType by remember { mutableStateOf<CreateDialogType?>(null) }
 	var activeFolderForDelete by remember { mutableStateOf<Pair<DavEntry, Boolean>?>(null) }
+	var showBatchDeleteConfirm by remember { mutableStateOf(false) }
+	var showBatchMoveSheet by remember { mutableStateOf(false) }
 
 	// 系统文件选择器（上传）
 	val filePicker = rememberLauncherForActivityResult(
@@ -229,12 +231,10 @@ fun BrowserScreen(
 						}
 					},
 					onMove = {
-						val first = vm.selectedEntries.firstOrNull()
-						if (first != null) activeEntryForMove = first
+						showBatchMoveSheet = true
 					},
 					onDelete = {
-						val first = vm.selectedEntries.firstOrNull()
-						if (first != null) activeEntryForDelete = first
+						showBatchDeleteConfirm = true
 					},
 					onCancel = { vm.exitMultiSelect() },
 				)
@@ -310,6 +310,9 @@ fun BrowserScreen(
 						count = vm.currentAlbumPhotos.size,
 						selectedAlbumName = vm.selectedAlbumPath.substringAfterLast('/'),
 						activeTransferCount = vm.activeTransferCount,
+						onToggleMultiSelect = {
+							if (vm.isMultiSelectMode) vm.exitMultiSelect() else vm.enterMultiSelect()
+						},
 						onUpAlbum = { vm.upAlbum() },
 						onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 						onDeleteCurrentAlbum = {
@@ -326,6 +329,9 @@ fun BrowserScreen(
 						count = vm.currentMediaVideos.size,
 						selectedMediaName = vm.selectedMediaPath.substringAfterLast('/'),
 						activeTransferCount = vm.activeTransferCount,
+						onToggleMultiSelect = {
+							if (vm.isMultiSelectMode) vm.exitMultiSelect() else vm.enterMultiSelect()
+						},
 						onUpMedia = { vm.upMedia() },
 						onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
 						onDeleteCurrentMedia = {
@@ -351,7 +357,7 @@ fun BrowserScreen(
 			if (vm.isMultiSelectMode) {
 				MultiSelectHeaderStrip(
 					selectedCount = vm.selectedEntries.size,
-					onSelectAll = { vm.selectAll(vm.filteredEntries) },
+					onSelectAll = { vm.selectAll(vm.currentTabEntries) },
 					onComplete = { vm.exitMultiSelect() },
 				)
 			}
@@ -389,6 +395,11 @@ fun BrowserScreen(
 							groups = vm.photoTimelineGroups,
 							allAlbums = vm.allAlbumFolders,
 							selectedAlbumPath = vm.selectedAlbumPath,
+							isMulti = vm.isMultiSelectMode,
+							selectedPaths = vm.selectedPaths,
+							onToggleSelect = { vm.toggleSelect(it) },
+							onEnterMultiSelect = { vm.enterMultiSelect(it) },
+							onOpenAction = { activeEntryForAction = it },
 							onSelectAlbum = { vm.openAlbum(it) },
 							onDeleteAlbum = { folder -> activeFolderForDelete = Pair(folder, true) },
 							onCreateAlbum = { activeCreateType = CreateDialogType.Album },
@@ -402,6 +413,11 @@ fun BrowserScreen(
 							videos = vm.currentMediaVideos,
 							allMediaFolders = vm.allMediaFolders,
 							selectedMediaPath = vm.selectedMediaPath,
+							isMulti = vm.isMultiSelectMode,
+							selectedPaths = vm.selectedPaths,
+							onToggleSelect = { vm.toggleSelect(it) },
+							onEnterMultiSelect = { vm.enterMultiSelect(it) },
+							onOpenAction = { activeEntryForAction = it },
 							onSelectMediaFolder = { vm.openMedia(it) },
 							onDeleteMediaFolder = { folder -> activeFolderForDelete = Pair(folder, false) },
 							onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
@@ -413,7 +429,12 @@ fun BrowserScreen(
 					MainTab.Me -> {
 						NetworkIntelligenceConsole(
 							routeInfo = routeInfo,
-							onTriggerPunch = { vm.punchHole() },
+							isPunching = vm.isPunching,
+							onTriggerPunch = {
+								vm.punchHole { result ->
+									Toast.makeText(context, result, Toast.LENGTH_SHORT).show()
+								}
+							},
 							onOpenSettings = onOpenSettings,
 							logs = vm.logs(),
 						)
@@ -523,6 +544,46 @@ fun BrowserScreen(
 				Toast.makeText(context, "已成功移动到: /${destDir.ifEmpty { "根目录" }}", Toast.LENGTH_SHORT).show()
 			},
 			onDismiss = { activeEntryForMove = null },
+		)
+	}
+
+	// 批量彻底删除确认对话框
+	if (showBatchDeleteConfirm) {
+		AlertDialog(
+			onDismissRequest = { showBatchDeleteConfirm = false },
+			title = { Text("批量彻底删除", fontWeight = FontWeight.Bold) },
+			text = { Text("确定从网盘中删除选中的 ${vm.selectedEntries.size} 项内容？此操作不可撤销。") },
+			confirmButton = {
+				Button(
+					onClick = {
+						val count = vm.selectedEntries.size
+						vm.batchDelete {
+							Toast.makeText(context, "已彻底删除 $count 项内容", Toast.LENGTH_SHORT).show()
+						}
+						showBatchDeleteConfirm = false
+					},
+					colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF4D4F)),
+				) { Text("确认彻底删除") }
+			},
+			dismissButton = {
+				TextButton(onClick = { showBatchDeleteConfirm = false }) { Text("取消") }
+			},
+		)
+	}
+
+	// 批量移动对话框
+	if (showBatchMoveSheet) {
+		MoveFolderSheet(
+			folderPaths = vm.allFolderPaths,
+			currentPath = vm.path,
+			onSelectTarget = { destDir ->
+				val count = vm.selectedEntries.size
+				vm.batchMove(destDir) {
+					Toast.makeText(context, "已将 $count 项内容移动到: /${destDir.ifEmpty { "根目录" }}", Toast.LENGTH_SHORT).show()
+				}
+				showBatchMoveSheet = false
+			},
+			onDismiss = { showBatchMoveSheet = false },
 		)
 	}
 
@@ -698,6 +759,7 @@ private fun PhotosTopBar(
 	count: Int,
 	selectedAlbumName: String,
 	activeTransferCount: Int = 0,
+	onToggleMultiSelect: () -> Unit = {},
 	onUpAlbum: () -> Unit,
 	onCreateAlbum: () -> Unit,
 	onDeleteCurrentAlbum: (() -> Unit)? = null,
@@ -739,6 +801,9 @@ private fun PhotosTopBar(
 					Icon(Icons.Rounded.Delete, contentDescription = "删除当前相册", tint = Color(0xFFFF4D4F), modifier = Modifier.size(19.dp))
 				}
 			}
+			IconButton(onClick = onToggleMultiSelect, modifier = Modifier.size(32.dp)) {
+				Icon(Icons.Rounded.CheckCircleOutline, contentDescription = "多选管理", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
+			}
 			IconButton(onClick = onCreateAlbum, modifier = Modifier.size(32.dp)) {
 				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属相册", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
@@ -768,6 +833,7 @@ private fun MediaTopBar(
 	count: Int,
 	selectedMediaName: String,
 	activeTransferCount: Int = 0,
+	onToggleMultiSelect: () -> Unit = {},
 	onUpMedia: () -> Unit,
 	onCreateMediaFolder: () -> Unit,
 	onDeleteCurrentMedia: (() -> Unit)? = null,
@@ -808,6 +874,9 @@ private fun MediaTopBar(
 				IconButton(onClick = onDeleteCurrentMedia, modifier = Modifier.size(32.dp)) {
 					Icon(Icons.Rounded.Delete, contentDescription = "删除当前影集", tint = Color(0xFFFF4D4F), modifier = Modifier.size(19.dp))
 				}
+			}
+			IconButton(onClick = onToggleMultiSelect, modifier = Modifier.size(32.dp)) {
+				Icon(Icons.Rounded.CheckCircleOutline, contentDescription = "多选管理", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
 			IconButton(onClick = onCreateMediaFolder, modifier = Modifier.size(32.dp)) {
 				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属影集", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
@@ -1552,10 +1621,17 @@ private fun SelectCheckbox(isSelected: Boolean, modifier: Modifier = Modifier) {
 // ==================== 相册与影音 Tab ====================
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 private fun PhotoTimelineContent(
 	groups: List<com.nasdrop.TimelineGroup>,
 	allAlbums: List<DavEntry>,
 	selectedAlbumPath: String,
+	isMulti: Boolean = false,
+	selectedPaths: Set<String> = emptySet(),
+	onToggleSelect: (DavEntry) -> Unit = {},
+	onEnterMultiSelect: (DavEntry) -> Unit = {},
+	onOpenAction: (DavEntry) -> Unit = {},
 	onSelectAlbum: (String) -> Unit,
 	onDeleteAlbum: (DavEntry) -> Unit,
 	onCreateAlbum: () -> Unit,
@@ -1661,16 +1737,45 @@ private fun PhotoTimelineContent(
 					}
 
 					items(group.items, key = { it.path }) { item ->
-						AsyncImage(
-							model = urlOf(item.path),
-							contentDescription = item.name,
-							contentScale = ContentScale.Crop,
+						val isSelected = selectedPaths.contains(item.path)
+						Box(
 							modifier = Modifier
 								.aspectRatio(1f)
 								.clip(RoundedCornerShape(4.dp))
 								.background(Color(0xFFE5E6EB))
-								.clickable { onOpenImage(item) },
-						)
+								.combinedClickable(
+									onClick = {
+										if (isMulti) {
+											onToggleSelect(item)
+										} else {
+											onOpenImage(item)
+										}
+									},
+									onLongClick = {
+										if (!isMulti) {
+											onEnterMultiSelect(item)
+										}
+									}
+								),
+						) {
+							AsyncImage(
+								model = urlOf(item.path),
+								contentDescription = item.name,
+								contentScale = ContentScale.Crop,
+								modifier = Modifier.fillMaxSize(),
+							)
+
+							// 仅在多选模式下显示右上角勾选框（日常沉浸全图，长按才浮现选框）
+							if (isMulti) {
+								Box(
+									modifier = Modifier
+										.align(Alignment.TopEnd)
+										.padding(6.dp)
+								) {
+									SelectCheckbox(isSelected = isSelected)
+								}
+							}
+						}
 					}
 				}
 			}
@@ -1679,10 +1784,17 @@ private fun PhotoTimelineContent(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 private fun MediaStreamContent(
 	videos: List<DavEntry>,
 	allMediaFolders: List<DavEntry>,
 	selectedMediaPath: String,
+	isMulti: Boolean = false,
+	selectedPaths: Set<String> = emptySet(),
+	onToggleSelect: (DavEntry) -> Unit = {},
+	onEnterMultiSelect: (DavEntry) -> Unit = {},
+	onOpenAction: (DavEntry) -> Unit = {},
 	onSelectMediaFolder: (String) -> Unit,
 	onDeleteMediaFolder: (DavEntry) -> Unit,
 	onCreateMediaFolder: () -> Unit,
@@ -1776,13 +1888,27 @@ private fun MediaStreamContent(
 				modifier = Modifier.fillMaxSize(),
 			) {
 				items(videos, key = { it.path }) { video ->
+					val isSelected = selectedPaths.contains(video.path)
 					Card(
 						shape = RoundedCornerShape(14.dp),
 						colors = CardDefaults.cardColors(containerColor = Color.White),
 						elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
 						modifier = Modifier
 							.fillMaxWidth()
-							.clickable { onOpenVideo(video) },
+							.combinedClickable(
+								onClick = {
+									if (isMulti) {
+										onToggleSelect(video)
+									} else {
+										onOpenVideo(video)
+									}
+								},
+								onLongClick = {
+									if (!isMulti) {
+										onEnterMultiSelect(video)
+									}
+								}
+							),
 					) {
 						Column {
 							// 16:9 高清缩略图海报视窗
@@ -1840,28 +1966,57 @@ private fun MediaStreamContent(
 										modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
 									)
 								}
+
+								// 仅在多选模式下显示右上角勾选框
+								if (isMulti) {
+									Box(
+										modifier = Modifier
+											.align(Alignment.TopEnd)
+											.padding(6.dp)
+									) {
+										SelectCheckbox(isSelected = isSelected)
+									}
+								}
 							}
 
-							// 紧凑双行信息（标题 + 大小/日期）
-							Column(
-								modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+							// 紧凑双行信息 + 更多操作（非多选时提供单项管理）
+							Row(
+								modifier = Modifier
+									.fillMaxWidth()
+									.padding(horizontal = 8.dp, vertical = 8.dp),
+								verticalAlignment = Alignment.CenterVertically,
 							) {
-								Text(
-									text = video.displayName,
-									fontSize = 12.sp,
-									fontWeight = FontWeight.Bold,
-									color = Color(0xFF1D2129),
-									maxLines = 1,
-									overflow = TextOverflow.Ellipsis,
-								)
-								Spacer(modifier = Modifier.height(3.dp))
-								Text(
-									text = formatMeta(video),
-									fontSize = 10.sp,
-									color = Color(0xFF86909C),
-									maxLines = 1,
-									overflow = TextOverflow.Ellipsis,
-								)
+								Column(modifier = Modifier.weight(1f)) {
+									Text(
+										text = video.displayName,
+										fontSize = 12.sp,
+										fontWeight = FontWeight.Bold,
+										color = Color(0xFF1D2129),
+										maxLines = 1,
+										overflow = TextOverflow.Ellipsis,
+									)
+									Spacer(modifier = Modifier.height(3.dp))
+									Text(
+										text = formatMeta(video),
+										fontSize = 10.sp,
+										color = Color(0xFF86909C),
+										maxLines = 1,
+										overflow = TextOverflow.Ellipsis,
+									)
+								}
+								if (!isMulti) {
+									IconButton(
+										onClick = { onOpenAction(video) },
+										modifier = Modifier.size(24.dp)
+									) {
+										Icon(
+											Icons.Rounded.MoreVert,
+											contentDescription = "管理",
+											tint = Color(0xFF86909C),
+											modifier = Modifier.size(16.dp)
+										)
+									}
+								}
 							}
 						}
 					}
@@ -2311,6 +2466,7 @@ private fun CreateFolderDialog(
 @Composable
 private fun NetworkIntelligenceConsole(
 	routeInfo: RouteInfo,
+	isPunching: Boolean = false,
 	onTriggerPunch: () -> Unit,
 	onOpenSettings: () -> Unit,
 	logs: String,
@@ -2467,14 +2623,25 @@ private fun NetworkIntelligenceConsole(
 					) {
 						Button(
 							onClick = onTriggerPunch,
+							enabled = !isPunching,
 							colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
 							shape = RoundedCornerShape(12.dp),
 							contentPadding = PaddingValues(horizontal = 8.dp),
 							modifier = Modifier.weight(1f).height(40.dp),
 						) {
-							Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-							Spacer(modifier = Modifier.width(4.dp))
-							Text("立即加速", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+							if (isPunching) {
+								CircularProgressIndicator(
+									modifier = Modifier.size(16.dp),
+									color = Color.White,
+									strokeWidth = 2.dp,
+								)
+								Spacer(modifier = Modifier.width(6.dp))
+								Text("正在打洞直连...", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+							} else {
+								Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+								Spacer(modifier = Modifier.width(4.dp))
+								Text("立即加速", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+							}
 						}
 
 						OutlinedButton(

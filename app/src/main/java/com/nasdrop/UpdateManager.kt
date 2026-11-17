@@ -29,6 +29,14 @@ object UpdateManager {
 		.readTimeout(30, TimeUnit.SECONDS)
 		.build()
 
+	// 大文件专用下载客户端：高容忍度、长读取超时、连接自动重试
+	private val downloadHttp = OkHttpClient.Builder()
+		.connectTimeout(20, TimeUnit.SECONDS)
+		.readTimeout(5, TimeUnit.MINUTES)
+		.writeTimeout(5, TimeUnit.MINUTES)
+		.retryOnConnectionFailure(true)
+		.build()
+
 	suspend fun checkUpdate(currentVersion: String): UpdateInfo? = withContext(Dispatchers.IO) {
 		runCatching {
 			Log.i("UpdateManager", "Starting checkUpdate, current: $currentVersion, url: $RELEASES_API")
@@ -91,8 +99,11 @@ object UpdateManager {
 
 		val candidateUrls = if (apkUrl.contains("github.com")) {
 			listOf(
-				"https://ghp.ci/$apkUrl",
+				"https://ghproxy.net/$apkUrl",
+				"https://gh-proxy.com/$apkUrl",
+				"https://ghps.cc/$apkUrl",
 				"https://mirror.ghproxy.com/$apkUrl",
+				"https://ghp.ci/$apkUrl",
 				apkUrl,
 			)
 		} else listOf(apkUrl)
@@ -100,8 +111,12 @@ object UpdateManager {
 		var lastException: Exception? = null
 		for (url in candidateUrls) {
 			try {
-				val request = Request.Builder().url(url).build()
-				val response = http.newCall(request).execute()
+				Log.i("UpdateManager", "Attempting download from mirror: $url")
+				val request = Request.Builder()
+					.url(url)
+					.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
+					.build()
+				val response = downloadHttp.newCall(request).execute()
 				if (!response.isSuccessful) continue
 				val body = response.body ?: continue
 				val total = body.contentLength()

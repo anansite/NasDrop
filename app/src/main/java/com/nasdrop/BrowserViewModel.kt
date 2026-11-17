@@ -191,6 +191,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var showUpdateDialog by mutableStateOf(false)
 
 	// ========== 批量多选状态 ==========
+	var isPunching by mutableStateOf(false)
+		private set
+
 	var isMultiSelectMode by mutableStateOf(false)
 		private set
 
@@ -274,16 +277,45 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 
 	/** 相册时间线分组数据（按拍摄/修改日期降序） */
+	val currentTabEntries: List<DavEntry>
+		get() = when (currentTab) {
+			MainTab.Files -> filteredEntries
+			MainTab.Photos -> currentAlbumPhotos
+			MainTab.Media -> currentMediaVideos
+			MainTab.Me -> emptyList()
+		}
+
 	val photoTimelineGroups: List<TimelineGroup>
 		get() = groupEntriesForTimeline(currentAlbumPhotos)
 
 	init {
 		viewModelScope.launch { open("") }
 		viewModelScope.launch { pollLink() }
-		viewModelScope.launch { scanGlobalMedia() }
 		viewModelScope.launch { startAutoHealing() }
 		cleanupOldCache()
 		startTransferWorker()
+
+		// 响应式自愈监听：当网络链路从离线到就绪、或者从中继成功打洞为直连时，
+		// 若当前列表仍为空或此前超时报错，立刻自动触发刷新拉取，绝不给用户看空白列表！
+		viewModelScope.launch {
+			var lastDirect = false
+			routeInfo.collect { info ->
+				val isNowDirect = info.isDirect
+				val isReady = info.isDirect || info.isRelay
+				if (isReady) {
+					if (entries.isEmpty() || (!lastDirect && isNowDirect)) {
+						open(path)
+					}
+				}
+				lastDirect = isNowDirect
+			}
+		}
+
+		// 低优先级延迟全盘媒体扫描（在首屏数据加载 3 秒后启动，严禁在冷启动首秒挤占中继通道）
+		viewModelScope.launch {
+			kotlinx.coroutines.delay(3000)
+			scanGlobalMedia()
+		}
 		viewModelScope.launch {
 			val lastSentMap = mutableMapOf<String, Long>()
 			val lastTimeMap = mutableMapOf<String, Long>()
@@ -395,10 +427,20 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		return Pair(if (list.isEmpty()) listOf(entry) else list, idx)
 	}
 
-	/** 手动触发加速直连 */
-	fun punchHole() {
+	/** 手动触发加速直连，返回打洞结果并在成功后自动刷新 */
+	fun punchHole(onResult: (String) -> Unit = {}) {
+		if (isPunching) return
+		isPunching = true
 		viewModelScope.launch {
-			app.repo.triggerHolePunch()
+			val msg = withContext(Dispatchers.IO) {
+				app.repo.triggerHolePunch()
+			}
+			isPunching = false
+			onResult(msg)
+			// 打洞完成后若列表为空，或者成功打洞，立刻自动刷新当前列表
+			if (entries.isEmpty() || msg.contains("直连") || msg.contains("打洞成功")) {
+				refresh()
+			}
 		}
 	}
 
