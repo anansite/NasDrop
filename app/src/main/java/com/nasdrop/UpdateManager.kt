@@ -1,6 +1,7 @@
 package com.nasdrop
 
 import android.content.Context
+import android.util.Log
 import android.content.Intent
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +31,7 @@ object UpdateManager {
 
 	suspend fun checkUpdate(currentVersion: String): UpdateInfo? = withContext(Dispatchers.IO) {
 		runCatching {
+			Log.i("UpdateManager", "Starting checkUpdate, current: $currentVersion, url: $RELEASES_API")
 			val request = Request.Builder()
 				.url(RELEASES_API)
 				.header("Accept", "application/vnd.github.v3+json")
@@ -37,8 +39,10 @@ object UpdateManager {
 				.build()
 
 			val response = http.newCall(request).execute()
+			Log.i("UpdateManager", "Response code: ${response.code}")
 			if (!response.isSuccessful) return@withContext null
 			val jsonStr = response.body?.string() ?: return@withContext null
+			Log.i("UpdateManager", "Got body length: ${jsonStr.length}")
 			val obj = JSONObject(jsonStr)
 
 			val tagName = obj.optString("tag_name", "").trim().removePrefix("v").removePrefix("V")
@@ -71,6 +75,8 @@ object UpdateManager {
 			} else {
 				null
 			}
+		}.onFailure {
+			Log.e("UpdateManager", "checkUpdate failed with exception", it)
 		}.getOrNull()
 	}
 
