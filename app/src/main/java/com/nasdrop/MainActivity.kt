@@ -68,12 +68,18 @@ class MainActivity : ComponentActivity() {
 				if (app.prefs.current().password.isEmpty()) route = Route.Settings
 			}
 
-			// 从后台回到前台：tsnet 隧道可能已随后台进程断开，用持久化状态原地重连
+			// 从后台回到前台：tsnet 隧道可能已随后台进程断开，用持久化状态原地重连。
+			// 跳过首次 ON_RESUME：冷启动时 open("") 已经会启动隧道，无需重复重连造成端口抖动。
 			val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+			var firstResume = true
 			androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
 				val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
 					if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-						vm.reconnectIfNeeded()
+						if (firstResume) {
+							firstResume = false
+						} else {
+							vm.reconnectIfNeeded()
+						}
 					}
 				}
 				lifecycleOwner.lifecycle.addObserver(observer)

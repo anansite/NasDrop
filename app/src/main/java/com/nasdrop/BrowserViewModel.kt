@@ -425,7 +425,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	private fun startUnifiedLinkMonitor() {
 		viewModelScope.launch(workerDispatcher) {
 			var lastDirect = false
-			var lastReconnectCheck = 0L
+			// 从现在开始计时，避免冷启动时立刻触发一次自愈检查（隧道尚在 starting）
+			var lastReconnectCheck = System.currentTimeMillis()
 			while (isActive) {
 				pollPeerStatus()
 				val info = app.repo.routeInfo.value
