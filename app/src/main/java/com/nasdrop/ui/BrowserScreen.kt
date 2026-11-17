@@ -202,7 +202,7 @@ fun BrowserScreen(
 		if (uris.isNotEmpty()) {
 			val targetDir = if (vm.selectedAlbumPath.isNotBlank()) vm.selectedAlbumPath else "Photos"
 			UploadService.start(context, uris, targetDir)
-			Toast.makeText(context, "已加入上传队列: ${uris.size} 张照片/视频", Toast.LENGTH_SHORT).show()
+			Toast.makeText(context, "已加入上传队列: ${uris.size} 张照片", Toast.LENGTH_SHORT).show()
 		}
 	}
 
@@ -426,7 +426,7 @@ fun BrowserScreen(
 					DraggableUploadFab(
 						currentTab = vm.currentTab,
 						onUploadFile = { filePicker.launch(arrayOf("*/*")) },
-						onUploadPhoto = { photoPicker.launch(arrayOf("image/*", "video/*")) },
+						onUploadPhoto = { photoPicker.launch(arrayOf("image/*")) },
 						onUploadVideo = { videoPicker.launch(arrayOf("video/*")) },
 					)
 				}
@@ -540,9 +540,12 @@ fun BrowserScreen(
 			confirmButton = {
 				Button(
 					onClick = {
-						val count = vm.selectedEntries.size
-						vm.batchDelete {
-							Toast.makeText(context, "已彻底删除 $count 项内容", Toast.LENGTH_SHORT).show()
+						vm.batchDelete { okCount, failCount ->
+							if (failCount == 0) {
+								Toast.makeText(context, "已成功删除 $okCount 项内容", Toast.LENGTH_SHORT).show()
+							} else {
+								Toast.makeText(context, "成功删除 $okCount 项，失败 $failCount 项", Toast.LENGTH_SHORT).show()
+							}
 						}
 						showBatchDeleteConfirm = false
 					},
@@ -623,8 +626,15 @@ fun BrowserScreen(
 			text = { Text("确定从网盘删除「${entry.name}」？此操作不可撤销。") },
 			confirmButton = {
 				TextButton(onClick = {
+					val targetName = entry.name
 					activeEntryForDelete = null
-					vm.delete(entry)
+					vm.delete(entry) { success, err ->
+						if (success) {
+							Toast.makeText(context, "已删除「$targetName」", Toast.LENGTH_SHORT).show()
+						} else {
+							Toast.makeText(context, "删除失败: ${err ?: "网络错误"}", Toast.LENGTH_LONG).show()
+						}
+					}
 				}) { Text("彻底删除", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
 			},
 			dismissButton = { TextButton(onClick = { activeEntryForDelete = null }) { Text("取消") } },

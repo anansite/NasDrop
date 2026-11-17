@@ -100,7 +100,20 @@ class WebDavClient(private val base: HttpUrl, private val http: OkHttpClient) {
 
 	fun mkcol(path: String) = exec("MKCOL", urlFor(path, dir = true))
 
-	fun delete(path: String, isDir: Boolean = false) = exec("DELETE", urlFor(path, dir = isDir))
+	fun delete(path: String, isDir: Boolean = false) {
+		val url = urlFor(path, dir = isDir)
+		val req = Request.Builder()
+			.url(url)
+			.method("DELETE", null)
+			.header("Depth", "infinity")
+			.build()
+		http.newCall(req).execute().use { resp ->
+			// 200, 204 为成功；404 表示文件在远端已不存在，也视为成功
+			if (!resp.isSuccessful && resp.code != 404) {
+				throw DavException(resp.code, "删除失败: HTTP ${resp.code}")
+			}
+		}
+	}
 
 	fun move(from: String, to: String) {
 		val req = Request.Builder()

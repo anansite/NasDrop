@@ -421,18 +421,13 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	 * 慢速自适应智能自愈：若当前处于 DERP 中继慢速代理，后台每 15 秒静默发起探测
 	 */
 	
-	/** 自动清理 1 天前的旧 APK 安装包与临时碎片，杜绝缓存积压无节制增大 */
+	/** 启动时彻底清空旧 APK 安装包与临时碎片，杜绝缓存积压无节制增大 */
 	private fun cleanupOldCache() {
 		viewModelScope.launch(Dispatchers.IO) {
 			runCatching {
 				val updateDir = File(app.cacheDir, "updates")
 				if (updateDir.exists()) {
-					val now = System.currentTimeMillis()
-					updateDir.listFiles()?.forEach { f ->
-						if (now - f.lastModified() > 24 * 3600 * 1000L) {
-							f.delete()
-						}
-					}
+					updateDir.deleteRecursively()
 				}
 			}
 		}
@@ -490,16 +485,36 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		selectedEntries = currentItems.toSet()
 	}
 
-	fun batchDelete(onDone: () -> Unit = {}) {
+	fun batchDelete(onDone: (Int, Int) -> Unit = { _, _ -> }) {
 		val targets = selectedEntries.toList()
 		if (targets.isEmpty()) return
-		mutate { c ->
-			for (item in targets) {
-				c.delete(item.path, item.isDir)
-			}
-		}
+		val targetPaths = targets.map { it.path }.toSet()
+
+		// 乐观即时移除，秒级清爽
+		entries = entries.filterNot { it.path in targetPaths }
+		allPhotos = allPhotos.filterNot { it.path in targetPaths }
+		allVideos = allVideos.filterNot { it.path in targetPaths }
 		exitMultiSelect()
-		onDone()
+
+		viewModelScope.launch {
+			var okCount = 0
+			var failCount = 0
+			val s = app.prefs.current()
+			val c = client ?: app.repo.client(s).also { client = it }
+			withContext(Dispatchers.IO) {
+				for (item in targets) {
+					try {
+						c.delete(item.path, item.isDir)
+						okCount++
+					} catch (_: Throwable) {
+						failCount++
+					}
+				}
+			}
+			dirCache.clear()
+			onDone(okCount, failCount)
+			refresh()
+		}
 	}
 
 	fun batchMove(targetDir: String, onDone: () -> Unit = {}) {
@@ -811,7 +826,28 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
-	fun delete(entry: DavEntry) = mutate { it.delete(entry.path, entry.isDir) }
+	fun delete(entry: DavEntry, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+		// 乐观 UI 立即清除，告别删除迟钝/不生效的错觉
+		entries = entries.filterNot { it.path == entry.path }
+		allPhotos = allPhotos.filterNot { it.path == entry.path }
+		allVideos = allVideos.filterNot { it.path == entry.path }
+		selectedEntries = selectedEntries.filterNot { it.path == entry.path }.toSet()
+
+		viewModelScope.launch {
+			try {
+				val s = app.prefs.current()
+				val c = client ?: app.repo.client(s).also { client = it }
+				withContext(Dispatchers.IO) { c.delete(entry.path, entry.isDir) }
+				dirCache.clear()
+				onResult(true, null)
+				refresh()
+			} catch (t: Throwable) {
+				error = t.message ?: t.javaClass.simpleName
+				onResult(false, t.message ?: "删除失败")
+				refresh()
+			}
+		}
+	}
 
 	fun rename(entry: DavEntry, newName: String) = mutate {
 		it.move(entry.path, join(entry.path.substringBeforeLast('/', ""), newName))

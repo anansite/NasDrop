@@ -125,7 +125,7 @@ class Repository(private val context: Context) {
 			.diskCache {
 				DiskCache.Builder()
 					.directory(context.cacheDir.resolve("image_cache"))
-					.maxSizeBytes(100L * 1024 * 1024)
+					.maxSizeBytes(40L * 1024 * 1024)
 					.build()
 			}
 			.okHttpClient { imageOkHttp }
