@@ -133,7 +133,7 @@ class MainActivity : ComponentActivity() {
 					ImageViewer(
 						images = r.list,
 						startIndex = r.index,
-						urlOf = { vm.urlFor(it) },
+						urlOf = { vm.directUrlFor(it) },
 						thumbOf = { vm.thumbnailUrlFor(it) },
 						onBack = { route = Route.Browser },
 						onSaveToGallery = { entry, cb -> vm.saveImageToGallery(entry, cb) },
@@ -146,7 +146,7 @@ class MainActivity : ComponentActivity() {
 					BackHandler { route = Route.Browser }
 					VideoPlayer(
 						entry = r.entry,
-						url = vm.urlFor(r.entry.path),
+						url = vm.directUrlFor(r.entry.path),
 						onBack = { route = Route.Browser },
 					)
 				}

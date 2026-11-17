@@ -382,11 +382,13 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 		viewModelScope.launch(workerDispatcher) {
 			Uploads.uploadCompletedEvent.collect {
-				// 上传可能落在任意目录：清掉整个目录缓存 + 重扫全局媒体池，
-				// 否则新文件要等手动下拉或重建页面才出现（"上传完等一会儿"的根因）。
-				dirCache.clear()
+				// 只刷新当前目录：新文件立即可见。
+				// 绝不再 scanGlobalMedia()——它会串行列几十个目录，在慢速隧道里要几十秒，
+				// 表现为"上传完一直在云端校验"（其实是客户端在全量重扫，不是服务端慢）。
+				dirCache.remove(path)
 				refreshSilent()
-				if (hasScannedMedia) scanGlobalMedia()
+				// 媒体池标记脏：下次真正切到相册/影音页时才增量重扫，把开销挪出上传链路。
+				if (hasScannedMedia) mediaDirty = true
 			}
 		}
 		viewModelScope.launch(workerDispatcher) {
@@ -394,12 +396,19 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
+	/** 媒体池是否需要因上传而重扫（惰性，切页面时才消费） */
+	@Volatile private var mediaDirty = false
+
 	/** 惰性按需媒体扫描：用户切换到相册或影音页面时才触发，首屏启动完全零负载 */
-	fun ensureMediaScanned() {
-		if (hasScannedMedia) return
+	fun ensureMediaScanned(force: Boolean = false) {
+		if (hasScannedMedia && !force && !mediaDirty) return
+		val needFull = !hasScannedMedia || force || mediaDirty
 		hasScannedMedia = true
-		viewModelScope.launch(scanDispatcher) {
-			scanGlobalMedia()
+		mediaDirty = false
+		if (needFull) {
+			viewModelScope.launch(scanDispatcher) {
+				scanGlobalMedia()
+			}
 		}
 	}
 
@@ -466,6 +475,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	fun urlFor(entryPath: String): String? = client?.urlFor(entryPath)?.toString()
+
+	/**
+	 * 查看器原图/视频专用：OpenList 原生 /p/?sign= 直链（无 Basic Auth、标准 GET，
+	 * 缓存与 Range 命中率更高）。读取 thumbRevision 建立快照依赖，sign 预取到后自动刷新。
+	 * 非 OpenList 或尚未预取到 sign 时回退 WebDAV urlFor，绝不返回 null。
+	 */
+	fun directUrlFor(entryPath: String): String? {
+		@Suppress("UNUSED_VARIABLE") val revision = thumbRevision
+		return client?.directUrlFor(entryPath)?.toString() ?: urlFor(entryPath)
+	}
 
 	/** 列表缩略图专用：命中 OpenList 服务端缩略图时返回真图片直链，否则回退原图地址。
 	 *  读取 thumbRevision 建立 Compose 快照依赖，异步缩略图就绪后自动重组刷新。 */
@@ -1040,10 +1059,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** 在影音专属目录下新建影集/分类文件夹 */
 	fun createMediaFolder(name: String) {
-		val targetDir = if (selectedMediaPath.isNotBlank()) selectedMediaPath else "Movies"
+		val targetDir = if (selectedMediaPath.isNotBlank()) selectedMediaPath else "movies"
 		mutate { client ->
-			if (targetDir == "Movies") {
-				runCatching { client.mkcol("Movies") }
+			if (targetDir == "movies") {
+				runCatching { client.mkcol("movies") }
 			}
 			client.mkcol(join(targetDir, name))
 		}

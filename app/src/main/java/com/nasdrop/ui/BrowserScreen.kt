@@ -215,7 +215,7 @@ fun BrowserScreen(
 		contract = ActivityResultContracts.OpenMultipleDocuments(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
-			val targetDir = if (vm.selectedMediaPath.isNotBlank()) vm.selectedMediaPath else "Movies"
+			val targetDir = if (vm.selectedMediaPath.isNotBlank()) vm.selectedMediaPath else "movies"
 			UploadService.start(context, uris, targetDir)
 			Toast.makeText(context, "已加入上传队列: ${uris.size} 部视频", Toast.LENGTH_SHORT).show()
 		}

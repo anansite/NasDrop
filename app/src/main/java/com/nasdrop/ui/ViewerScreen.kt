@@ -80,6 +80,7 @@ import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
@@ -521,8 +522,21 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 	val player = remember(url) {
 		val factory = DefaultMediaSourceFactory(context)
 			.setDataSourceFactory(OkHttpDataSource.Factory(http))
+		// 缓冲调优：慢速隧道下默认起播门槛(2.5s)太高，一直转圈。
+		// 降到 0.5s 起播、0.75s 恢复，同时把最大缓冲拉到 30s 减少二次卡顿。
+		// 原生 /p/?sign= 直链支持 Range，配合大缓冲能稳定边下边播。
+		val loadControl = DefaultLoadControl.Builder()
+			.setBufferDurationsMs(
+				10_000,   // minBufferMs
+				30_000,   // maxBufferMs
+				500,      // bufferForPlaybackMs：攒够 0.5s 就起播
+				750,      // bufferForPlaybackAfterRebufferMs
+			)
+			.setPrioritizeTimeOverSizeThresholds(true)
+			.build()
 		ExoPlayer.Builder(context)
 			.setMediaSourceFactory(factory)
+			.setLoadControl(loadControl)
 			.build()
 			.apply {
 				playWhenReady = true
