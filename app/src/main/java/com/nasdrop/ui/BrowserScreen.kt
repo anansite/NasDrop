@@ -171,6 +171,7 @@ fun BrowserScreen(
 	var showNetSheet by remember { mutableStateOf(false) }
 
 	var activeCreateType by remember { mutableStateOf<CreateDialogType?>(null) }
+	var activeFolderForDelete by remember { mutableStateOf<Pair<DavEntry, Boolean>?>(null) }
 
 	// 系统文件选择器（上传）
 	val filePicker = rememberLauncherForActivityResult(
@@ -379,6 +380,7 @@ fun BrowserScreen(
 							allAlbums = vm.allAlbumFolders,
 							selectedAlbumPath = vm.selectedAlbumPath,
 							onSelectAlbum = { vm.openAlbum(it) },
+							onDeleteAlbum = { folder -> activeFolderForDelete = Pair(folder, true) },
 							onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 							urlOf = { vm.urlFor(it) },
 							onOpenImage = onOpenImage,
@@ -391,6 +393,7 @@ fun BrowserScreen(
 							allMediaFolders = vm.allMediaFolders,
 							selectedMediaPath = vm.selectedMediaPath,
 							onSelectMediaFolder = { vm.openMedia(it) },
+							onDeleteMediaFolder = { folder -> activeFolderForDelete = Pair(folder, false) },
 							onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
 							urlOf = { vm.urlFor(it) },
 							onOpenVideo = onOpenVideo,
@@ -510,6 +513,28 @@ fun BrowserScreen(
 				Toast.makeText(context, "已成功移动到: /${destDir.ifEmpty { "根目录" }}", Toast.LENGTH_SHORT).show()
 			},
 			onDismiss = { activeEntryForMove = null },
+		)
+	}
+
+	// 删除子相册/子影集确认对话框
+	activeFolderForDelete?.let { (folder, isAlbum) ->
+		AlertDialog(
+			onDismissRequest = { activeFolderForDelete = null },
+			title = { Text(if (isAlbum) "删除相册" else "删除影集", fontWeight = FontWeight.Bold) },
+			text = { Text("确认删除「${folder.name}」吗？相册内的文件也将被移除。") },
+			confirmButton = {
+				Button(
+					onClick = {
+						if (isAlbum) vm.deleteAlbum(folder) else vm.deleteMediaFolder(folder)
+						activeFolderForDelete = null
+						Toast.makeText(context, "已删除: ${folder.name}", Toast.LENGTH_SHORT).show()
+					},
+					colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF4D4F)),
+				) { Text("确认删除") }
+			},
+			dismissButton = {
+				TextButton(onClick = { activeFolderForDelete = null }) { Text("取消") }
+			},
 		)
 	}
 
@@ -668,40 +693,41 @@ private fun PhotosTopBar(
 	onRefresh: () -> Unit,
 	onOpenTransferSheet: () -> Unit,
 ) {
+	// 固定 44dp 行高，平滑统一面包屑，杜绝跳动
 	Row(
 		modifier = Modifier
 			.fillMaxWidth()
-			.background(Color(0xFFF7F8FA))
-			.padding(horizontal = 14.dp, vertical = 8.dp),
+			.height(44.dp)
+			.background(Color.White)
+			.padding(horizontal = 14.dp),
 		verticalAlignment = Alignment.CenterVertically,
 		horizontalArrangement = Arrangement.SpaceBetween,
 	) {
-		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
 			if (selectedAlbumName.isNotBlank()) {
 				IconButton(
 					onClick = onUpAlbum,
-					modifier = Modifier.size(32.dp),
+					modifier = Modifier.size(28.dp),
 				) {
-					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部相册", tint = Color(0xFF2A72F6), modifier = Modifier.size(20.dp))
+					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部相册", tint = Color(0xFF2A72F6), modifier = Modifier.size(18.dp))
 				}
-				Column {
-					Text(selectedAlbumName, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-					Text("相册共 $count 张照片", fontSize = 11.sp, color = Color(0xFF86909C))
-				}
+				Text("相册", fontSize = 14.sp, color = Color(0xFF86909C), modifier = Modifier.clickable(onClick = onUpAlbum))
+				Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = Color(0xFFC9CDD4), modifier = Modifier.size(14.dp))
+				Text(selectedAlbumName, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1)
 			} else {
-				Text("云端相册", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-				Text("共 $count 张照片", fontSize = 11.sp, color = Color(0xFF86909C))
+				Text("云端相册", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+				Text("· $count 张", fontSize = 12.sp, color = Color(0xFF86909C))
 			}
 		}
 
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-			IconButton(onClick = onCreateAlbum, modifier = Modifier.size(34.dp)) {
+			IconButton(onClick = onCreateAlbum, modifier = Modifier.size(32.dp)) {
 				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属相册", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
-			IconButton(onClick = onRefresh, modifier = Modifier.size(34.dp)) {
+			IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
 				Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
-			IconButton(onClick = onOpenTransferSheet, modifier = Modifier.size(34.dp)) {
+			IconButton(onClick = onOpenTransferSheet, modifier = Modifier.size(32.dp)) {
 				Box(contentAlignment = Alignment.Center) {
 					Icon(Icons.Rounded.CloudDownload, contentDescription = "传输中心", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 					if (activeTransferCount > 0) {
@@ -729,40 +755,41 @@ private fun MediaTopBar(
 	onRefresh: () -> Unit,
 	onOpenTransferSheet: () -> Unit,
 ) {
+	// 固定 44dp 行高，平滑统一面包屑，杜绝跳动
 	Row(
 		modifier = Modifier
 			.fillMaxWidth()
-			.background(Color(0xFFF7F8FA))
-			.padding(horizontal = 14.dp, vertical = 8.dp),
+			.height(44.dp)
+			.background(Color.White)
+			.padding(horizontal = 14.dp),
 		verticalAlignment = Alignment.CenterVertically,
 		horizontalArrangement = Arrangement.SpaceBetween,
 	) {
-		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
 			if (selectedMediaName.isNotBlank()) {
 				IconButton(
 					onClick = onUpMedia,
-					modifier = Modifier.size(32.dp),
+					modifier = Modifier.size(28.dp),
 				) {
-					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部影视", tint = Color(0xFF2A72F6), modifier = Modifier.size(20.dp))
+					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部影视", tint = Color(0xFF2A72F6), modifier = Modifier.size(18.dp))
 				}
-				Column {
-					Text(selectedMediaName, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-					Text("影集共 $count 部视频", fontSize = 11.sp, color = Color(0xFF86909C))
-				}
+				Text("影音", fontSize = 14.sp, color = Color(0xFF86909C), modifier = Modifier.clickable(onClick = onUpMedia))
+				Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = Color(0xFFC9CDD4), modifier = Modifier.size(14.dp))
+				Text(selectedMediaName, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1)
 			} else {
-				Text("影音视界", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-				Text("共 $count 部视频", fontSize = 11.sp, color = Color(0xFF86909C))
+				Text("影音视界", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+				Text("· $count 部", fontSize = 12.sp, color = Color(0xFF86909C))
 			}
 		}
 
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-			IconButton(onClick = onCreateMediaFolder, modifier = Modifier.size(34.dp)) {
+			IconButton(onClick = onCreateMediaFolder, modifier = Modifier.size(32.dp)) {
 				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属影集", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
-			IconButton(onClick = onRefresh, modifier = Modifier.size(34.dp)) {
+			IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
 				Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
-			IconButton(onClick = onOpenTransferSheet, modifier = Modifier.size(34.dp)) {
+			IconButton(onClick = onOpenTransferSheet, modifier = Modifier.size(32.dp)) {
 				Box(contentAlignment = Alignment.Center) {
 					Icon(Icons.Rounded.CloudDownload, contentDescription = "传输中心", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 					if (activeTransferCount > 0) {
@@ -1235,61 +1262,66 @@ private fun FileBrowserContent(
 
 	when (vm.viewMode) {
 		ViewMode.Cards -> {
+			// 夸克式极简纯净无框列表：纯白底、无卡片框、精致微留白、一屏容纳更多文件
 			LazyColumn(
-				contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-				verticalArrangement = Arrangement.spacedBy(8.dp),
-				modifier = Modifier.fillMaxSize(),
+				modifier = Modifier
+					.fillMaxSize()
+					.background(Color.White),
 			) {
 				items(items, key = { it.path }) { entry ->
 					val isSelected = vm.selectedEntries.contains(entry)
-					Card(
-						shape = RoundedCornerShape(14.dp),
-						colors = CardDefaults.cardColors(containerColor = Color.White),
-						elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+					Row(
 						modifier = Modifier
 							.fillMaxWidth()
 							.combinedClickable(
 								onClick = { onOpenEntry(entry) },
 								onLongClick = { onLongClickEntry(entry) },
-							),
+							)
+							.padding(horizontal = 16.dp, vertical = 9.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(12.dp),
 					) {
-						Row(
-							modifier = Modifier.padding(12.dp),
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(12.dp),
-						) {
-							if (isMulti) {
-								SelectCheckbox(isSelected = isSelected)
-							}
+						// 左侧精致图标（微圆角，与夸克一致）
+						FileThumbnail(entry = entry, urlOf = { vm.urlFor(it) }, size = 42.dp)
 
-							FileThumbnail(entry = entry, urlOf = { vm.urlFor(it) }, size = 42.dp)
+						// 中间主标题与单行元数据
+						Column(modifier = Modifier.weight(1f)) {
+							Text(
+								text = entry.displayName,
+								fontSize = 14.sp,
+								fontWeight = FontWeight.Medium,
+								color = Color(0xFF1D2129),
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
+							)
+							Spacer(modifier = Modifier.height(3.dp))
+							Text(
+								text = formatMeta(entry),
+								fontSize = 11.sp,
+								color = Color(0xFF86909C),
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
+							)
+						}
 
-							Column(modifier = Modifier.weight(1f)) {
-								Text(
-									text = entry.displayName,
-									fontSize = 14.sp,
-									fontWeight = FontWeight.Bold,
-									color = Color(0xFF1D2129),
-									maxLines = 1,
-									overflow = TextOverflow.Ellipsis,
+						// 右侧操作：多选时显示圆圈选择框，常态时显示更多菜单点
+						if (isMulti) {
+							SelectCheckbox(isSelected = isSelected)
+						} else {
+							IconButton(
+								onClick = { onOpenAction(entry) },
+								modifier = Modifier.size(28.dp),
+							) {
+								Icon(
+									Icons.Rounded.MoreVert,
+									contentDescription = "更多",
+									tint = Color(0xFFC9CDD4),
+									modifier = Modifier.size(18.dp),
 								)
-								Spacer(modifier = Modifier.height(3.dp))
-								Text(
-									text = formatMeta(entry),
-									fontSize = 12.sp,
-									color = Color(0xFF86909C),
-									maxLines = 1,
-									overflow = TextOverflow.Ellipsis,
-								)
-							}
-
-							if (!isMulti) {
-								IconButton(onClick = { onOpenAction(entry) }, modifier = Modifier.size(28.dp)) {
-									Icon(Icons.Rounded.MoreVert, contentDescription = "更多", tint = Color(0xFF86909C))
-								}
 							}
 						}
 					}
+					HorizontalDivider(color = Color(0xFFF7F8FA), thickness = 0.5.dp)
 				}
 			}
 		}
@@ -1456,6 +1488,7 @@ private fun PhotoTimelineContent(
 	allAlbums: List<DavEntry>,
 	selectedAlbumPath: String,
 	onSelectAlbum: (String) -> Unit,
+	onDeleteAlbum: (DavEntry) -> Unit,
 	onCreateAlbum: () -> Unit,
 	urlOf: (String) -> String?,
 	onOpenImage: (DavEntry) -> Unit,
@@ -1487,14 +1520,17 @@ private fun PhotoTimelineContent(
 				}
 			}
 
-			// 用户创建的各个子相册
+			// 用户创建的各个子相册（支持长按直接删除）
 			items(allAlbums) { album ->
 				val isSelected = selectedAlbumPath == album.path
 				Surface(
 					shape = RoundedCornerShape(16.dp),
-					color = if (isSelected) Color(0xFFFF3D71) else Color.White,
-					shadowElevation = if (isSelected) 3.dp else 1.dp,
-					onClick = { onSelectAlbum(album.path) },
+					color = if (isSelected) Color(0xFFFF3D71) else Color(0xFFF7F8FA),
+					shadowElevation = if (isSelected) 2.dp else 0.dp,
+					modifier = Modifier.combinedClickable(
+						onClick = { onSelectAlbum(album.path) },
+						onLongClick = { onDeleteAlbum(album) },
+					),
 				) {
 					Row(
 						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -1579,6 +1615,7 @@ private fun MediaStreamContent(
 	allMediaFolders: List<DavEntry>,
 	selectedMediaPath: String,
 	onSelectMediaFolder: (String) -> Unit,
+	onDeleteMediaFolder: (DavEntry) -> Unit,
 	onCreateMediaFolder: () -> Unit,
 	urlOf: (String) -> String?,
 	onOpenVideo: (DavEntry) -> Unit,
@@ -1610,14 +1647,17 @@ private fun MediaStreamContent(
 				}
 			}
 
-			// 用户创建的各个影集文件夹
+			// 用户创建的各个影集文件夹（支持长按直接删除）
 			items(allMediaFolders) { folder ->
 				val isSelected = selectedMediaPath == folder.path
 				Surface(
 					shape = RoundedCornerShape(16.dp),
-					color = if (isSelected) Color(0xFF722ED1) else Color.White,
-					shadowElevation = if (isSelected) 3.dp else 1.dp,
-					onClick = { onSelectMediaFolder(folder.path) },
+					color = if (isSelected) Color(0xFF722ED1) else Color(0xFFF7F8FA),
+					shadowElevation = if (isSelected) 2.dp else 0.dp,
+					modifier = Modifier.combinedClickable(
+						onClick = { onSelectMediaFolder(folder.path) },
+						onLongClick = { onDeleteMediaFolder(folder) },
+					),
 				) {
 					Row(
 						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -2185,18 +2225,18 @@ private fun NetworkIntelligenceConsole(
 						verticalAlignment = Alignment.CenterVertically,
 					) {
 						Text(
-							text = "实时全息连接拓扑",
+							text = "实时网络拓扑",
 							fontSize = 14.sp,
-							fontWeight = FontWeight.ExtraBold,
+							fontWeight = FontWeight.Bold,
 							color = Color.White,
 						)
 						Surface(
-							shape = RoundedCornerShape(10.dp),
+							shape = RoundedCornerShape(8.dp),
 							color = if (routeInfo.isLan) Color(0x3300E599) else if (routeInfo.isDirect) Color(0x332A72F6) else Color(0x33FF7A00),
 							border = androidx.compose.foundation.BorderStroke(1.dp, if (routeInfo.isLan) Color(0x6600E599) else if (routeInfo.isDirect) Color(0x662A72F6) else Color(0x66FF7A00)),
 						) {
 							Text(
-								text = if (routeInfo.isLan) "⚡ 局域网高速直连" else if (routeInfo.isDirect) "🚀 P2P 专线极速直连" else "🐢 中继顺畅传输 (15s自愈)",
+								text = if (routeInfo.isLan) "⚡ 局域网" else if (routeInfo.isDirect) "🚀 专线直连" else "🐢 中继自愈",
 								fontSize = 11.sp,
 								fontWeight = FontWeight.Bold,
 								color = if (routeInfo.isLan) Color(0xFF00E599) else if (routeInfo.isDirect) Color(0xFF69A2FF) else Color(0xFFFF9A3E),
@@ -2237,9 +2277,9 @@ private fun NetworkIntelligenceConsole(
 							horizontalAlignment = Alignment.CenterHorizontally,
 						) {
 							Text(
-								text = if (routeInfo.isLan) "< 2ms · 无限带宽" else if (routeInfo.isDirect) "24ms · 端到端加密" else "86ms · 中继加速中",
+								text = if (routeInfo.isLan) "< 2ms 局域网" else if (routeInfo.isDirect) "24ms 直连" else "86ms 中继",
 								fontSize = 10.sp,
-								fontWeight = FontWeight.ExtraBold,
+								fontWeight = FontWeight.Bold,
 								color = if (routeInfo.isLan) Color(0xFF00E599) else Color(0xFF69A2FF),
 							)
 							Spacer(modifier = Modifier.height(4.dp))
@@ -2297,43 +2337,45 @@ private fun NetworkIntelligenceConsole(
 						horizontalArrangement = Arrangement.SpaceBetween,
 						verticalAlignment = Alignment.CenterVertically,
 					) {
-						Text("智能专线自愈与加速控制", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-						Text("● 15s 自动探测中", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00B578))
+						Text("智能专线加速", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+						Text("● 自动探测中", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00B578))
 					}
 
 					Spacer(modifier = Modifier.height(6.dp))
 					Text(
-						text = "系统在后台自动周期探测 NAT 环境。当离开 Wi-Fi 切换到 5G 移动蜂窝网络时，将自动平滑握手升级为极速专线直连。",
+						text = "周期探测网络环境，切换移动数据时自动平滑直连。",
 						fontSize = 11.sp,
 						color = Color(0xFF86909C),
 						lineHeight = 16.sp,
 					)
 
-					Spacer(modifier = Modifier.height(14.dp))
+					Spacer(modifier = Modifier.height(12.dp))
 
 					Row(
 						modifier = Modifier.fillMaxWidth(),
-						horizontalArrangement = Arrangement.spacedBy(10.dp),
+						horizontalArrangement = Arrangement.spacedBy(8.dp),
 					) {
 						Button(
 							onClick = onTriggerPunch,
 							colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
 							shape = RoundedCornerShape(12.dp),
-							modifier = Modifier.weight(1f).height(44.dp),
+							contentPadding = PaddingValues(horizontal = 8.dp),
+							modifier = Modifier.weight(1f).height(40.dp),
 						) {
-							Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = Color.White)
+							Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
 							Spacer(modifier = Modifier.width(4.dp))
-							Text("⚡ 立即发起加速探测", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+							Text("立即加速", fontWeight = FontWeight.Bold, fontSize = 13.sp)
 						}
 
 						OutlinedButton(
 							onClick = onOpenSettings,
 							shape = RoundedCornerShape(12.dp),
-							modifier = Modifier.height(44.dp),
+							contentPadding = PaddingValues(horizontal = 8.dp),
+							modifier = Modifier.weight(1f).height(40.dp),
 						) {
 							Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
 							Spacer(modifier = Modifier.width(4.dp))
-							Text("服务器与偏好设置", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+							Text("服务器设置", fontWeight = FontWeight.Bold, fontSize = 13.sp)
 						}
 					}
 				}
@@ -2347,56 +2389,81 @@ private fun CommercialNavigationBar(
 	currentTab: MainTab,
 	onTabSelect: (MainTab) -> Unit,
 ) {
-	NavigationBar(
-		containerColor = Color.White,
-		tonalElevation = 6.dp,
+	Surface(
+		color = Color.White,
+		shadowElevation = 8.dp,
+		modifier = Modifier
+			.fillMaxWidth()
+			.height(50.dp),
 	) {
-		NavigationBarItem(
-			selected = currentTab == MainTab.Files,
-			onClick = { onTabSelect(MainTab.Files) },
-			icon = { Icon(Icons.Rounded.FolderOpen, contentDescription = "文件") },
-			label = { Text("文件", fontWeight = FontWeight.Bold) },
-			colors = NavigationBarItemDefaults.colors(
-				selectedIconColor = Color(0xFF2A72F6),
-				selectedTextColor = Color(0xFF2A72F6),
-				indicatorColor = Color(0xFFEAF2FF),
-			),
-		)
+		Column {
+			HorizontalDivider(color = Color(0xFFF2F3F5), thickness = 0.5.dp)
+			Row(
+				modifier = Modifier.fillMaxSize(),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				CompactTabItem(
+					title = "文件",
+					icon = Icons.Rounded.FolderOpen,
+					selected = currentTab == MainTab.Files,
+					onClick = { onTabSelect(MainTab.Files) },
+					modifier = Modifier.weight(1f),
+				)
+				CompactTabItem(
+					title = "相册",
+					icon = Icons.Rounded.PhotoLibrary,
+					selected = currentTab == MainTab.Photos,
+					onClick = { onTabSelect(MainTab.Photos) },
+					modifier = Modifier.weight(1f),
+				)
+				CompactTabItem(
+					title = "影音",
+					icon = Icons.Rounded.VideoLibrary,
+					selected = currentTab == MainTab.Media,
+					onClick = { onTabSelect(MainTab.Media) },
+					modifier = Modifier.weight(1f),
+				)
+				CompactTabItem(
+					title = "服务设置",
+					icon = Icons.Rounded.Speed,
+					selected = currentTab == MainTab.Me,
+					onClick = { onTabSelect(MainTab.Me) },
+					modifier = Modifier.weight(1f),
+				)
+			}
+		}
+	}
+}
 
-		NavigationBarItem(
-			selected = currentTab == MainTab.Photos,
-			onClick = { onTabSelect(MainTab.Photos) },
-			icon = { Icon(Icons.Rounded.PhotoLibrary, contentDescription = "相册") },
-			label = { Text("相册", fontWeight = FontWeight.Bold) },
-			colors = NavigationBarItemDefaults.colors(
-				selectedIconColor = Color(0xFF2A72F6),
-				selectedTextColor = Color(0xFF2A72F6),
-				indicatorColor = Color(0xFFEAF2FF),
-			),
+@Composable
+private fun CompactTabItem(
+	title: String,
+	icon: ImageVector,
+	selected: Boolean,
+	onClick: () -> Unit,
+	modifier: Modifier = Modifier,
+) {
+	val color = if (selected) Color(0xFF2A72F6) else Color(0xFF86909C)
+	Column(
+		modifier = modifier
+			.fillMaxHeight()
+			.clickable(onClick = onClick)
+			.padding(vertical = 4.dp),
+		horizontalAlignment = Alignment.CenterHorizontally,
+		verticalArrangement = Arrangement.Center,
+	) {
+		Icon(
+			imageVector = icon,
+			contentDescription = title,
+			tint = color,
+			modifier = Modifier.size(21.dp),
 		)
-
-		NavigationBarItem(
-			selected = currentTab == MainTab.Media,
-			onClick = { onTabSelect(MainTab.Media) },
-			icon = { Icon(Icons.Rounded.VideoLibrary, contentDescription = "影音") },
-			label = { Text("影音", fontWeight = FontWeight.Bold) },
-			colors = NavigationBarItemDefaults.colors(
-				selectedIconColor = Color(0xFF2A72F6),
-				selectedTextColor = Color(0xFF2A72F6),
-				indicatorColor = Color(0xFFEAF2FF),
-			),
-		)
-
-		NavigationBarItem(
-			selected = currentTab == MainTab.Me,
-			onClick = { onTabSelect(MainTab.Me) },
-			icon = { Icon(Icons.Rounded.Speed, contentDescription = "网络管家") },
-			label = { Text("服务与设置", fontWeight = FontWeight.Bold) },
-			colors = NavigationBarItemDefaults.colors(
-				selectedIconColor = Color(0xFF2A72F6),
-				selectedTextColor = Color(0xFF2A72F6),
-				indicatorColor = Color(0xFFEAF2FF),
-			),
+		Spacer(modifier = Modifier.height(2.dp))
+		Text(
+			text = title,
+			fontSize = 10.sp,
+			fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+			color = color,
 		)
 	}
 }

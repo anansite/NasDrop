@@ -622,6 +622,24 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
+	fun deleteAlbum(folder: DavEntry) {
+		mutate { client ->
+			client.delete(folder.path, isDir = true)
+			if (selectedAlbumPath == folder.path || selectedAlbumPath.startsWith(folder.path)) {
+				selectedAlbumPath = ""
+			}
+		}
+	}
+
+	fun deleteMediaFolder(folder: DavEntry) {
+		mutate { client ->
+			client.delete(folder.path, isDir = true)
+			if (selectedMediaPath == folder.path || selectedMediaPath.startsWith(folder.path)) {
+				selectedMediaPath = ""
+			}
+		}
+	}
+
 	fun delete(entry: DavEntry) = mutate { it.delete(entry.path, entry.isDir) }
 
 	fun rename(entry: DavEntry, newName: String) = mutate {
