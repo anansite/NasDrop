@@ -245,41 +245,18 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 			) {
 				Column(modifier = Modifier.padding(16.dp)) {
 					Text(
-						text = "NAS 主机与协议配置",
+						text = "WebDAV 服务配置",
 						fontSize = 14.sp,
 						fontWeight = FontWeight.ExtraBold,
 						color = Color(0xFF1D2129),
 					)
-					Spacer(modifier = Modifier.height(10.dp))
-
-					// 快捷品牌预设横滑胶囊
-					Row(
-						modifier = Modifier
-							.fillMaxWidth()
-							.horizontalScroll(rememberScrollState()),
-						horizontalArrangement = Arrangement.spacedBy(8.dp),
-					) {
-						PresetChip("群晖 Synology", baseUrl.contains("/nas") || baseUrl.contains("5005")) {
-							baseUrl = "https://nas.205002.xyz/nas/"
-						}
-						PresetChip("威联通 QNAP", baseUrl.contains("/webdav")) {
-							baseUrl = "https://nas.205002.xyz/webdav/"
-						}
-						PresetChip("飞牛 fnOS", baseUrl.contains("fnos") || baseUrl.contains("8080")) {
-							baseUrl = "http://fnos.local:8080/dav/"
-						}
-						PresetChip("自建 WebDAV", baseUrl.contains("tailscale")) {
-							baseUrl = "https://my-nas.tailscale:5005/"
-						}
-					}
-
 					Spacer(modifier = Modifier.height(12.dp))
 
 					// 服务器地址
 					OutlinedTextField(
 						value = baseUrl,
 						onValueChange = { baseUrl = it },
-						label = { Text("WebDAV / NAS 接入地址", fontSize = 12.sp) },
+						label = { Text("WebDAV 服务接入地址", fontSize = 12.sp) },
 						placeholder = { Text("https://nas.example.com/nas/") },
 						singleLine = true,
 						shape = RoundedCornerShape(12.dp),
@@ -595,26 +572,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 	}
 }
 
-@Composable
-private fun PresetChip(label: String, selected: Boolean, onClick: () -> Unit) {
-	Surface(
-		shape = RoundedCornerShape(12.dp),
-		color = if (selected) Color(0xFFEAF2FF) else Color(0xFFF7F8FA),
-		border = androidx.compose.foundation.BorderStroke(
-			width = 1.dp,
-			color = if (selected) Color(0xFF2A72F6) else Color(0xFFE5E6EB),
-		),
-		modifier = Modifier.clickable(onClick = onClick),
-	) {
-		Text(
-			text = label,
-			fontSize = 12.sp,
-			fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-			color = if (selected) Color(0xFF2A72F6) else Color(0xFF4E5969),
-			modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-		)
-	}
-}
+
 
 @Composable
 private fun SettingItemRow(
