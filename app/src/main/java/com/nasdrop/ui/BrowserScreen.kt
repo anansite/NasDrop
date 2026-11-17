@@ -164,9 +164,11 @@ fun BrowserScreen(
 	var activeEntryForRename by remember { mutableStateOf<DavEntry?>(null) }
 	var activeEntryForMove by remember { mutableStateOf<DavEntry?>(null) }
 	var activeEntryForDelete by remember { mutableStateOf<DavEntry?>(null) }
-	var showCreateDialog by remember { mutableStateOf(false) }
+	// showCreateDialog replaced by activeCreateType
 	var showTransferSheet by remember { mutableStateOf(false) }
 	var showNetSheet by remember { mutableStateOf(false) }
+
+	var activeCreateType by remember { mutableStateOf<CreateDialogType?>(null) }
 
 	// 系统文件选择器（上传）
 	val filePicker = rememberLauncherForActivityResult(
@@ -178,6 +180,26 @@ fun BrowserScreen(
 		}
 	}
 
+	val photoPicker = rememberLauncherForActivityResult(
+		contract = ActivityResultContracts.OpenMultipleDocuments(),
+	) { uris ->
+		if (uris.isNotEmpty()) {
+			val targetDir = if (vm.path.startsWith("Photos") || vm.path.startsWith("相册")) vm.path else "Photos"
+			UploadService.start(context, uris, targetDir)
+			Toast.makeText(context, "已加入上传队列: ${uris.size} 张照片/视频", Toast.LENGTH_SHORT).show()
+		}
+	}
+
+	val videoPicker = rememberLauncherForActivityResult(
+		contract = ActivityResultContracts.OpenMultipleDocuments(),
+	) { uris ->
+		if (uris.isNotEmpty()) {
+			val targetDir = if (vm.path.startsWith("Movies") || vm.path.startsWith("影视") || vm.path.startsWith("影音")) vm.path else "Movies"
+			UploadService.start(context, uris, targetDir)
+			Toast.makeText(context, "已加入上传队列: ${uris.size} 部视频", Toast.LENGTH_SHORT).show()
+		}
+	}
+
 	Scaffold(
 		containerColor = Color(0xFFF7F8FA),
 		bottomBar = {
@@ -185,7 +207,7 @@ fun BrowserScreen(
 				PickBar(
 					path = vm.path,
 					lastDir = lastDir,
-					onCreateFolder = { showCreateDialog = true },
+					onCreateFolder = { activeCreateType = CreateDialogType.Folder },
 					onConfirm = {
 						vm.rememberDir(vm.path)
 						onConfirm(vm.path)
@@ -222,15 +244,37 @@ fun BrowserScreen(
 			}
 		},
 		floatingActionButton = {
-			if (vm.currentTab == MainTab.Files && !vm.isMultiSelectMode && mode == BrowserMode.Browse) {
-				ExtendedFloatingActionButton(
-					onClick = { filePicker.launch(arrayOf("*/*")) },
-					icon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null, tint = Color.White) },
-					text = { Text("上传", fontWeight = FontWeight.Bold, color = Color.White) },
-					containerColor = Color(0xFF2A72F6),
-					elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(defaultElevation = 6.dp),
-					shape = RoundedCornerShape(20.dp),
-				)
+			if (!vm.isMultiSelectMode && mode == BrowserMode.Browse) {
+				when (vm.currentTab) {
+					MainTab.Files -> {
+						ExtendedFloatingActionButton(
+							onClick = { filePicker.launch(arrayOf("*/*")) },
+							icon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null, tint = Color.White) },
+							text = { Text("上传文件", fontWeight = FontWeight.Bold, color = Color.White) },
+							containerColor = Color(0xFF2A72F6),
+							shape = RoundedCornerShape(20.dp),
+						)
+					}
+					MainTab.Photos -> {
+						ExtendedFloatingActionButton(
+							onClick = { photoPicker.launch(arrayOf("image/*", "video/*")) },
+							icon = { Icon(Icons.Rounded.PhotoCamera, contentDescription = null, tint = Color.White) },
+							text = { Text("上传照片", fontWeight = FontWeight.Bold, color = Color.White) },
+							containerColor = Color(0xFFFF3D71),
+							shape = RoundedCornerShape(20.dp),
+						)
+					}
+					MainTab.Media -> {
+						ExtendedFloatingActionButton(
+							onClick = { videoPicker.launch(arrayOf("video/*")) },
+							icon = { Icon(Icons.Rounded.Movie, contentDescription = null, tint = Color.White) },
+							text = { Text("上传视频", fontWeight = FontWeight.Bold, color = Color.White) },
+							containerColor = Color(0xFF722ED1),
+							shape = RoundedCornerShape(20.dp),
+						)
+					}
+					MainTab.Me -> {}
+				}
 			}
 		},
 	) { innerPadding ->
@@ -239,7 +283,7 @@ fun BrowserScreen(
 				.fillMaxSize()
 				.padding(innerPadding),
 		) {
-			// 各 Tab 专属顶栏：文件 Tab 仅需 2 行极简流线型；服务与设置 Tab 专职运维管理
+			// 各 Tab 专属顶栏：文件 Tab 仅需 2 行极简流线型；相册/影音支持专属新建与上传；服务与设置专职运维
 			when (vm.currentTab) {
 				MainTab.Files -> {
 					FilesTopBar(
@@ -250,7 +294,7 @@ fun BrowserScreen(
 							if (vm.isMultiSelectMode) vm.exitMultiSelect()
 							else vm.enterMultiSelect()
 						},
-						onCreateFolder = { showCreateDialog = true },
+						onCreateFolder = { activeCreateType = CreateDialogType.Folder },
 						onNavigate = { vm.open(it) },
 						onUp = { vm.up() },
 					)
@@ -259,6 +303,8 @@ fun BrowserScreen(
 				MainTab.Photos -> {
 					PhotosTopBar(
 						count = vm.allPhotos.size,
+						activeTransferCount = vm.activeTransferCount,
+						onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 						onRefresh = { vm.refresh() },
 						onOpenTransferSheet = { showTransferSheet = true },
 					)
@@ -267,6 +313,8 @@ fun BrowserScreen(
 				MainTab.Media -> {
 					MediaTopBar(
 						count = vm.allVideos.size,
+						activeTransferCount = vm.activeTransferCount,
+						onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
 						onRefresh = { vm.refresh() },
 						onOpenTransferSheet = { showTransferSheet = true },
 					)
@@ -324,7 +372,7 @@ fun BrowserScreen(
 							groups = vm.photoTimelineGroups,
 							urlOf = { vm.urlFor(it) },
 							onOpenImage = onOpenImage,
-							onCreateAlbum = { showCreateDialog = true },
+							onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 						)
 					}
 
@@ -453,13 +501,24 @@ fun BrowserScreen(
 	}
 
 	// 6. 新建文件夹/专属相册对话框
-	if (showCreateDialog) {
+	activeCreateType?.let { type ->
 		CreateFolderDialog(
+			type = type,
 			onConfirm = { name ->
-				showCreateDialog = false
-				if (name.isNotBlank()) vm.mkdir(name.trim())
+				activeCreateType = null
+				when (type) {
+					CreateDialogType.Folder -> vm.mkdir(name)
+					CreateDialogType.Album -> {
+						vm.createAlbum(name)
+						Toast.makeText(context, "已创建相册: $name", Toast.LENGTH_SHORT).show()
+					}
+					CreateDialogType.MediaFolder -> {
+						vm.createMediaFolder(name)
+						Toast.makeText(context, "已创建影集分类: $name", Toast.LENGTH_SHORT).show()
+					}
+				}
 			},
-			onDismiss = { showCreateDialog = false },
+			onDismiss = { activeCreateType = null },
 		)
 	}
 
@@ -589,6 +648,8 @@ private fun PickBar(
 @Composable
 private fun PhotosTopBar(
 	count: Int,
+	activeTransferCount: Int = 0,
+	onCreateAlbum: () -> Unit,
 	onRefresh: () -> Unit,
 	onOpenTransferSheet: () -> Unit,
 ) {
@@ -605,11 +666,28 @@ private fun PhotosTopBar(
 			Text("共 $count 张照片", fontSize = 11.sp, color = Color(0xFF86909C))
 		}
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+			// 新建专属相册
+			IconButton(onClick = onCreateAlbum) {
+				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建相册", tint = Color(0xFF4E5969))
+			}
+			// 传输中心（采用下载云图标，避免误认为刷新）
+			IconButton(onClick = onOpenTransferSheet) {
+				Box(contentAlignment = Alignment.Center) {
+				Icon(Icons.Rounded.CloudDownload, contentDescription = "传输列表", tint = Color(0xFF4E5969))
+				if (activeTransferCount > 0) {
+					Box(
+						modifier = Modifier
+							.size(7.dp)
+							.clip(CircleShape)
+							.background(Color(0xFF2A72F6))
+							.align(Alignment.TopEnd)
+					)
+				}
+			}
+			}
+			// 刷新
 			IconButton(onClick = onRefresh) {
 				Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969))
-			}
-			IconButton(onClick = onOpenTransferSheet) {
-				Icon(Icons.Rounded.Sync, contentDescription = "传输", tint = Color(0xFF4E5969))
 			}
 		}
 	}
@@ -618,6 +696,8 @@ private fun PhotosTopBar(
 @Composable
 private fun MediaTopBar(
 	count: Int,
+	activeTransferCount: Int = 0,
+	onCreateMediaFolder: () -> Unit,
 	onRefresh: () -> Unit,
 	onOpenTransferSheet: () -> Unit,
 ) {
@@ -634,11 +714,28 @@ private fun MediaTopBar(
 			Text("共 $count 部视频", fontSize = 11.sp, color = Color(0xFF86909C))
 		}
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+			// 新建专属影集
+			IconButton(onClick = onCreateMediaFolder) {
+				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建影集", tint = Color(0xFF4E5969))
+			}
+			// 传输中心（采用下载云图标，避免误认为刷新）
+			IconButton(onClick = onOpenTransferSheet) {
+				Box(contentAlignment = Alignment.Center) {
+				Icon(Icons.Rounded.CloudDownload, contentDescription = "传输列表", tint = Color(0xFF4E5969))
+				if (activeTransferCount > 0) {
+					Box(
+						modifier = Modifier
+							.size(7.dp)
+							.clip(CircleShape)
+							.background(Color(0xFF2A72F6))
+							.align(Alignment.TopEnd)
+					)
+				}
+			}
+			}
+			// 刷新
 			IconButton(onClick = onRefresh) {
 				Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969))
-			}
-			IconButton(onClick = onOpenTransferSheet) {
-				Icon(Icons.Rounded.Sync, contentDescription = "传输", tint = Color(0xFF4E5969))
 			}
 		}
 	}
@@ -710,13 +807,14 @@ private fun FilesTopBar(
 		modifier = Modifier
 			.fillMaxWidth()
 			.background(Color(0xFFF7F8FA))
-			.padding(horizontal = 14.dp, vertical = 4.dp),
+			.padding(vertical = 4.dp),
 	) {
-		// 第 1 行：面包屑路径主标题 + 4 个高频操作 (搜索/多选/新建/传输)
+		// 第 1 行：面包屑路径主标题 + 5 个高频紧凑按钮 (搜索/视图切换/多选/新建/传输列表)
 		Row(
 			modifier = Modifier
 				.fillMaxWidth()
-				.height(44.dp),
+				.height(44.dp)
+				.padding(horizontal = 14.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
 			if (isSearchActive) {
@@ -840,46 +938,74 @@ private fun FilesTopBar(
 					}
 				}
 
-				// 右侧 4 个紧凑高频按钮
+				// 右侧 5 个紧凑高频按钮：搜索、视图切换、多选、新建、传输列表
 				Row(
 					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(2.dp),
+					horizontalArrangement = Arrangement.spacedBy(1.dp),
 				) {
 					// 搜索
 					IconButton(
 						onClick = { isSearchActive = true },
-						modifier = Modifier.size(36.dp),
+						modifier = Modifier.size(34.dp),
 					) {
-						Icon(Icons.Rounded.Search, contentDescription = "搜索", tint = Color(0xFF4E5969), modifier = Modifier.size(20.dp))
+						Icon(Icons.Rounded.Search, contentDescription = "搜索", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
+					}
+
+					// 视图切换
+					IconButton(
+						onClick = onToggleViewMode,
+						modifier = Modifier.size(34.dp),
+					) {
+						Icon(
+							imageVector = when (vm.viewMode) {
+								ViewMode.Cards -> Icons.Rounded.ViewAgenda
+								ViewMode.Compact -> Icons.Rounded.ViewHeadline
+								ViewMode.Grid -> Icons.Rounded.GridView
+							},
+							contentDescription = "切换视图",
+							tint = Color(0xFF4E5969),
+							modifier = Modifier.size(19.dp),
+						)
 					}
 
 					// 多选
 					IconButton(
 						onClick = onToggleMultiSelect,
-						modifier = Modifier.size(36.dp),
+						modifier = Modifier.size(34.dp),
 					) {
 						Icon(
 							Icons.Rounded.Checklist,
 							contentDescription = "多选",
 							tint = if (vm.isMultiSelectMode) Color(0xFF2A72F6) else Color(0xFF4E5969),
-							modifier = Modifier.size(20.dp),
+							modifier = Modifier.size(19.dp),
 						)
 					}
 
 					// 新建文件夹
 					IconButton(
 						onClick = onCreateFolder,
-						modifier = Modifier.size(36.dp),
+						modifier = Modifier.size(34.dp),
 					) {
-						Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建文件夹", tint = Color(0xFF4E5969), modifier = Modifier.size(20.dp))
+						Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建文件夹", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 					}
 
-					// 传输中心
+					// 传输中心（采用下载云图标，避免误认为刷新）
 					IconButton(
 						onClick = onOpenTransferSheet,
-						modifier = Modifier.size(36.dp),
+						modifier = Modifier.size(34.dp),
 					) {
-						Icon(Icons.Rounded.Sync, contentDescription = "传输", tint = Color(0xFF4E5969), modifier = Modifier.size(20.dp))
+						Box(contentAlignment = Alignment.Center) {
+							Icon(Icons.Rounded.CloudDownload, contentDescription = "传输列表", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
+							if (vm.activeTransferCount > 0) {
+								Box(
+									modifier = Modifier
+										.size(7.dp)
+										.clip(CircleShape)
+										.background(Color(0xFF2A72F6))
+										.align(Alignment.TopEnd)
+								)
+							}
+						}
 					}
 				}
 			}
@@ -887,43 +1013,11 @@ private fun FilesTopBar(
 
 		Spacer(modifier = Modifier.height(2.dp))
 
-		// 第 2 行：分类胶囊筛选栏 + 右侧紧凑视图切换
-		Row(
-			modifier = Modifier
-				.fillMaxWidth()
-				.height(36.dp),
-			verticalAlignment = Alignment.CenterVertically,
-		) {
-			Box(modifier = Modifier.weight(1f)) {
-				CategoryFilterRow(
-					selected = vm.selectedCategory,
-					onSelect = { vm.selectCategory(it) },
-				)
-			}
-
-			// 视图切换微按钮
-			Surface(
-				shape = RoundedCornerShape(8.dp),
-				color = Color(0xFFEAECEF),
-				modifier = Modifier
-					.padding(start = 6.dp)
-					.size(32.dp)
-					.clickable(onClick = onToggleViewMode),
-			) {
-				Box(contentAlignment = Alignment.Center) {
-					Icon(
-						imageVector = when (vm.viewMode) {
-							ViewMode.Cards -> Icons.Rounded.ViewAgenda
-							ViewMode.Compact -> Icons.Rounded.ViewHeadline
-							ViewMode.Grid -> Icons.Rounded.GridView
-						},
-						contentDescription = "切换视图",
-						tint = Color(0xFF4E5969),
-						modifier = Modifier.size(18.dp),
-					)
-				}
-			}
-		}
+		// 第 2 行：全宽可横滑分类胶囊（无遮挡，全部、图片、视频、文档、音频、压缩包均完整流畅滚动）
+		CategoryFilterRow(
+			selected = vm.selectedCategory,
+			onSelect = { vm.selectCategory(it) },
+		)
 	}
 }
 
@@ -1793,20 +1887,38 @@ private fun MoveFolderSheet(
  * 新建文件夹与专属相册对话框
  */
 @Composable
-private fun CreateFolderDialog(
+private enum class CreateDialogType {
+	Folder,
+	Album,
+	MediaFolder,
+}
+
+@Composable
+fun CreateFolderDialog(
+	type: CreateDialogType,
 	onConfirm: (name: String) -> Unit,
 	onDismiss: () -> Unit,
 ) {
 	var name by remember { mutableStateOf("") }
+	val title = when (type) {
+		CreateDialogType.Folder -> "新建文件夹"
+		CreateDialogType.Album -> "新建专属相册"
+		CreateDialogType.MediaFolder -> "新建影集/分类"
+	}
+	val placeholder = when (type) {
+		CreateDialogType.Folder -> "输入文件夹名称"
+		CreateDialogType.Album -> "如: 2026云南自驾游"
+		CreateDialogType.MediaFolder -> "如: 科幻大片 / 纪录片"
+	}
 
 	AlertDialog(
 		onDismissRequest = onDismiss,
-		title = { Text("新建文件夹", fontWeight = FontWeight.Bold) },
+		title = { Text(title, fontWeight = FontWeight.Bold) },
 		text = {
 			OutlinedTextField(
 				value = name,
 				onValueChange = { name = it },
-				placeholder = { Text("输入文件夹名称") },
+				placeholder = { Text(placeholder) },
 				singleLine = true,
 				shape = RoundedCornerShape(12.dp),
 				modifier = Modifier.fillMaxWidth(),
@@ -1956,7 +2068,7 @@ private fun NetworkIntelligenceConsole(
 			}
 		}
 
-		// 2. 存储容量与健康度多色段仪表卡片
+		// 2. 智能专线自愈与加速控制卡片
 		item {
 			Card(
 				shape = RoundedCornerShape(18.dp),
@@ -1970,76 +2082,13 @@ private fun NetworkIntelligenceConsole(
 						horizontalArrangement = Arrangement.SpaceBetween,
 						verticalAlignment = Alignment.CenterVertically,
 					) {
-						Column {
-							Text("NAS 存储空间总览", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF1D2129))
-							Text("已使用 3.82 TB / 7.28 TB (52%)", fontSize = 11.sp, color = Color(0xFF86909C))
-						}
-						Surface(
-							shape = RoundedCornerShape(8.dp),
-							color = Color(0xFFE6F8F1),
-						) {
-							Text(
-								"健康度 100%",
-								fontSize = 11.sp,
-								fontWeight = FontWeight.Bold,
-								color = Color(0xFF00B578),
-								modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-							)
-						}
-					}
-
-					Spacer(modifier = Modifier.height(12.dp))
-
-					// 多色段容量进度条
-					Row(
-						modifier = Modifier
-							.fillMaxWidth()
-							.height(8.dp)
-							.clip(RoundedCornerShape(4.dp))
-							.background(Color(0xFFF0F2F5)),
-					) {
-						Box(modifier = Modifier.fillMaxHeight().weight(0.45f).background(Color(0xFF722ED1)))
-						Box(modifier = Modifier.fillMaxHeight().weight(0.25f).background(Color(0xFFFF4D4F)))
-						Box(modifier = Modifier.fillMaxHeight().weight(0.12f).background(Color(0xFF2A72F6)))
-						Box(modifier = Modifier.fillMaxHeight().weight(0.18f).background(Color(0xFFE5E6EB)))
-					}
-
-					Spacer(modifier = Modifier.height(10.dp))
-
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						horizontalArrangement = Arrangement.SpaceBetween,
-					) {
-						LegendDot("影视 3.2T", Color(0xFF722ED1))
-						LegendDot("相册 1.8T", Color(0xFFFF4D4F))
-						LegendDot("文档 0.8T", Color(0xFF2A72F6))
-						LegendDot("剩余 3.4T", Color(0xFFC9CDD4))
-					}
-				}
-			}
-		}
-
-		// 3. 智能穿透加速与自愈引擎
-		item {
-			Card(
-				shape = RoundedCornerShape(18.dp),
-				colors = CardDefaults.cardColors(containerColor = Color.White),
-				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-				modifier = Modifier.fillMaxWidth(),
-			) {
-				Column(modifier = Modifier.padding(16.dp)) {
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						horizontalArrangement = Arrangement.SpaceBetween,
-						verticalAlignment = Alignment.CenterVertically,
-					) {
-						Text("智能自愈与加速控制", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-						Text("● 15s 自动打洞中", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00B578))
+						Text("智能专线自愈与加速控制", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+						Text("● 15s 自动探测中", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00B578))
 					}
 
 					Spacer(modifier = Modifier.height(6.dp))
 					Text(
-						text = "系统在后台自动周期探测 NAT 环境。在离开 Wi-Fi 切换到 5G 蜂窝网络时，将自动平滑握手升级为极速专线直连。",
+						text = "系统在后台自动周期探测 NAT 环境。当离开 Wi-Fi 切换到 5G 移动蜂窝网络时，将自动平滑握手升级为极速专线直连。",
 						fontSize = 11.sp,
 						color = Color(0xFF86909C),
 						lineHeight = 16.sp,
@@ -2067,47 +2116,17 @@ private fun NetworkIntelligenceConsole(
 							shape = RoundedCornerShape(12.dp),
 							modifier = Modifier.height(44.dp),
 						) {
-							Text("设置", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+							Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+							Spacer(modifier = Modifier.width(4.dp))
+							Text("服务器与偏好设置", fontWeight = FontWeight.Bold, fontSize = 13.sp)
 						}
 					}
 				}
 			}
 		}
-
-		// 4. 底层链路诊断日志卡片
-		item {
-			Card(
-				shape = RoundedCornerShape(18.dp),
-				colors = CardDefaults.cardColors(containerColor = Color.White),
-				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-				modifier = Modifier.fillMaxWidth(),
-			) {
-				Column(modifier = Modifier.padding(16.dp)) {
-					Text("底层链路运行日志", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-					Spacer(modifier = Modifier.height(8.dp))
-					Text(
-						text = logs.ifBlank { "暂无异常日志，网络专线与直连链路运行良好。" },
-						fontSize = 11.sp,
-						color = Color(0xFF86909C),
-						lineHeight = 16.sp,
-					)
-				}
-			}
-		}
 	}
 }
 
-@Composable
-private fun LegendDot(text: String, color: Color) {
-	Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-		Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(color))
-		Text(text = text, fontSize = 10.sp, color = Color(0xFF4E5969))
-	}
-}
-
-/**
- * 底部商业级导航栏
- */
 @Composable
 private fun CommercialNavigationBar(
 	currentTab: MainTab,

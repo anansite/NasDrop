@@ -545,10 +545,22 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		return true
 	}
 
-	/** 新建普通子文件夹或专属相册 */
+	/** 新建普通子文件夹 */
 	fun mkdir(name: String, isAlbum: Boolean = false) {
 		val finalName = if (isAlbum && !name.contains("相册")) "$name 相册" else name
 		mutate { it.mkcol(join(path, finalName)) }
+	}
+
+	/** 在相册专属目录下新建相册文件夹 */
+	fun createAlbum(name: String) {
+		val targetDir = if (path.startsWith("Photos") || path.startsWith("相册")) path else "Photos"
+		mutate { it.mkcol(join(targetDir, name)) }
+	}
+
+	/** 在影音专属目录下新建影集/分类文件夹 */
+	fun createMediaFolder(name: String) {
+		val targetDir = if (path.startsWith("Movies") || path.startsWith("影视") || path.startsWith("影音")) path else "Movies"
+		mutate { it.mkcol(join(targetDir, name)) }
 	}
 
 	fun delete(entry: DavEntry) = mutate { it.delete(entry.path, entry.isDir) }
