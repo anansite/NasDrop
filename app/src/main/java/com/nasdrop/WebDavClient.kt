@@ -35,6 +35,18 @@ data class DavEntry(
 	val modified: Long,
 ) {
 	val ext: String get() = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+	val sizeHuman: String get() {
+		if (size < 0) return "--"
+		val kb = size / 1024.0
+		val mb = kb / 1024.0
+		val gb = mb / 1024.0
+		return when {
+			gb >= 1.0 -> String.format(Locale.ROOT, "%.1f GB", gb)
+			mb >= 1.0 -> String.format(Locale.ROOT, "%.1f MB", mb)
+			kb >= 1.0 -> String.format(Locale.ROOT, "%.0f KB", kb)
+			else -> "${size} B"
+		}
+	}
 	/** 用于 UI 主标题展示的文件纯净名称（去除扩展名，避免与副标题格式如 PNG、MP4 重复显示） */
 	val displayName: String get() {
 		if (isDir) return name
