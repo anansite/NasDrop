@@ -99,6 +99,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var loading by mutableStateOf(false)
 		private set
 
+	var isRefreshing by mutableStateOf(false)
+		private set
+
 	var error by mutableStateOf<String?>(null)
 		private set
 
@@ -345,7 +348,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 		viewModelScope.launch(workerDispatcher) {
 			Uploads.uploadCompletedEvent.collect {
-				refresh()
+				refreshSilent()
 			}
 		}
 		viewModelScope.launch(workerDispatcher) {
@@ -790,7 +793,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			loading = false
 			error = null
 		} else {
-			loading = true
+			// 只有在当前没有任何数据展示时，才展示居中 loading 菊花
+			if (entries.isEmpty()) {
+				loading = true
+			}
 		}
 
 		viewModelScope.launch {
@@ -817,17 +823,55 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
-	fun refresh() {
-		dirCache.remove(path)
-		open(path)
-		if (selectedAlbumPath.isNotBlank()) dirCache.remove(selectedAlbumPath)
-		if (selectedMediaPath.isNotBlank()) dirCache.remove(selectedMediaPath)
-		if (hasScannedMedia || currentTab == MainTab.Photos || currentTab == MainTab.Media) {
-			hasScannedMedia = true
-			viewModelScope.launch(scanDispatcher) {
-				scanGlobalMedia()
+	/**
+	 * 下拉刷新专用：带指示器状态，静默更新
+	 */
+	fun pullRefresh() {
+		viewModelScope.launch {
+			isRefreshing = true
+			try {
+				refreshSilent()
+			} finally {
+				isRefreshing = false
 			}
 		}
+	}
+
+	/**
+	 * 静默刷新：不弹全屏 Loading 菊花，不让屏幕白屏，平滑无感替换列表。
+	 * 完美解决上传完成后页面跳动卡顿的问题。
+	 */
+	fun refreshSilent() {
+		viewModelScope.launch {
+			try {
+				val s = app.prefs.current()
+				val c = client ?: app.repo.client(s).also { client = it }
+				val target = path
+				val fresh = withContext(Dispatchers.IO) { c.list(target) }
+				dirCache[target] = fresh
+				entries = fresh
+				error = null
+				collectMediaFrom(fresh)
+				updateFolderPaths(fresh)
+
+				if (selectedAlbumPath.isNotBlank()) {
+					val albumFresh = withContext(Dispatchers.IO) { c.list(selectedAlbumPath) }
+					dirCache[selectedAlbumPath] = albumFresh
+					collectMediaFrom(albumFresh)
+				}
+				if (selectedMediaPath.isNotBlank()) {
+					val mediaFresh = withContext(Dispatchers.IO) { c.list(selectedMediaPath) }
+					dirCache[selectedMediaPath] = mediaFresh
+					collectMediaFrom(mediaFresh)
+				}
+			} catch (_: Throwable) {
+				// 静默刷新失败保持当前界面不变
+			}
+		}
+	}
+
+	fun refresh() {
+		refreshSilent()
 	}
 
 	fun cd(entry: DavEntry) {

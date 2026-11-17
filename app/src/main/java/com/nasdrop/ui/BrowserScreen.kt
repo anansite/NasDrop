@@ -339,86 +339,93 @@ fun BrowserScreen(
 				)
 			}
 
-			// 主内容区域根据 Tab 呈现
+			// 主内容区域根据 Tab 呈现，并接入标准下拉刷新
 			Box(modifier = Modifier.weight(1f)) {
-				when (vm.currentTab) {
-					MainTab.Files -> {
-						FileBrowserContent(
-							vm = vm,
-							onOpenEntry = { entry ->
-								if (vm.isMultiSelectMode) {
-									vm.toggleSelect(entry)
-								} else if (entry.isDir) {
-									vm.cd(entry)
-								} else if (entry.isImage) {
-									onOpenImage(entry)
-								} else if (entry.isVideo) {
-									onOpenVideo(entry)
-								} else {
-									activeEntryForAction = entry
-								}
-							},
-							onLongClickEntry = { entry ->
-								if (!vm.isMultiSelectMode) {
-									vm.enterMultiSelect(entry)
-								}
-							},
-							onOpenAction = { entry -> activeEntryForAction = entry },
-						)
-					}
+				PullToRefreshBox(
+					isRefreshing = vm.isRefreshing,
+					onRefresh = { vm.pullRefresh() },
+					modifier = Modifier.fillMaxSize(),
+				) {
+					when (vm.currentTab) {
+						MainTab.Files -> {
+							FileBrowserContent(
+								vm = vm,
+								onOpenEntry = { entry ->
+									if (vm.isMultiSelectMode) {
+										vm.toggleSelect(entry)
+									} else if (entry.isDir) {
+										vm.cd(entry)
+									} else if (entry.isImage) {
+										onOpenImage(entry)
+									} else if (entry.isVideo) {
+										onOpenVideo(entry)
+									} else {
+										activeEntryForAction = entry
+									}
+								},
+								onLongClickEntry = { entry ->
+									if (!vm.isMultiSelectMode) {
+										vm.enterMultiSelect(entry)
+									}
+								},
+								onOpenAction = { entry -> activeEntryForAction = entry },
+							)
+						}
 
-					MainTab.Photos -> {
-						PhotoTimelineContent(
-							groups = vm.photoTimelineGroups,
-							allAlbums = vm.allAlbumFolders,
-							selectedAlbumPath = vm.selectedAlbumPath,
-							isMulti = vm.isMultiSelectMode,
-							selectedPaths = vm.selectedPaths,
-							onToggleSelect = { vm.toggleSelect(it) },
-							onEnterMultiSelect = { vm.enterMultiSelect(it) },
-							onOpenAction = { activeEntryForAction = it },
-							onSelectAlbum = { vm.openAlbum(it) },
-							onDeleteAlbum = { folder -> activeFolderForDelete = Pair(folder, true) },
-							onCreateAlbum = { activeCreateType = CreateDialogType.Album },
-							urlOf = { vm.urlFor(it) },
-							onOpenImage = onOpenImage,
-						)
-					}
+						MainTab.Photos -> {
+							PhotoTimelineContent(
+								groups = vm.photoTimelineGroups,
+								allAlbums = vm.allAlbumFolders,
+								selectedAlbumPath = vm.selectedAlbumPath,
+								isMulti = vm.isMultiSelectMode,
+								selectedPaths = vm.selectedPaths,
+								onToggleSelect = { vm.toggleSelect(it) },
+								onEnterMultiSelect = { vm.enterMultiSelect(it) },
+								onOpenAction = { activeEntryForAction = it },
+								onSelectAlbum = { vm.openAlbum(it) },
+								onDeleteAlbum = { folder -> activeFolderForDelete = Pair(folder, true) },
+								onCreateAlbum = { activeCreateType = CreateDialogType.Album },
+								urlOf = { vm.urlFor(it) },
+								onOpenImage = onOpenImage,
+							)
+						}
 
-					MainTab.Media -> {
-						MediaStreamContent(
-							videos = vm.currentMediaVideos,
-							allMediaFolders = vm.allMediaFolders,
-							selectedMediaPath = vm.selectedMediaPath,
-							isMulti = vm.isMultiSelectMode,
-							selectedPaths = vm.selectedPaths,
-							onToggleSelect = { vm.toggleSelect(it) },
-							onEnterMultiSelect = { vm.enterMultiSelect(it) },
-							onOpenAction = { activeEntryForAction = it },
-							onSelectMediaFolder = { vm.openMedia(it) },
-							onDeleteMediaFolder = { folder -> activeFolderForDelete = Pair(folder, false) },
-							onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
-							urlOf = { vm.urlFor(it) },
-							onOpenVideo = onOpenVideo,
-						)
-					}
+						MainTab.Media -> {
+							MediaStreamContent(
+								videos = vm.currentMediaVideos,
+								allMediaFolders = vm.allMediaFolders,
+								selectedMediaPath = vm.selectedMediaPath,
+								isMulti = vm.isMultiSelectMode,
+								selectedPaths = vm.selectedPaths,
+								onToggleSelect = { vm.toggleSelect(it) },
+								onEnterMultiSelect = { vm.enterMultiSelect(it) },
+								onOpenAction = { activeEntryForAction = it },
+								onSelectMediaFolder = { vm.openMedia(it) },
+								onDeleteMediaFolder = { folder -> activeFolderForDelete = Pair(folder, false) },
+								onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
+								urlOf = { vm.urlFor(it) },
+								onOpenVideo = onOpenVideo,
+							)
+						}
 
-					MainTab.Me -> {
-						NetworkIntelligenceConsole(
-							routeInfo = routeInfo,
-							isPunching = vm.isPunching,
-							onTriggerPunch = {
-								vm.punchHole { result ->
-									Toast.makeText(context, result, Toast.LENGTH_SHORT).show()
-								}
-							},
-							onOpenSettings = onOpenSettings,
-							logs = vm.logs(),
-						)
+						MainTab.Me -> {
+							NetworkIntelligenceConsole(
+								routeInfo = routeInfo,
+								isPunching = vm.isPunching,
+								onTriggerPunch = {
+									vm.punchHole { result ->
+										Toast.makeText(context, result, Toast.LENGTH_SHORT).show()
+									}
+								},
+								onOpenSettings = onOpenSettings,
+								logs = vm.logs(),
+							)
+						}
 					}
 				}
 
-				if (vm.loading) {
+				// 仅在当前完全无数据首次加载时显示中央菊花，有数据时静默刷新绝不打扰用户
+				if (vm.loading && vm.currentTabEntries.isEmpty()) {
 					CircularProgressIndicator(
 						modifier = Modifier.align(Alignment.Center),
 						color = Color(0xFF2A72F6),
@@ -531,14 +538,7 @@ fun BrowserScreen(
 							}
 						} else null,
 					)
-					if (hasExt) {
-						Spacer(modifier = Modifier.height(6.dp))
-						Text(
-							"🔒 后缀名 $extension 已受保护，避免格式损坏",
-							style = MaterialTheme.typography.bodySmall,
-							color = Color(0xFF94A3B8),
-						)
-					}
+
 				}
 			},
 			confirmButton = {
@@ -832,9 +832,6 @@ private fun PhotosTopBar(
 		}
 
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-			IconButton(onClick = onUploadPhoto, modifier = Modifier.size(32.dp)) {
-				Icon(Icons.Rounded.PhotoCamera, contentDescription = "上传照片", tint = Color(0xFFFF3D71), modifier = Modifier.size(20.dp))
-			}
 			if (selectedAlbumName.isNotBlank() && onDeleteCurrentAlbum != null) {
 				IconButton(onClick = onDeleteCurrentAlbum, modifier = Modifier.size(32.dp)) {
 					Icon(Icons.Rounded.Delete, contentDescription = "删除当前相册", tint = Color(0xFFFF4D4F), modifier = Modifier.size(19.dp))
@@ -906,9 +903,6 @@ private fun MediaTopBar(
 		}
 
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-			IconButton(onClick = onUploadVideo, modifier = Modifier.size(32.dp)) {
-				Icon(Icons.Rounded.Movie, contentDescription = "上传视频", tint = Color(0xFF722ED1), modifier = Modifier.size(20.dp))
-			}
 			if (selectedMediaName.isNotBlank() && onDeleteCurrentMedia != null) {
 				IconButton(onClick = onDeleteCurrentMedia, modifier = Modifier.size(32.dp)) {
 					Icon(Icons.Rounded.Delete, contentDescription = "删除当前影集", tint = Color(0xFFFF4D4F), modifier = Modifier.size(19.dp))
@@ -1109,12 +1103,6 @@ private fun FilesTopBar(
 					verticalAlignment = Alignment.CenterVertically,
 					horizontalArrangement = Arrangement.spacedBy(2.dp),
 				) {
-					IconButton(
-						onClick = onUpload,
-						modifier = Modifier.size(32.dp),
-					) {
-						Icon(Icons.Rounded.CloudUpload, contentDescription = "上传文件", tint = Color(0xFF2A72F6), modifier = Modifier.size(21.dp))
-					}
 					IconButton(
 						onClick = { isSearchActive = true },
 						modifier = Modifier.size(32.dp),
@@ -1458,32 +1446,20 @@ private fun FileBrowserContent(
 							)
 						}
 
-						// 右侧操作：夸克同款空心圆圈勾选 + 更多菜单点
+						// 右侧操作：仅在多选模式下显示选择框；日常长按任意条目即可进入多选
 						if (isMulti) {
 							SelectCheckbox(isSelected = isSelected)
 						} else {
-							Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-								// 夸克同款轻量空心圆圈（点击直接进入多选并选中）
-								Box(
-									modifier = Modifier
-										.size(20.dp)
-										.clip(CircleShape)
-										.border(1.dp, Color(0xFFC9CDD4), CircleShape)
-										.clickable {
-											vm.enterMultiSelect(entry)
-										},
+							IconButton(
+								onClick = { onOpenAction(entry) },
+								modifier = Modifier.size(28.dp),
+							) {
+								Icon(
+									Icons.Rounded.MoreVert,
+									contentDescription = "更多",
+									tint = Color(0xFFC9CDD4),
+									modifier = Modifier.size(18.dp),
 								)
-								IconButton(
-									onClick = { onOpenAction(entry) },
-									modifier = Modifier.size(24.dp),
-								) {
-									Icon(
-										Icons.Rounded.MoreVert,
-										contentDescription = "更多",
-										tint = Color(0xFFC9CDD4),
-										modifier = Modifier.size(16.dp),
-									)
-								}
 							}
 						}
 					}
