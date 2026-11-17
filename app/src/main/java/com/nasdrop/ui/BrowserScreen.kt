@@ -2024,7 +2024,7 @@ private fun MediaStreamContent(
 								contentAlignment = Alignment.Center,
 							) {
 								Icon(
-									imageVector = Icons.Rounded.Videocam,
+									imageVector = Icons.Rounded.Movie,
 									contentDescription = null,
 									tint = Color.White.copy(alpha = 0.15f),
 									modifier = Modifier.size(52.dp),
