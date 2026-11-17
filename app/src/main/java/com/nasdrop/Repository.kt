@@ -292,13 +292,11 @@ class Repository(private val context: Context) {
 				if (bytes.size == 4) {
 					val b0 = bytes[0].toInt() and 0xFF
 					val b1 = bytes[1].toInt() and 0xFF
-					// 100.64.0.0/10 是 CGNAT 保留段，Tailscale 的 tailnet 节点地址就落在这里。
-					// 域名解析到该段说明目标是 tailnet 内节点——必须交给内嵌 tsnet 打洞，
-					// 不能被原生 OkHttp 当成"系统专线直连"，否则等于绕过了隧道。
-					if (b0 == 100 && b1 in 64..127) {
-						Log.i("Repository", "Tailnet address detected ($ip), skip direct probe; let tsnet handle it")
-						return null
-					}
+					// 100.64.0.0/10 是 CGNAT/Tailscale 段。以前这里无条件跳过直连、强制走内嵌
+					// tsnet 隧道——但如果设备系统层面已装 Tailscale，100.x 本就能系统直连，
+					// 再套一层内嵌隧道反而绕远/走 DERP，是图片慢、视频卡的根因。
+					// 现在改为不做特判：照样发一次 PROPFIND 实测，通就走直连（最快），
+					// 不通（probeHttp 1.5s 超时）才回退内嵌 tsnet 打洞。
 					isLan = (b0 == 10) ||
 						(b0 == 172 && (b1 in 16..31)) ||
 						(b0 == 192 && b1 == 168) ||
