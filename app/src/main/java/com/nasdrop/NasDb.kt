@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 
 /**
  * 本地轻量级 SQLite 存储。
- * 用于持久化视频断点进度、离线缓存元数据等。
+ * 用于持久化视频断点进度、文件夹自定义图标、离线缓存元数据等。
  */
 class NasDb private constructor(context: Context) : SQLiteOpenHelper(
 	context.applicationContext,
@@ -17,13 +17,16 @@ class NasDb private constructor(context: Context) : SQLiteOpenHelper(
 ) {
 	companion object {
 		private const val DATABASE_NAME = "nasdrop.db"
-		private const val DATABASE_VERSION = 1
+		private const val DATABASE_VERSION = 2
 
 		private const val TABLE_VIDEO_PROGRESS = "video_progress"
 		private const val COL_PATH = "path"
 		private const val COL_POS = "position_ms"
 		private const val COL_DURATION = "duration_ms"
 		private const val COL_UPDATED_AT = "updated_at"
+
+		private const val TABLE_FOLDER_ICONS = "folder_icons"
+		private const val COL_ICON_KEY = "icon_key"
 
 		@Volatile
 		private var instance: NasDb? = null
@@ -45,10 +48,28 @@ class NasDb private constructor(context: Context) : SQLiteOpenHelper(
 			)
 			""".trimIndent(),
 		)
+
+		db.execSQL(
+			"""
+			CREATE TABLE IF NOT EXISTS $TABLE_FOLDER_ICONS (
+				$COL_PATH TEXT PRIMARY KEY,
+				$COL_ICON_KEY TEXT NOT NULL
+			)
+			""".trimIndent(),
+		)
 	}
 
 	override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-		// 版本升级逻辑（后续迭代按需扩展）
+		if (oldVersion < 2) {
+			db.execSQL(
+				"""
+				CREATE TABLE IF NOT EXISTS $TABLE_FOLDER_ICONS (
+					$COL_PATH TEXT PRIMARY KEY,
+					$COL_ICON_KEY TEXT NOT NULL
+				)
+				""".trimIndent(),
+			)
+		}
 	}
 
 	/**
@@ -121,5 +142,57 @@ class NasDb private constructor(context: Context) : SQLiteOpenHelper(
 		try {
 			writableDatabase.delete(TABLE_VIDEO_PROGRESS, "$COL_PATH = ?", arrayOf(p))
 		} catch (_: Exception) {}
+	}
+
+	/**
+	 * 设置文件夹自定义图标
+	 */
+	fun setFolderIcon(path: String, iconKey: String) {
+		val p = path.trim('/')
+		if (p.isEmpty()) return
+		try {
+			val db = writableDatabase
+			if (iconKey == "default" || iconKey.isEmpty()) {
+				db.delete(TABLE_FOLDER_ICONS, "$COL_PATH = ?", arrayOf(p))
+			} else {
+				val values = ContentValues().apply {
+					put(COL_PATH, p)
+					put(COL_ICON_KEY, iconKey)
+				}
+				db.insertWithOnConflict(TABLE_FOLDER_ICONS, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+			}
+		} catch (e: Exception) {
+			android.util.Log.w("NasDb", "Failed to set folder icon: ${e.message}")
+		}
+	}
+
+	/**
+	 * 获取所有文件夹自定义图标映射表
+	 */
+	fun getAllFolderIcons(): Map<String, String> {
+		val result = mutableMapOf<String, String>()
+		try {
+			val db = readableDatabase
+			db.query(
+				TABLE_FOLDER_ICONS,
+				arrayOf(COL_PATH, COL_ICON_KEY),
+				null,
+				null,
+				null,
+				null,
+				null,
+			).use { cursor ->
+				while (cursor.moveToNext()) {
+					val path = cursor.getString(0)
+					val key = cursor.getString(1)
+					if (!path.isNullOrEmpty() && !key.isNullOrEmpty()) {
+						result[path] = key
+					}
+				}
+			}
+		} catch (e: Exception) {
+			android.util.Log.w("NasDb", "Failed to read folder icons: ${e.message}")
+		}
+		return result
 	}
 }

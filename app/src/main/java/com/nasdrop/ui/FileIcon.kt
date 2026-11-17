@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.nasdrop.DavEntry
 import com.nasdrop.FileCategory
+import com.nasdrop.NasFolderIcon
 
 /**
  * 夸克风格智能文件缩略图 / 图标：
@@ -56,6 +57,7 @@ fun FileThumbnail(
 	entry: DavEntry,
 	urlOf: (String) -> String?,
 	size: Dp = 44.dp,
+	customIconKey: String? = null,
 	modifier: Modifier = Modifier,
 ) {
 	val cornerRadius = 6.dp
@@ -83,7 +85,7 @@ fun FileThumbnail(
 					)
 				}
 			} else {
-				FileIconByEntry(entry = entry, size = size, modifier = modifier)
+				FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, modifier = modifier)
 			}
 		}
 
@@ -124,13 +126,13 @@ fun FileThumbnail(
 					}
 				}
 			} else {
-				FileIconByEntry(entry = entry, size = size, modifier = modifier)
+				FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, modifier = modifier)
 			}
 		}
 
 		// 3. 其他文件类型
 		else -> {
-			FileIconByEntry(entry = entry, size = size, modifier = modifier)
+			FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, modifier = modifier)
 		}
 	}
 }
@@ -142,14 +144,31 @@ fun FileThumbnail(
 fun FileIconByEntry(
 	entry: DavEntry,
 	size: Dp = 44.dp,
+	customIconKey: String? = null,
 	modifier: Modifier = Modifier,
 ) {
 	val ext = entry.ext.lowercase()
 
 	when {
-		// 文件夹
+		// 文件夹（支持 NAS 常用预置自定义图标）
 		entry.isDir -> {
-			if (entry.isAlbum) {
+			val custom = if (!customIconKey.isNullOrEmpty()) NasFolderIcon.fromKey(customIconKey) else null
+			if (custom != null && custom != NasFolderIcon.Default) {
+				Box(
+					modifier = modifier
+						.size(size)
+						.clip(RoundedCornerShape(8.dp))
+						.background(custom.bgColor),
+					contentAlignment = Alignment.Center,
+				) {
+					Icon(
+						imageVector = custom.icon,
+						contentDescription = custom.label,
+						tint = custom.tintColor,
+						modifier = Modifier.size(size * 0.58f),
+					)
+				}
+			} else if (entry.isAlbum) {
 				val brush = Brush.linearGradient(listOf(Color(0xFFFF6B8B), Color(0xFFFF3D71)))
 				GradientBadge(size = size, brush = brush, modifier = modifier) {
 					Icon(Icons.Rounded.CameraAlt, contentDescription = "相册", tint = Color.White, modifier = Modifier.size(size * 0.54f))

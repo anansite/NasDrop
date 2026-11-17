@@ -132,6 +132,8 @@ import coil.compose.AsyncImage
 import com.nasdrop.BrowserViewModel
 import com.nasdrop.DavEntry
 import com.nasdrop.FileCategory
+import com.nasdrop.NasFolderIcon
+import androidx.compose.material.icons.rounded.Palette
 import com.nasdrop.MainTab
 import com.nasdrop.RouteInfo
 import com.nasdrop.SortOrder
@@ -186,6 +188,7 @@ fun BrowserScreen(
 	var activeFolderForDelete by remember { mutableStateOf<Pair<DavEntry, Boolean>?>(null) }
 	var showBatchDeleteConfirm by remember { mutableStateOf(false) }
 	var showBatchMoveSheet by remember { mutableStateOf(false) }
+	var activeEntryForIconPicker by remember { mutableStateOf<DavEntry?>(null) }
 
 	// 系统文件选择器（上传）
 	val filePicker = rememberLauncherForActivityResult(
@@ -298,7 +301,6 @@ fun BrowserScreen(
 							val cur = vm.allAlbumFolders.find { it.path == vm.selectedAlbumPath }
 							if (cur != null) activeFolderForDelete = Pair(cur, true)
 						},
-						onRefresh = { vm.refresh() },
 						onOpenTransferSheet = { showTransferSheet = true },
 					)
 				}
@@ -315,7 +317,6 @@ fun BrowserScreen(
 							val cur = vm.allMediaFolders.find { it.path == vm.selectedMediaPath }
 							if (cur != null) activeFolderForDelete = Pair(cur, false)
 						},
-						onRefresh = { vm.refresh() },
 						onOpenTransferSheet = { showTransferSheet = true },
 					)
 				}
@@ -452,6 +453,7 @@ fun BrowserScreen(
 		ActionBottomSheet(
 			entry = entry,
 			urlOf = { vm.urlFor(it) },
+			customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null,
 			onDismiss = { activeEntryForAction = null },
 			onDownload = {
 				activeEntryForAction = null
@@ -471,6 +473,26 @@ fun BrowserScreen(
 				activeEntryForAction = null
 				activeEntryForDelete = entry
 			},
+			onChangeIcon = if (entry.isDir) {
+				{
+					val target = entry
+					activeEntryForAction = null
+					activeEntryForIconPicker = target
+				}
+			} else null,
+		)
+	}
+
+	// 文件夹图标选择器
+	activeEntryForIconPicker?.let { entry ->
+		FolderIconPickerSheet(
+			folderName = entry.displayName,
+			currentIconKey = vm.folderIcons[entry.path.trim('/')],
+			onSelect = { icon ->
+				vm.updateFolderIcon(entry, icon)
+				activeEntryForIconPicker = null
+			},
+			onDismiss = { activeEntryForIconPicker = null },
 		)
 	}
 
@@ -799,7 +821,6 @@ private fun PhotosTopBar(
 	onUpAlbum: () -> Unit,
 	onCreateAlbum: () -> Unit,
 	onDeleteCurrentAlbum: (() -> Unit)? = null,
-	onRefresh: () -> Unit,
 	onOpenTransferSheet: () -> Unit,
 ) {
 	// 固定 44dp 行高，平滑统一面包屑，杜绝跳动
@@ -840,9 +861,7 @@ private fun PhotosTopBar(
 			IconButton(onClick = onCreateAlbum, modifier = Modifier.size(32.dp)) {
 				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属相册", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
-			IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
-				Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
-			}
+
 			IconButton(onClick = onOpenTransferSheet, modifier = Modifier.size(32.dp)) {
 				Box(contentAlignment = Alignment.Center) {
 					Icon(Icons.Rounded.CloudDownload, contentDescription = "传输中心", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
@@ -870,7 +889,6 @@ private fun MediaTopBar(
 	onUpMedia: () -> Unit,
 	onCreateMediaFolder: () -> Unit,
 	onDeleteCurrentMedia: (() -> Unit)? = null,
-	onRefresh: () -> Unit,
 	onOpenTransferSheet: () -> Unit,
 ) {
 	// 固定 44dp 行高，平滑统一面包屑，杜绝跳动
@@ -911,9 +929,7 @@ private fun MediaTopBar(
 			IconButton(onClick = onCreateMediaFolder, modifier = Modifier.size(32.dp)) {
 				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属影集", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
-			IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
-				Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
-			}
+
 			IconButton(onClick = onOpenTransferSheet, modifier = Modifier.size(32.dp)) {
 				Box(contentAlignment = Alignment.Center) {
 					Icon(Icons.Rounded.CloudDownload, contentDescription = "传输中心", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
@@ -1115,12 +1131,7 @@ private fun FilesTopBar(
 					) {
 						Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建文件夹", tint = Color(0xFF4E5969), modifier = Modifier.size(20.dp))
 					}
-					IconButton(
-						onClick = { vm.refresh() },
-						modifier = Modifier.size(32.dp),
-					) {
-						Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969), modifier = Modifier.size(20.dp))
-					}
+
 					IconButton(
 						onClick = onOpenTransferSheet,
 						modifier = Modifier.size(32.dp),
@@ -1424,7 +1435,7 @@ private fun FileBrowserContent(
 						horizontalArrangement = Arrangement.spacedBy(12.dp),
 					) {
 						// 左侧夸克同款文件徽标（微圆角，专属卡片或视频封面）
-						FileThumbnail(entry = entry, urlOf = { vm.urlFor(it) }, size = 42.dp)
+						FileThumbnail(entry = entry, urlOf = { vm.urlFor(it) }, size = 42.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
 
 						// 中间主标题与单行元数据（保留完整文件名，如 LibreTV播放器.mp4）
 						Column(modifier = Modifier.weight(1f)) {
@@ -1506,7 +1517,7 @@ private fun FileBrowserContent(
 							SelectCheckbox(isSelected = isSelected)
 						}
 
-						FileThumbnail(entry = entry, urlOf = { vm.urlFor(it) }, size = 32.dp)
+						FileThumbnail(entry = entry, urlOf = { vm.urlFor(it) }, size = 32.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
 
 						Column(modifier = Modifier.weight(1f)) {
 							Text(
@@ -1593,7 +1604,7 @@ private fun FileBrowserContent(
 										.background(Color(0xFFE5E6EB)),
 								)
 							} else {
-								FileIcon(category = entry.category, isDir = entry.isDir, isAlbum = entry.isAlbum, size = 52.dp)
+								FileIconByEntry(entry = entry, size = 52.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
 							}
 							Spacer(modifier = Modifier.height(8.dp))
 
@@ -2305,11 +2316,13 @@ private fun NetworkManagerSheet(
 private fun ActionBottomSheet(
 	entry: DavEntry,
 	urlOf: (String) -> String?,
+	customIconKey: String? = null,
 	onDismiss: () -> Unit,
 	onDownload: () -> Unit,
 	onMove: () -> Unit,
 	onRename: () -> Unit,
 	onDelete: () -> Unit,
+	onChangeIcon: (() -> Unit)? = null,
 ) {
 	ModalBottomSheet(
 		onDismissRequest = onDismiss,
@@ -2328,7 +2341,7 @@ private fun ActionBottomSheet(
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.spacedBy(12.dp),
 			) {
-				FileThumbnail(entry = entry, urlOf = urlOf, size = 44.dp)
+				FileThumbnail(entry = entry, urlOf = urlOf, customIconKey = customIconKey, size = 44.dp)
 				Column(modifier = Modifier.weight(1f)) {
 					Text(entry.displayName, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis)
 					Spacer(modifier = Modifier.height(2.dp))
@@ -2349,10 +2362,112 @@ private fun ActionBottomSheet(
 						label = if (entry.isImage || entry.isVideo) "存入相册" else "下载本地",
 						onClick = onDownload,
 					)
+				} else if (onChangeIcon != null) {
+					ActionSheetBtn(
+						icon = Icons.Rounded.Palette,
+						label = "更换图标",
+						onClick = onChangeIcon,
+						tint = Color(0xFF2A72F6),
+					)
 				}
 				ActionSheetBtn(icon = Icons.Rounded.DriveFileMove, label = "移动文件", onClick = onMove)
 				ActionSheetBtn(icon = Icons.Rounded.DriveFileRenameOutline, label = "重命名", onClick = onRename)
 				ActionSheetBtn(icon = Icons.Rounded.Delete, label = "彻底删除", onClick = onDelete, tint = Color(0xFFFF4D4F))
+			}
+
+			Spacer(modifier = Modifier.height(24.dp))
+		}
+	}
+}
+
+/**
+ * 文件夹图标选择器底栏 (FolderIconPickerSheet)
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FolderIconPickerSheet(
+	folderName: String,
+	currentIconKey: String?,
+	onSelect: (NasFolderIcon) -> Unit,
+	onDismiss: () -> Unit,
+) {
+	ModalBottomSheet(
+		onDismissRequest = onDismiss,
+		sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+		containerColor = Color.White,
+		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+	) {
+		Column(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(horizontal = 20.dp, vertical = 12.dp),
+		) {
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.SpaceBetween,
+			) {
+				Column {
+					Text("选择文件夹图标", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+					Spacer(modifier = Modifier.height(2.dp))
+					Text(folderName, fontSize = 12.sp, color = Color(0xFF86909C), maxLines = 1, overflow = TextOverflow.Ellipsis)
+				}
+				IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+					Icon(Icons.Rounded.Close, contentDescription = "关闭", tint = Color(0xFF86909C), modifier = Modifier.size(20.dp))
+				}
+			}
+
+			Spacer(modifier = Modifier.height(16.dp))
+
+			val icons = NasFolderIcon.entries
+			LazyVerticalGrid(
+				columns = GridCells.Fixed(4),
+				horizontalArrangement = Arrangement.spacedBy(12.dp),
+				verticalArrangement = Arrangement.spacedBy(16.dp),
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(vertical = 8.dp),
+			) {
+				items(icons) { iconItem ->
+					val isSelected = (currentIconKey == iconItem.key) || (currentIconKey == null && iconItem == NasFolderIcon.Default)
+					Column(
+						horizontalAlignment = Alignment.CenterHorizontally,
+						modifier = Modifier
+							.clip(RoundedCornerShape(12.dp))
+							.clickable { onSelect(iconItem) }
+							.padding(vertical = 6.dp),
+					) {
+						Box(
+							modifier = Modifier
+								.size(54.dp)
+								.clip(RoundedCornerShape(14.dp))
+								.background(iconItem.bgColor)
+								.then(
+									if (isSelected) {
+										Modifier.border(2.dp, iconItem.tintColor, RoundedCornerShape(14.dp))
+									} else {
+										Modifier
+									}
+								),
+							contentAlignment = Alignment.Center,
+						) {
+							Icon(
+								imageVector = iconItem.icon,
+								contentDescription = iconItem.label,
+								tint = iconItem.tintColor,
+								modifier = Modifier.size(28.dp),
+							)
+						}
+						Spacer(modifier = Modifier.height(6.dp))
+						Text(
+							text = iconItem.label,
+							fontSize = 11.sp,
+							color = if (isSelected) iconItem.tintColor else Color(0xFF4E5969),
+							fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+							maxLines = 1,
+						)
+					}
+				}
 			}
 
 			Spacer(modifier = Modifier.height(24.dp))

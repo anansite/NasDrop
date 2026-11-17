@@ -102,6 +102,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var isRefreshing by mutableStateOf(false)
 		private set
 
+	var folderIcons by mutableStateOf<Map<String, String>>(emptyMap())
+		private set
+
 	var error by mutableStateOf<String?>(null)
 		private set
 
@@ -418,6 +421,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				if (savedSort != null) {
 					val so = SortOrder.valueOf(savedSort)
 					withContext(Dispatchers.Main) { sortOrder = so }
+				}
+			}
+			runCatching {
+				val icons = NasDb.getInstance(app).getAllFolderIcons()
+				withContext(Dispatchers.Main) {
+					folderIcons = icons
 				}
 			}
 		}
@@ -824,13 +833,20 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	/**
-	 * 下拉刷新专用：带指示器状态，静默更新
+	 * 下拉刷新专用：带指示器状态，真正挂起等待网络拉取完成，
+	 * 并保持合理的回弹生命周期，彻底杜绝下拉箭头悬挂卡死问题。
 	 */
 	fun pullRefresh() {
+		if (isRefreshing) return
 		viewModelScope.launch {
 			isRefreshing = true
+			val start = System.currentTimeMillis()
 			try {
-				refreshSilent()
+				doRefresh()
+				val elapsed = System.currentTimeMillis() - start
+				if (elapsed < 500) {
+					delay(500 - elapsed)
+				}
 			} finally {
 				isRefreshing = false
 			}
@@ -839,39 +855,60 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/**
 	 * 静默刷新：不弹全屏 Loading 菊花，不让屏幕白屏，平滑无感替换列表。
-	 * 完美解决上传完成后页面跳动卡顿的问题。
 	 */
 	fun refreshSilent() {
 		viewModelScope.launch {
-			try {
-				val s = app.prefs.current()
-				val c = client ?: app.repo.client(s).also { client = it }
-				val target = path
-				val fresh = withContext(Dispatchers.IO) { c.list(target) }
-				dirCache[target] = fresh
-				entries = fresh
-				error = null
-				collectMediaFrom(fresh)
-				updateFolderPaths(fresh)
-
-				if (selectedAlbumPath.isNotBlank()) {
-					val albumFresh = withContext(Dispatchers.IO) { c.list(selectedAlbumPath) }
-					dirCache[selectedAlbumPath] = albumFresh
-					collectMediaFrom(albumFresh)
-				}
-				if (selectedMediaPath.isNotBlank()) {
-					val mediaFresh = withContext(Dispatchers.IO) { c.list(selectedMediaPath) }
-					dirCache[selectedMediaPath] = mediaFresh
-					collectMediaFrom(mediaFresh)
-				}
-			} catch (_: Throwable) {
-				// 静默刷新失败保持当前界面不变
-			}
+			doRefresh()
 		}
 	}
 
 	fun refresh() {
 		refreshSilent()
+	}
+
+	private suspend fun doRefresh() {
+		withContext(Dispatchers.IO) {
+			try {
+				val s = app.prefs.current()
+				val c = client ?: app.repo.client(s).also { client = it }
+				val target = path
+				val fresh = c.list(target)
+				dirCache[target] = fresh
+				withContext(Dispatchers.Main) {
+					entries = fresh
+					error = null
+				}
+				collectMediaFrom(fresh)
+				updateFolderPaths(fresh)
+
+				if (selectedAlbumPath.isNotBlank()) {
+					val albumFresh = c.list(selectedAlbumPath)
+					dirCache[selectedAlbumPath] = albumFresh
+					collectMediaFrom(albumFresh)
+				}
+				if (selectedMediaPath.isNotBlank()) {
+					val mediaFresh = c.list(selectedMediaPath)
+					dirCache[selectedMediaPath] = mediaFresh
+					collectMediaFrom(mediaFresh)
+				}
+			} catch (_: Throwable) {
+			}
+		}
+	}
+
+	/** 更新文件夹自定义图标并持久化至 SQLite 数据库 */
+	fun updateFolderIcon(entry: DavEntry, icon: NasFolderIcon) {
+		val cleanPath = entry.path.trim('/')
+		viewModelScope.launch(Dispatchers.IO) {
+			NasDb.getInstance(app).setFolderIcon(cleanPath, icon.key)
+			withContext(Dispatchers.Main) {
+				folderIcons = if (icon == NasFolderIcon.Default) {
+					folderIcons - cleanPath
+				} else {
+					folderIcons + (cleanPath to icon.key)
+				}
+			}
+		}
 	}
 
 	fun cd(entry: DavEntry) {
