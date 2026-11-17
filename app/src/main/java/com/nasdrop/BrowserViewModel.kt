@@ -194,6 +194,15 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var isPunching by mutableStateOf(false)
 		private set
 
+	private val workerDispatcher = Dispatchers.IO.limitedParallelism(4)
+	private val scanDispatcher = Dispatchers.IO.limitedParallelism(1)
+	private val downloadSemaphore = Semaphore(3)
+	private var hasScannedMedia = false
+
+	val totalSpeedBps: Long
+		get() = downloadTasks.filter { it.status == TransferStatus.RUNNING }.sumOf { it.speedBytesPerSec } +
+				uploadTasks.filter { it.status == TransferStatus.RUNNING }.sumOf { it.speedBytesPerSec }
+
 	var isMultiSelectMode by mutableStateOf(false)
 		private set
 
@@ -292,34 +301,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		get() = groupEntriesForTimeline(currentAlbumPhotos)
 
 	init {
-		viewModelScope.launch { open("") }
-		viewModelScope.launch { pollLink() }
-		viewModelScope.launch { startAutoHealing() }
+		viewModelScope.launch(workerDispatcher) { open("") }
+		startUnifiedLinkMonitor()
 		cleanupOldCache()
 		startTransferWorker()
 
-		// 响应式自愈监听：当网络链路从离线到就绪、或者从中继成功打洞为直连时，
-		// 若当前列表仍为空或此前超时报错，立刻自动触发刷新拉取，绝不给用户看空白列表！
-		viewModelScope.launch {
-			var lastDirect = false
-			routeInfo.collect { info ->
-				val isNowDirect = info.isDirect
-				val isReady = info.isDirect || info.isRelay
-				if (isReady) {
-					if (entries.isEmpty() || (!lastDirect && isNowDirect)) {
-						open(path)
-					}
-				}
-				lastDirect = isNowDirect
-			}
-		}
-
-		// 低优先级延迟全盘媒体扫描（在首屏数据加载 3 秒后启动，严禁在冷启动首秒挤占中继通道）
-		viewModelScope.launch {
-			kotlinx.coroutines.delay(3000)
-			scanGlobalMedia()
-		}
-		viewModelScope.launch {
+		viewModelScope.launch(workerDispatcher) {
 			val lastSentMap = mutableMapOf<String, Long>()
 			val lastTimeMap = mutableMapOf<String, Long>()
 			Uploads.tasks.collect { list ->
@@ -354,13 +341,52 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				syncTransferTasks()
 			}
 		}
-		viewModelScope.launch {
+
+		viewModelScope.launch(workerDispatcher) {
 			Uploads.uploadCompletedEvent.collect {
 				refresh()
 			}
 		}
-		viewModelScope.launch {
+		viewModelScope.launch(workerDispatcher) {
 			checkForUpdates(silent = true)
+		}
+	}
+
+	/** 惰性按需媒体扫描：用户切换到相册或影音页面时才触发，首屏启动完全零负载 */
+	fun ensureMediaScanned() {
+		if (hasScannedMedia) return
+		hasScannedMedia = true
+		viewModelScope.launch(scanDispatcher) {
+			scanGlobalMedia()
+		}
+	}
+
+	/** 统一整合链路监听、自愈与激进直连打洞 */
+	private fun startUnifiedLinkMonitor() {
+		viewModelScope.launch(workerDispatcher) {
+			var lastDirect = false
+			while (isActive) {
+				pollPeerStatus()
+				val info = app.repo.routeInfo.value
+				val isNowDirect = info.isDirect
+				val isReady = info.isDirect || info.isRelay
+
+				if (isReady) {
+					if (entries.isEmpty() || (!lastDirect && isNowDirect)) {
+						open(path)
+					}
+				}
+				lastDirect = isNowDirect
+
+				// 如果当前仍是低速 DERP 中继且没有在打洞，后台自动主动触发打洞探测尽快切入 P2P 直连
+				if (info.isRelay && !isPunching) {
+					withContext(Dispatchers.IO) {
+						app.repo.triggerHolePunch()
+					}
+				}
+
+				delay(4000)
+			}
 		}
 	}
 
@@ -412,17 +438,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
-	private suspend fun startAutoHealing() {
-		while (true) {
-			delay(15_000)
-			try {
-				val info = routeInfo.value
-				if (info.isRelay) {
-					app.repo.triggerHolePunch()
-				}
-			} catch (_: Exception) {}
-		}
-	}
 
 	fun imageAlbum(entry: DavEntry): Pair<List<DavEntry>, Int> {
 		val list = if (currentTab == MainTab.Photos) currentAlbumPhotos else entries.filter { !it.isDir && it.isImage }
@@ -576,101 +591,86 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	private fun startTransferWorker() {
 		transferJob?.cancel()
-		transferJob = viewModelScope.launch(Dispatchers.IO) {
+		transferJob = viewModelScope.launch(workerDispatcher) {
 			while (isActive) {
-				val nextTask = downloadTasks.firstOrNull { it.status == TransferStatus.QUEUED }
-				if (nextTask == null) {
-					delay(1000)
-					continue
-				}
-
-				// 将状态标记为 RUNNING
-				updateTask(nextTask.id) { it.status = TransferStatus.RUNNING }
-
-				try {
-					val c = client ?: app.repo.client(app.prefs.current()).also { client = it }
-					val resolver = app.contentResolver
-
-					val isMedia = nextTask.name.endsWith(".jpg", true) ||
-						nextTask.name.endsWith(".png", true) ||
-						nextTask.name.endsWith(".mp4", true) ||
-						nextTask.name.endsWith(".mov", true)
-
-					var lastBytes = 0L
-					var lastTime = System.currentTimeMillis()
-
-					if (isMedia) {
-						val isImg = nextTask.name.endsWith(".jpg", true) || nextTask.name.endsWith(".png", true)
-						val collection = if (isImg) {
-							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-							else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-						} else {
-							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-							else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+				val queued = downloadTasks.filter { it.status == TransferStatus.QUEUED }
+				for (task in queued) {
+					if (!isActive) break
+					updateTask(task.id) { it.status = TransferStatus.RUNNING }
+					launch(workerDispatcher) {
+						downloadSemaphore.withPermit {
+							runDownloadTask(task)
 						}
-
-						val values = ContentValues().apply {
-							put(MediaStore.MediaColumns.DISPLAY_NAME, nextTask.name)
-							put(MediaStore.MediaColumns.MIME_TYPE, if (isImg) "image/*" else "video/*")
-							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-								put(MediaStore.MediaColumns.RELATIVE_PATH, if (isImg) "Pictures/NasDrop" else "Movies/NasDrop")
-							}
-						}
-
-						val uri = resolver.insert(collection, values) ?: throw IllegalStateException("无法创建媒体存储")
-						resolver.openOutputStream(uri)?.use { os ->
-							c.download(nextTask.path, os) { sent, total ->
-								val now = System.currentTimeMillis()
-								val dt = now - lastTime
-								var speed = 0L
-								if (dt >= 500) {
-									speed = ((sent - lastBytes) * 1000) / dt
-									lastBytes = sent
-									lastTime = now
-								}
-								updateTask(nextTask.id) {
-									it.sentBytes = sent
-									if (total > 0) it.totalBytes = total
-									if (speed > 0) it.speedBytesPerSec = speed
-								}
-							}
-						}
-					} else {
-						val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-						val subDir = File(dir, "NasDrop").apply { mkdirs() }
-						val destFile = File(subDir, nextTask.name)
-						FileOutputStream(destFile).use { fos ->
-							c.download(nextTask.path, fos) { sent, total ->
-								val now = System.currentTimeMillis()
-								val dt = now - lastTime
-								var speed = 0L
-								if (dt >= 500) {
-									speed = ((sent - lastBytes) * 1000) / dt
-									lastBytes = sent
-									lastTime = now
-								}
-								updateTask(nextTask.id) {
-									it.sentBytes = sent
-									if (total > 0) it.totalBytes = total
-									if (speed > 0) it.speedBytesPerSec = speed
-								}
-							}
-						}
-					}
-
-					updateTask(nextTask.id) {
-						it.status = TransferStatus.COMPLETED
-						it.sentBytes = it.totalBytes
-						it.speedBytesPerSec = 0
-					}
-				} catch (t: Throwable) {
-					updateTask(nextTask.id) {
-						it.status = TransferStatus.FAILED
-						it.error = t.message
-						it.speedBytesPerSec = 0
 					}
 				}
-				delay(200)
+				delay(600)
+			}
+		}
+	}
+
+	private suspend fun runDownloadTask(task: TransferTask) {
+		try {
+			val c = client ?: app.repo.client(app.prefs.current()).also { client = it }
+			val isMedia = task.name.endsWith(".jpg", true) ||
+				task.name.endsWith(".png", true) ||
+				task.name.endsWith(".mp4", true) ||
+				task.name.endsWith(".mov", true)
+
+			val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+			val subDir = File(dir, "NasDrop").apply { mkdirs() }
+			val partFile = File(subDir, "${task.name}.part")
+			val destFile = File(subDir, task.name)
+
+			// 断点续传：若存在未完成的 .part 文件，从当前已有字节接续请求
+			val startByte = if (partFile.exists()) partFile.length() else 0L
+			var lastBytes = startByte
+			var lastTime = System.currentTimeMillis()
+
+			FileOutputStream(partFile, true).use { fos ->
+				c.download(task.path, fos, startByte = startByte) { sent, total ->
+					val now = System.currentTimeMillis()
+					val dt = now - lastTime
+					var speed = 0L
+					if (dt >= 500) {
+						speed = ((sent - lastBytes) * 1000) / dt
+						lastBytes = sent
+						lastTime = now
+					}
+					updateTask(task.id) {
+						it.sentBytes = sent
+						if (total > 0) it.totalBytes = total
+						if (speed > 0) it.speedBytesPerSec = speed
+					}
+				}
+			}
+
+			// 下载完成，原子重命名为目标文件
+			if (partFile.exists()) {
+				if (destFile.exists()) destFile.delete()
+				partFile.renameTo(destFile)
+			}
+
+			if (isMedia) {
+				runCatching {
+					android.media.MediaScannerConnection.scanFile(
+						app,
+						arrayOf(destFile.absolutePath),
+						null,
+						null,
+					)
+				}
+			}
+
+			updateTask(task.id) {
+				it.status = TransferStatus.COMPLETED
+				it.sentBytes = it.totalBytes
+				it.speedBytesPerSec = 0
+			}
+		} catch (t: Throwable) {
+			updateTask(task.id) {
+				it.status = TransferStatus.FAILED
+				it.error = t.message
+				it.speedBytesPerSec = 0
 			}
 		}
 	}
@@ -842,12 +842,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
-	private suspend fun pollLink() {
-		while (true) {
-			pollPeerStatus()
-			delay(2500)
-		}
-	}
 
 	private fun pollPeerStatus() {
 		val embedded = TsBridge.available

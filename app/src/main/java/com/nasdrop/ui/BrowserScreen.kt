@@ -137,6 +137,12 @@ import com.nasdrop.SortOrder
 import com.nasdrop.TransferStatus
 import com.nasdrop.TransferTask
 import com.nasdrop.UploadService
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
+import androidx.compose.foundation.gestures.detectDragGestures
 import com.nasdrop.ViewMode
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -244,44 +250,14 @@ fun BrowserScreen(
 					currentTab = vm.currentTab,
 					onTabSelect = { tab ->
 						vm.currentTab = tab
+						if (tab == MainTab.Photos || tab == MainTab.Media) {
+							vm.ensureMediaScanned()
+						}
 					},
 				)
 			}
 		},
-		floatingActionButton = {
-			if (!vm.isMultiSelectMode && mode == BrowserMode.Browse) {
-				when (vm.currentTab) {
-					MainTab.Files -> {
-						ExtendedFloatingActionButton(
-							onClick = { filePicker.launch(arrayOf("*/*")) },
-							icon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null, tint = Color.White) },
-							text = { Text("上传文件", fontWeight = FontWeight.Bold, color = Color.White) },
-							containerColor = Color(0xFF2A72F6),
-							shape = RoundedCornerShape(20.dp),
-						)
-					}
-					MainTab.Photos -> {
-						ExtendedFloatingActionButton(
-							onClick = { photoPicker.launch(arrayOf("image/*", "video/*")) },
-							icon = { Icon(Icons.Rounded.PhotoCamera, contentDescription = null, tint = Color.White) },
-							text = { Text("上传照片", fontWeight = FontWeight.Bold, color = Color.White) },
-							containerColor = Color(0xFFFF3D71),
-							shape = RoundedCornerShape(20.dp),
-						)
-					}
-					MainTab.Media -> {
-						ExtendedFloatingActionButton(
-							onClick = { videoPicker.launch(arrayOf("video/*")) },
-							icon = { Icon(Icons.Rounded.Movie, contentDescription = null, tint = Color.White) },
-							text = { Text("上传视频", fontWeight = FontWeight.Bold, color = Color.White) },
-							containerColor = Color(0xFF722ED1),
-							shape = RoundedCornerShape(20.dp),
-						)
-					}
-					MainTab.Me -> {}
-				}
-			}
-		},
+		floatingActionButton = {},
 	) { innerPadding ->
 		Column(
 			modifier = Modifier
@@ -441,6 +417,17 @@ fun BrowserScreen(
 						color = Color(0xFF2A72F6),
 					)
 				}
+
+				// 可自由拖拽吸附的悬浮上传球（按住任意拖动，松手平滑贴边，绝不挡列表底部）
+				if (!vm.isMultiSelectMode && mode == BrowserMode.Browse) {
+					DraggableUploadFab(
+						currentTab = vm.currentTab,
+						onUploadFile = { filePicker.launch(arrayOf("*/*")) },
+						onUploadPhoto = { photoPicker.launch(arrayOf("image/*", "video/*")) },
+						onUploadVideo = { videoPicker.launch(arrayOf("video/*")) },
+					)
+				}
+				}
 			}
 		}
 	}
@@ -478,6 +465,7 @@ fun BrowserScreen(
 	if (showTransferSheet) {
 		TransferCenterSheet(
 			tasks = vm.transferTasks,
+			totalSpeedBps = vm.totalSpeedBps,
 			onDismiss = { showTransferSheet = false },
 			onPauseTask = { vm.pauseTask(it) },
 			onResumeTask = { vm.resumeTask(it) },
@@ -2014,6 +2002,7 @@ private fun MediaStreamContent(
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 private fun TransferCenterSheet(
 	tasks: List<TransferTask>,
+	totalSpeedBps: Long = 0L,
 	onDismiss: () -> Unit,
 	onPauseTask: (String) -> Unit,
 	onResumeTask: (String) -> Unit,
@@ -2041,6 +2030,26 @@ private fun TransferCenterSheet(
 				Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
 					Text("全部暂停", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF86909C), modifier = Modifier.clickable { onPauseAll() })
 					Text("全部开始", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2A72F6), modifier = Modifier.clickable { onResumeAll() })
+				}
+			}
+
+			if (totalSpeedBps > 0) {
+				Spacer(modifier = Modifier.height(10.dp))
+				Surface(
+					shape = RoundedCornerShape(12.dp),
+					color = Color(0xFFEAF2FF),
+					modifier = Modifier.fillMaxWidth(),
+				) {
+					Row(
+						modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.SpaceBetween,
+					) {
+						Text("⚡ 3通道并行传输", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2A72F6))
+						val mb = totalSpeedBps / (1024.0 * 1024.0)
+						val speedStr = if (mb >= 1.0) String.format(Locale.ROOT, "%.1f MB/s", mb) else String.format(Locale.ROOT, "%.0f KB/s", totalSpeedBps / 1024.0)
+						Text("实时总速率 $speedStr", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00B578))
+					}
 				}
 			}
 
@@ -2765,4 +2774,74 @@ internal fun formatDate(millis: Long): String {
 	if (millis <= 0) return ""
 	val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 	return sdf.format(Date(millis))
+}
+
+@Composable
+private fun DraggableUploadFab(
+	currentTab: MainTab,
+	onUploadFile: () -> Unit,
+	onUploadPhoto: () -> Unit,
+	onUploadVideo: () -> Unit,
+) {
+	if (currentTab == MainTab.Me) return
+
+	val density = LocalDensity.current
+	val configuration = LocalConfiguration.current
+	val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+	val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+
+	val fabSizeDp = 52.dp
+	val fabSizePx = with(density) { fabSizeDp.toPx() }
+	val marginPx = with(density) { 16.dp.toPx() }
+
+	var offsetX by remember { mutableFloatStateOf(screenWidthPx - fabSizePx - marginPx) }
+	var offsetY by remember { mutableFloatStateOf(screenHeightPx - fabSizePx - with(density) { 100.dp.toPx() }) }
+	var isDragging by remember { mutableStateOf(false) }
+
+	val (bgColor, icon, label) = when (currentTab) {
+		MainTab.Files -> Triple(Color(0xFF2A72F6), Icons.Rounded.CloudUpload, "上传文件")
+		MainTab.Photos -> Triple(Color(0xFFFF3D71), Icons.Rounded.PhotoCamera, "上传照片")
+		MainTab.Media -> Triple(Color(0xFF722ED1), Icons.Rounded.Movie, "上传视频")
+		MainTab.Me -> Triple(Color.Transparent, Icons.Rounded.Add, "")
+	}
+
+	Surface(
+		shape = CircleShape,
+		color = bgColor,
+		shadowElevation = if (isDragging) 12.dp else 6.dp,
+		modifier = Modifier
+			.offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+			.size(fabSizeDp)
+			.pointerInput(currentTab) {
+				detectDragGestures(
+					onDragStart = { isDragging = true },
+					onDragEnd = {
+						isDragging = false
+						val centerX = offsetX + fabSizePx / 2
+						offsetX = if (centerX < screenWidthPx / 2) marginPx else (screenWidthPx - fabSizePx - marginPx)
+					},
+					onDragCancel = { isDragging = false },
+					onDrag = { change, dragAmount ->
+						change.consume()
+						offsetX = (offsetX + dragAmount.x).coerceIn(marginPx, screenWidthPx - fabSizePx - marginPx)
+						offsetY = (offsetY + dragAmount.y).coerceIn(
+							marginPx + with(density) { 50.dp.toPx() },
+							screenHeightPx - fabSizePx - with(density) { 70.dp.toPx() }
+						)
+					}
+				)
+			}
+			.clickable {
+				when (currentTab) {
+					MainTab.Files -> onUploadFile()
+					MainTab.Photos -> onUploadPhoto()
+					MainTab.Media -> onUploadVideo()
+					MainTab.Me -> {}
+				}
+			},
+	) {
+		Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+			Icon(imageVector = icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(24.dp))
+		}
+	}
 }

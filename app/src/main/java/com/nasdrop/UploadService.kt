@@ -22,6 +22,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.joinAll
 
 /**
  * 后台上传队列。
@@ -85,26 +88,31 @@ class UploadService : Service() {
 
 		var ok = 0
 		var failed = 0
+		val semaphore = Semaphore(3) // 最多 3 个任务并行上传，跑满上行带宽且不造成手机卡顿
 
-		uris.forEachIndexed { i, uri ->
-			val name = Uploads.tasks.value.getOrNull(i)?.name ?: "文件"
-			var lastNotified = 0L
-			try {
-				client.upload(this, uri, dir) { sent, total ->
-					Uploads.update(i) { it.copy(sent = sent, total = total) }
-					// 每 512KB 刷一次通知，避免小分块把通知栏刷爆
-					if (sent - lastNotified >= 512 * 1024 || (total > 0 && sent >= total)) {
-						lastNotified = sent
-						post(build("正在上传「$name」", if (total > 0) sent to total else null, false))
+		val jobs = uris.mapIndexed { i, uri ->
+			scope.launch {
+				semaphore.withPermit {
+					val name = Uploads.tasks.value.getOrNull(i)?.name ?: "文件"
+					var lastNotified = 0L
+					try {
+						client.upload(this@UploadService, uri, dir) { sent, total ->
+							Uploads.update(i) { it.copy(sent = sent, total = total) }
+							if (sent - lastNotified >= 512 * 1024 || (total > 0 && sent >= total)) {
+								lastNotified = sent
+								post(build("正在上传「$name」", if (total > 0) sent to total else null, false))
+							}
+						}
+						Uploads.update(i) { it.copy(done = true) }
+						synchronized(this@UploadService) { ok++ }
+					} catch (t: Throwable) {
+						Uploads.update(i) { it.copy(done = true, error = t.message ?: t.javaClass.simpleName) }
+						synchronized(this@UploadService) { failed++ }
 					}
 				}
-				Uploads.update(i) { it.copy(done = true) }
-				ok++
-			} catch (t: Throwable) {
-				Uploads.update(i) { it.copy(done = true, error = t.message ?: t.javaClass.simpleName) }
-				failed++
 			}
 		}
+		jobs.joinAll()
 
 		finish(ok, failed, startId)
 	}

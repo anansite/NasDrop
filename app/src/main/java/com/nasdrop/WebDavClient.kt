@@ -115,17 +115,27 @@ class WebDavClient(private val base: HttpUrl, private val http: OkHttpClient) {
 	}
 
 	/**
-	 * 下载指定路径的文件并写入本地目标输出流。
+	 * 下载指定路径的文件并写入本地目标输出流，支持断点续传（Range 请求）。
 	 */
-	fun download(path: String, output: java.io.OutputStream, onProgress: (Long, Long) -> Unit) {
-		val req = Request.Builder().url(urlFor(path)).get().build()
+	fun download(
+		path: String,
+		output: java.io.OutputStream,
+		startByte: Long = 0L,
+		onProgress: (Long, Long) -> Unit,
+	) {
+		val reqBuilder = Request.Builder().url(urlFor(path)).get()
+		if (startByte > 0L) {
+			reqBuilder.header("Range", "bytes=$startByte-")
+		}
+		val req = reqBuilder.build()
 		http.newCall(req).execute().use { resp ->
-			if (!resp.isSuccessful) throw DavException(resp.code, "下载失败")
+			if (!resp.isSuccessful && resp.code != 206) throw DavException(resp.code, "下载失败")
 			val body = resp.body ?: throw DavException(resp.code, "响应体为空")
-			val total = body.contentLength()
+			val contentLength = body.contentLength()
+			val total = if (resp.code == 206) contentLength + startByte else if (contentLength > 0) contentLength else -1L
 			body.byteStream().use { ins ->
 				val buf = ByteArray(64 * 1024)
-				var sent = 0L
+				var sent = if (resp.code == 206) startByte else 0L
 				while (true) {
 					val n = ins.read(buf)
 					if (n <= 0) break
