@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Xml
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -86,13 +87,35 @@ class DavException(val code: Int, what: String) : IOException("$what（HTTP $cod
  * base 既可能是真实服务器地址，也可能是 127.0.0.1 上的 bridge 端口——对这里完全透明，
  * 这正是把 Tailscale 关在 Go 侧换来的好处。
  */
-class WebDavClient(private val base: HttpUrl, private val http: OkHttpClient) {
+class WebDavClient(
+	private val base: HttpUrl,
+	private val http: OkHttpClient,
+	private val apiOrigin: HttpUrl? = null,
+	private val apiUser: String = "",
+	private val apiPassword: String = "",
+) {
+	/** OpenList 服务端缩略图：path(相对WebDAV根,无首尾斜杠) -> 带 sign 的 /d/...?type=thumb 直链 */
+	private val thumbUrls = java.util.concurrent.ConcurrentHashMap<String, String>()
+	@Volatile private var openListToken: String? = null
+	@Volatile private var thumbAuthTried = false
 
 	fun urlFor(path: String, dir: Boolean = false): HttpUrl {
 		val b = base.newBuilder()
 		path.trim('/').split('/').forEach { if (it.isNotEmpty()) b.addPathSegment(it) }
 		if (dir && path.isNotEmpty()) b.addPathSegment("")
 		return b.build()
+	}
+
+	/**
+	 * 仅用于列表缩略图展示：命中服务端缩略图缓存时返回缩略图直链（真图片），
+	 * 否则回退到原始 WebDAV 地址。下载/播放/删除等仍走 urlFor()，绝不受影响。
+	 */
+	fun thumbnailUrl(path: String): HttpUrl? {
+		thumbUrls[path.trim('/')]?.toHttpUrlOrNull()?.let { return it }
+		// 图片没有服务端缩略图时回退原图（图片本身体积小）；
+		// 视频没有服务端缩略图时返回 null——绝不让 Coil 去拉取整个视频当图片解码。
+		val ext = path.substringAfterLast('.', "").lowercase()
+		return if (ext in DavEntry.IMAGES) urlFor(path) else null
 	}
 
 	/** 列目录。path 为空表示根 */
@@ -106,9 +129,99 @@ class WebDavClient(private val base: HttpUrl, private val http: OkHttpClient) {
 		http.newCall(req).execute().use { resp ->
 			if (!resp.isSuccessful) throw DavException(resp.code, "列目录失败")
 			val stream = resp.body?.byteStream() ?: throw DavException(resp.code, "空响应")
-			return parse(stream, path)
+			val result = parse(stream, path)
+			// 列表拿到后同步补充服务端缩略图映射（有缓存 + token 复用，失败静默回退原图）。
+			loadThumbnails(path, result)
+			return result
 		}
 	}
+
+	/**
+	 * 通过 OpenList 私有 API 拉取当前目录的缩略图直链，建立 path -> thumbUrl 映射。
+	 * 纯增强：任何失败（非 OpenList 服务、无网络、无缩略图）都静默跳过，列表照常显示。
+	 */
+	private fun loadThumbnails(dirPath: String, entries: List<DavEntry>) {
+		val origin = apiOrigin ?: return
+		// 只为包含图片/视频的目录发起请求，纯文档目录零开销
+		if (entries.none { it.isImage || it.isVideo }) return
+		try {
+			val token = ensureOpenListToken(origin) ?: return
+			val apiPath = if (dirPath.isEmpty()) "/" else "/$dirPath"
+			val body = """{"path":"${jsonEscape(apiPath)}","password":""}"""
+				.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+			val req = Request.Builder()
+				.url(origin.newBuilder().addPathSegment("api").addPathSegment("fs").addPathSegment("list").build())
+				.header("Authorization", token)
+				.post(body)
+				.build()
+			http.newCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return
+				val text = resp.body?.string() ?: return
+				val content = org.json.JSONObject(text).optJSONObject("data")?.optJSONArray("content") ?: return
+				val prefix = if (dirPath.isEmpty()) "" else "$dirPath/"
+				for (i in 0 until content.length()) {
+					val item = content.optJSONObject(i) ?: continue
+					val name = item.optString("name")
+					val thumb = item.optString("thumb")
+					if (name.isNotEmpty() && thumb.startsWith("http")) {
+						// thumb 直链是服务端返回的公网绝对地址。统一把 origin 换成本客户端的
+						// base origin：直连模式=原域名；bridge 模式=127.0.0.1:port。
+						// 否则 bridge 模式下 Coil 会拿公网域名直连 100.x 而失败。
+						val rewritten = rewriteThumbOrigin(thumb)
+						thumbUrls[prefix + name] = rewritten
+					}
+				}
+			}
+		} catch (_: Exception) {
+			// 缩略图是可选增强，任何异常都不影响主流程
+		}
+	}
+
+	/** 登录 OpenList 换 token；token 进程内复用，失败只尝试一次避免每次列目录都打卡 */
+	private fun ensureOpenListToken(origin: HttpUrl): String? {
+		openListToken?.let { return it }
+		if (thumbAuthTried || apiUser.isEmpty()) return null
+		thumbAuthTried = true
+		return try {
+			val body = """{"username":"${jsonEscape(apiUser)}","password":"${jsonEscape(apiPassword)}"}"""
+				.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+			val req = Request.Builder()
+				.url(origin.newBuilder().addPathSegment("api").addPathSegment("auth").addPathSegment("login").build())
+				.post(body)
+				.build()
+			http.newCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return null
+				val token = org.json.JSONObject(resp.body?.string() ?: return null)
+					.optJSONObject("data")?.optString("token")
+				if (!token.isNullOrEmpty()) {
+					openListToken = token
+					token
+				} else null
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
+
+	private fun rewriteThumbOrigin(thumb: String): String {
+		return try {
+			val t = thumb.toHttpUrlOrNull() ?: return thumb
+			t.newBuilder()
+				.scheme(base.scheme)
+				.host(base.host)
+				.port(base.port)
+				.build()
+				.toString()
+		} catch (_: Exception) {
+			thumb
+		}
+	}
+
+	private fun jsonEscape(s: String) = s
+		.replace("\\", "\\\\")
+		.replace("\"", "\\\"")
+		.replace("\n", "\\n")
+		.replace("\r", "\\r")
 
 	fun mkcol(path: String) = exec("MKCOL", urlFor(path, dir = true))
 

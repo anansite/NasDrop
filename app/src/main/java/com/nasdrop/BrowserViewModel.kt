@@ -399,6 +399,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	fun urlFor(entryPath: String): String? = client?.urlFor(entryPath)?.toString()
 
+	/** 列表缩略图专用：命中 OpenList 服务端缩略图时返回真图片直链，否则回退原图地址 */
+	fun thumbnailUrlFor(entryPath: String): String? = client?.thumbnailUrl(entryPath)?.toString()
+
 	fun loginUrl(): String = authUrl
 
 	fun logs(): String = if (TsBridge.available) TsBridge.logs() else ""

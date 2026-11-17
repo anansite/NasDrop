@@ -4,7 +4,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.align
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -44,7 +43,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import coil.request.videoFrameMillis
 import com.nasdrop.DavEntry
 import com.nasdrop.FileCategory
 import com.nasdrop.NasFolderIcon
@@ -103,7 +101,9 @@ fun FileThumbnail(
 			}
 		}
 
-		// 2. 视频首帧缩略图：小尺寸加载视频中间帧；加载中/失败回退渐变海报，绝不黑块、绝不卡列表
+		// 2. 视频缩略图：优先用服务端生成的缩略图（OpenList 的 /d/...?type=thumb，真图片、零视频下载）；
+		//    加载中/失败回退渐变播放图标，绝不黑块、绝不卡列表。urlFor 会返回服务端缩略图直链，
+		//    这里只需按普通图片加载即可，无需客户端视频帧解码。
 		entry.isVideo -> {
 			val url = urlOf(entry.path)
 			var isError by remember(entry.path) { mutableStateOf(false) }
@@ -127,20 +127,12 @@ fun FileThumbnail(
 						model = ImageRequest.Builder(LocalContext.current)
 							.data(url)
 							.crossfade(true)
-							.size(160, 160) // 极小尺寸，限制解码开销与内存
-							.videoFrameMillis(1000L) // 取第 1 秒帧，避开常见的纯黑首帧
+							.size(160, 160)
 							.build(),
 						contentDescription = entry.name,
 						contentScale = ContentScale.Crop,
 						onError = { isError = true },
 						modifier = Modifier.fillMaxSize(),
-					)
-					// 半透明播放角标，保留"这是视频"的辨识度
-					Icon(
-						imageVector = Icons.Rounded.PlayArrow,
-						contentDescription = null,
-						tint = Color(0xCCFFFFFF),
-						modifier = Modifier.size(size * 0.34f).align(Alignment.BottomEnd).padding(2.dp),
 					)
 				}
 			} else {

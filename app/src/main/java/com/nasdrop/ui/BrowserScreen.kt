@@ -129,6 +129,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.nasdrop.BrowserViewModel
 import com.nasdrop.DavEntry
 import com.nasdrop.FileCategory
@@ -401,7 +402,7 @@ fun BrowserScreen(
 								onSelectAlbum = { vm.openAlbum(it) },
 								onDeleteAlbum = { folder -> activeFolderForDelete = Pair(folder, true) },
 								onCreateAlbum = { activeCreateType = CreateDialogType.Album },
-								urlOf = { vm.urlFor(it) },
+								urlOf = { vm.thumbnailUrlFor(it) },
 								onOpenImage = onOpenImage,
 							)
 						}
@@ -419,7 +420,7 @@ fun BrowserScreen(
 								onSelectMediaFolder = { vm.openMedia(it) },
 								onDeleteMediaFolder = { folder -> activeFolderForDelete = Pair(folder, false) },
 								onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
-								urlOf = { vm.urlFor(it) },
+								urlOf = { vm.thumbnailUrlFor(it) },
 								onOpenVideo = onOpenVideo,
 							)
 						}
@@ -467,7 +468,7 @@ fun BrowserScreen(
 	activeEntryForAction?.let { entry ->
 		ActionBottomSheet(
 			entry = entry,
-			urlOf = { vm.urlFor(it) },
+			urlOf = { vm.thumbnailUrlFor(it) },
 			customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null,
 			onDismiss = { activeEntryForAction = null },
 			onDownload = {
@@ -1507,7 +1508,7 @@ private fun FileBrowserContent(
 						horizontalArrangement = Arrangement.spacedBy(12.dp),
 					) {
 						// 左侧夸克同款文件徽标（微圆角，专属卡片或视频封面）
-						FileThumbnail(entry = entry, urlOf = { vm.urlFor(it) }, size = 42.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
+						FileThumbnail(entry = entry, urlOf = { vm.thumbnailUrlFor(it) }, size = 42.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
 
 						// 中间主标题与单行元数据（保留完整文件名，如 LibreTV播放器.mp4）
 						Column(modifier = Modifier.weight(1f)) {
@@ -1589,7 +1590,7 @@ private fun FileBrowserContent(
 							SelectCheckbox(isSelected = isSelected)
 						}
 
-						FileThumbnail(entry = entry, urlOf = { vm.urlFor(it) }, size = 32.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
+						FileThumbnail(entry = entry, urlOf = { vm.thumbnailUrlFor(it) }, size = 32.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
 
 						Column(modifier = Modifier.weight(1f)) {
 							Text(
@@ -1631,7 +1632,7 @@ private fun FileBrowserContent(
 			) {
 				items(items, key = { it.path }) { entry ->
 					val isSelected = vm.selectedEntries.contains(entry)
-					val imgUrl = if (entry.isImage) vm.urlFor(entry.path) else null
+					val imgUrl = if (entry.isImage) vm.thumbnailUrlFor(entry.path) else null
 					Card(
 						shape = RoundedCornerShape(14.dp),
 						colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -2011,7 +2012,8 @@ private fun MediaStreamContent(
 							),
 					) {
 						Column {
-							// 16:9 院线质感海报视窗（零网络消耗，毫秒呈现，告别大视频拉取黑块等待）
+							// 16:9 院线质感海报视窗：优先展示服务端缩略图（OpenList type=thumb，真图片），
+							// 无缩略图/加载失败时回退渐变 + 播放图标（零黑块、零等待）。
 							Box(
 								modifier = Modifier
 									.fillMaxWidth()
@@ -2023,6 +2025,21 @@ private fun MediaStreamContent(
 									),
 								contentAlignment = Alignment.Center,
 							) {
+								var thumbFailed by remember(video.path) { mutableStateOf(false) }
+								val thumbUrl = urlOf(video.path)
+								if (!thumbFailed && !thumbUrl.isNullOrBlank()) {
+									AsyncImage(
+										model = ImageRequest.Builder(LocalContext.current)
+											.data(thumbUrl)
+											.crossfade(true)
+											.size(640, 360)
+											.build(),
+										contentDescription = video.name,
+										contentScale = ContentScale.Crop,
+										onError = { thumbFailed = true },
+										modifier = Modifier.fillMaxSize(),
+									)
+								}
 								Icon(
 									imageVector = Icons.Rounded.Movie,
 									contentDescription = null,

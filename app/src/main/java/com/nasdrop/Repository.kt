@@ -91,7 +91,10 @@ class Repository(private val context: Context) {
 		.connectionPool(ConnectionPool(32, 5, TimeUnit.MINUTES))
 		.addInterceptor { chain ->
 			val b = chain.request().newBuilder()
-			authHeader?.let { b.header("Authorization", it) }
+			// WebDAV 请求统一注入 Basic；OpenList 私有 API 自带 token 时不覆盖。
+			if (chain.request().header("Authorization").isNullOrBlank()) {
+				authHeader?.let { b.header("Authorization", it) }
+			}
 			if (bridgeToken.isNotEmpty()) b.header("X-Bridge-Token", bridgeToken)
 			chain.proceed(b.build())
 		}
@@ -120,10 +123,8 @@ class Repository(private val context: Context) {
 
 	val imageLoader: ImageLoader by lazy {
 		ImageLoader.Builder(context)
-			// 恢复视频首帧解码：仅用于文件列表里的小尺寸缩略图（请求 160×160）。
-			// 配合 FileIcon 里对视频统一 .size(160,160) + 小内存缓存，
-			// MediaMetadataRetriever 走 OkHttp 拉流并 seek 到首帧，不会整段下载到内存。
-			.components { add(coil.decode.VideoFrameDecoder.Factory()) }
+			// 缩略图统一走服务端生成（OpenList /d/...?type=thumb，真 PNG）；
+			// 不再注册 VideoFrameDecoder——避免对远程大视频整段下载到磁盘再解码，拖垮列表与流量。
 			.memoryCache {
 				MemoryCache.Builder(context)
 					.maxSizePercent(0.25)
@@ -221,7 +222,8 @@ class Repository(private val context: Context) {
 			}
 		}
 
-		return WebDavClient(base, okHttp).also {
+		val apiOrigin = base.newBuilder().encodedPath("/").query(null).fragment(null).build()
+		return WebDavClient(base, okHttp, apiOrigin, settings.user, settings.password).also {
 			cached = it
 			cachedKey = key
 		}
@@ -243,7 +245,8 @@ class Repository(private val context: Context) {
 			if (res != null) {
 				directConfirmed = res
 				synchronized(this@Repository) {
-					cached = WebDavClient(root, okHttp)
+					val apiOrigin = root.newBuilder().encodedPath("/").query(null).fragment(null).build()
+					cached = WebDavClient(root, okHttp, apiOrigin, settings.user, settings.password)
 				}
 				_routeInfo.value = RouteInfo(
 					isDirect = true,
