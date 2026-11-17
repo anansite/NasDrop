@@ -27,6 +27,7 @@ import com.nasdrop.ui.BrowserScreen
 import com.nasdrop.ui.ImageViewer
 import com.nasdrop.ui.NasDropTheme
 import com.nasdrop.ui.SettingsScreen
+import com.nasdrop.ui.UpdateDialog
 import com.nasdrop.ui.VideoPlayer
 
 /** 极简路由。只有四个页面，不值得为它引入 navigation-compose。 */
@@ -125,6 +126,20 @@ class MainActivity : ComponentActivity() {
 						entry = r.entry,
 						url = vm.urlFor(r.entry.path),
 						onBack = { route = Route.Browser },
+					)
+				}
+			}
+
+			if (vm.showUpdateDialog) {
+				vm.latestUpdateInfo?.let { info ->
+					val context = androidx.compose.ui.platform.LocalContext.current
+					UpdateDialog(
+						info = info,
+						isDownloading = vm.isDownloadingUpdate,
+						downloadProgress = vm.updateProgress,
+						speedText = vm.updateSpeedText,
+						onStartUpdate = { vm.startDownloadUpdate(context) },
+						onDismiss = { vm.dismissUpdateDialog() },
 					)
 				}
 			}

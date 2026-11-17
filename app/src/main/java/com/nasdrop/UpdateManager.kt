@@ -83,40 +83,54 @@ object UpdateManager {
 		val destFile = File(updateDir, "nasdrop_latest.apk")
 		if (destFile.exists()) destFile.delete()
 
-		val request = Request.Builder().url(apkUrl).build()
-		val response = http.newCall(request).execute()
-		if (!response.isSuccessful) throw IllegalStateException("下载失败: HTTP ${response.code}")
+		val candidateUrls = if (apkUrl.contains("github.com")) {
+			listOf(
+				"https://ghp.ci/$apkUrl",
+				"https://mirror.ghproxy.com/$apkUrl",
+				apkUrl,
+			)
+		} else listOf(apkUrl)
 
-		val body = response.body ?: throw IllegalStateException("响应体为空")
-		val total = body.contentLength()
+		var lastException: Exception? = null
+		for (url in candidateUrls) {
+			try {
+				val request = Request.Builder().url(url).build()
+				val response = http.newCall(request).execute()
+				if (!response.isSuccessful) continue
+				val body = response.body ?: continue
+				val total = body.contentLength()
 
-		body.byteStream().use { input ->
-			FileOutputStream(destFile).use { output ->
-				val buffer = ByteArray(64 * 1024)
-				var read: Int
-				var downloaded = 0L
-				var lastTime = System.currentTimeMillis()
-				var lastDownloaded = 0L
-				var speed = 0L
+				body.byteStream().use { input ->
+					FileOutputStream(destFile).use { output ->
+						val buffer = ByteArray(64 * 1024)
+						var read: Int
+						var downloaded = 0L
+						var lastTime = System.currentTimeMillis()
+						var lastDownloaded = 0L
+						var speed = 0L
 
-				while (input.read(buffer).also { read = it } != -1) {
-					output.write(buffer, 0, read)
-					downloaded += read
+						while (input.read(buffer).also { read = it } != -1) {
+							output.write(buffer, 0, read)
+							downloaded += read
 
-					val now = System.currentTimeMillis()
-					val dt = now - lastTime
-					if (dt >= 300) {
-						speed = ((downloaded - lastDownloaded) * 1000) / dt
-						lastTime = now
-						lastDownloaded = downloaded
-						onProgress(downloaded, total, speed)
+							val now = System.currentTimeMillis()
+							val dt = now - lastTime
+							if (dt >= 300) {
+								speed = ((downloaded - lastDownloaded) * 1000) / dt
+								lastTime = now
+								lastDownloaded = downloaded
+								onProgress(downloaded, total, speed)
+							}
+						}
+						onProgress(downloaded, total, 0L)
 					}
 				}
-				onProgress(downloaded, total, 0L)
+				return@withContext destFile
+			} catch (e: Exception) {
+				lastException = e
 			}
 		}
-
-		destFile
+		throw lastException ?: IllegalStateException("所有镜像下载通道均失败")
 	}
 
 	fun installApk(context: Context, apkFile: File) {

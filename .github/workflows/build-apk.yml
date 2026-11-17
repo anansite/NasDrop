@@ -101,9 +101,11 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: 打 tag 时发布 Release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: 发布或更新 Release
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v1.0.0
+          name: "NasDrop 最新版"
           files: out/*.apk
           generate_release_notes: true
