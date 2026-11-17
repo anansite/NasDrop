@@ -490,6 +490,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						trailing = {
 							TextButton(onClick = {
 								scope.launch(Dispatchers.IO) {
+									app.repo.clearImageCache()
 									context.cacheDir.deleteRecursively()
 									context.cacheDir.mkdirs()
 									calculateCacheSize()

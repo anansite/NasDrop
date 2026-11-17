@@ -249,12 +249,27 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 			val raw = if (searchQuery.isBlank()) baseList else baseList.filter { it.name.contains(searchQuery.trim(), ignoreCase = true) }
 
-			// 夸克排序逻辑：文件夹置顶，内部按用户所选排序
+			// 夸克排序逻辑：文件夹恒定排在最上方（置顶），内部按用户所选排序
 			return when (sortOrder) {
-				SortOrder.ModifiedDesc -> raw.sortedWith(compareBy<DavEntry> { !it.isDir }.thenByDescending { it.modified })
-				SortOrder.ModifiedAsc -> raw.sortedWith(compareBy<DavEntry> { !it.isDir }.thenBy { it.modified })
-				SortOrder.NameAsc -> raw.sortedWith(compareBy<DavEntry> { !it.isDir }.thenBy { it.name.lowercase(Locale.ROOT) })
-				SortOrder.SizeDesc -> raw.sortedWith(compareBy<DavEntry> { !it.isDir }.thenByDescending { it.size })
+				SortOrder.ModifiedDesc -> raw.sortedWith(
+					compareBy<DavEntry> { !it.isDir }
+						.thenByDescending { it.modified }
+				)
+				SortOrder.ModifiedAsc -> raw.sortedWith(
+					compareBy<DavEntry> { !it.isDir }
+						.thenBy { it.modified }
+				)
+				SortOrder.NameAsc -> raw.sortedWith(
+					compareBy<DavEntry> { !it.isDir }
+						.thenBy { it.name.lowercase(Locale.ROOT) }
+				)
+				SortOrder.SizeDesc -> raw.sortedWith(
+					compareBy<DavEntry> { !it.isDir }
+						.thenComparator { a, b ->
+							if (a.isDir && b.isDir) a.name.compareTo(b.name, ignoreCase = true)
+							else b.size.compareTo(a.size)
+						}
+				)
 			}
 		}
 
@@ -267,6 +282,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch { pollLink() }
 		viewModelScope.launch { scanGlobalMedia() }
 		viewModelScope.launch { startAutoHealing() }
+		cleanupOldCache()
 		startTransferWorker()
 		viewModelScope.launch {
 			val lastSentMap = mutableMapOf<String, Long>()
@@ -343,6 +359,24 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/**
 	 * 慢速自适应智能自愈：若当前处于 DERP 中继慢速代理，后台每 15 秒静默发起探测
 	 */
+	
+	/** 自动清理 1 天前的旧 APK 安装包与临时碎片，杜绝缓存积压无节制增大 */
+	private fun cleanupOldCache() {
+		viewModelScope.launch(Dispatchers.IO) {
+			runCatching {
+				val updateDir = File(app.cacheDir, "updates")
+				if (updateDir.exists()) {
+					val now = System.currentTimeMillis()
+					updateDir.listFiles()?.forEach { f ->
+						if (now - f.lastModified() > 24 * 3600 * 1000L) {
+							f.delete()
+						}
+					}
+				}
+			}
+		}
+	}
+
 	private suspend fun startAutoHealing() {
 		while (true) {
 			delay(15_000)

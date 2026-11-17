@@ -13,6 +13,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -781,7 +782,7 @@ private fun MediaTopBar(
 			.background(Color.White)
 			.padding(horizontal = 14.dp),
 		verticalAlignment = Alignment.CenterVertically,
-		horangement = Arrangement.SpaceBetween,
+		horizontalArrangement = Arrangement.SpaceBetween,
 	) {
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
 			if (selectedMediaName.isNotBlank()) {

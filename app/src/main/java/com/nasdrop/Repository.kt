@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import coil.ImageLoader
 import coil.decode.VideoFrameDecoder
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import okhttp3.ConnectionPool
@@ -115,9 +117,25 @@ class Repository(private val context: Context) {
 			.components {
 				add(VideoFrameDecoder.Factory())
 			}
+			.memoryCache {
+				MemoryCache.Builder(context)
+					.maxSizePercent(0.20)
+					.build()
+			}
+			.diskCache {
+				DiskCache.Builder()
+					.directory(context.cacheDir.resolve("image_cache"))
+					.maxSizeBytes(100L * 1024 * 1024)
+					.build()
+			}
 			.okHttpClient { imageOkHttp }
 			.crossfade(true)
 			.build()
+	}
+
+	fun clearImageCache() {
+		imageLoader.memoryCache?.clear()
+		imageLoader.diskCache?.clear()
 	}
 
 	fun http(): OkHttpClient = okHttp
