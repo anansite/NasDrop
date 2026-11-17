@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.nasdrop.ui
 
 import android.widget.Toast
@@ -1732,6 +1734,7 @@ private fun MediaStreamContent(
 }
 
 @Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 private fun TransferCenterSheet(
 	tasks: List<TransferTask>,
 	onDismiss: () -> Unit,
