@@ -1719,7 +1719,7 @@ private fun MediaStreamContent(
 
 							// 标题与元数据
 							Column(modifier = Modifier.padding(12.dp)) {
-								Text(video.pureName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis)
+								Text(video.displayName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis)
 								Spacer(modifier = Modifier.height(4.dp))
 								Text(formatMeta(video), fontSize = 11.sp, color = Color(0xFF86909C), maxLines = 1, overflow = TextOverflow.Ellipsis)
 							}
