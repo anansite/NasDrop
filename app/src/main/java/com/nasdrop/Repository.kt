@@ -3,6 +3,7 @@ package com.nasdrop
 import android.content.Context
 import android.util.Log
 import coil.ImageLoader
+import coil.decode.VideoFrameDecoder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import okhttp3.Credentials
@@ -93,6 +94,9 @@ class Repository(private val context: Context) {
 
 	val imageLoader: ImageLoader by lazy {
 		ImageLoader.Builder(context)
+			.components {
+				add(VideoFrameDecoder.Factory())
+			}
 			.okHttpClient { okHttp }
 			.crossfade(true)
 			.build()

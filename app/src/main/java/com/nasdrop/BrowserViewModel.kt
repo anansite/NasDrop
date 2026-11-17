@@ -118,6 +118,35 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var allVideos by mutableStateOf<List<DavEntry>>(emptyList())
 		private set
 
+	// ========== 相册与影音子分类浏览系统 ==========
+	/** 当前选中的子相册路径："" 表示查看全部时光流，若为具体路径如 "Photos/云南自驾" 则浏览该子相册 */
+	var selectedAlbumPath by mutableStateOf("")
+
+	/** 当前选中的子影集路径："" 表示查看全部视频流，若为具体路径如 "Movies/漫威" 则浏览该子影集 */
+	var selectedMediaPath by mutableStateOf("")
+
+	/** 所有已发现的相册文件夹列表（含封面与子相册） */
+	var allAlbumFolders by mutableStateOf<List<DavEntry>>(emptyList())
+		private set
+
+	/** 所有已发现的影音分类文件夹列表 */
+	var allMediaFolders by mutableStateOf<List<DavEntry>>(emptyList())
+		private set
+
+	/** 当前所选子相册（或全部）照片集合 */
+	val currentAlbumPhotos: List<DavEntry>
+		get() {
+			if (selectedAlbumPath.isBlank()) return allPhotos
+			return allPhotos.filter { it.path.startsWith(selectedAlbumPath) }
+		}
+
+	/** 当前所选子影集（或全部）视频集合 */
+	val currentMediaVideos: List<DavEntry>
+		get() {
+			if (selectedMediaPath.isBlank()) return allVideos
+			return allVideos.filter { it.path.startsWith(selectedMediaPath) }
+		}
+
 	/** 当前已发现的所有文件夹相对路径集合（供文件移动对话框选择） */
 	var allFolderPaths by mutableStateOf<List<String>>(listOf(""))
 		private set
@@ -202,7 +231,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** 相册时间线分组数据（按拍摄/修改日期降序） */
 	val photoTimelineGroups: List<TimelineGroup>
-		get() = groupEntriesForTimeline(allPhotos)
+		get() = groupEntriesForTimeline(currentAlbumPhotos)
 
 	init {
 		viewModelScope.launch { open("") }
@@ -254,7 +283,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	fun imageAlbum(entry: DavEntry): Pair<List<DavEntry>, Int> {
-		val list = if (currentTab == MainTab.Photos) allPhotos else entries.filter { !it.isDir && it.isImage }
+		val list = if (currentTab == MainTab.Photos) currentAlbumPhotos else entries.filter { !it.isDir && it.isImage }
 		val idx = list.indexOfFirst { it.path == entry.path }.coerceAtLeast(0)
 		return Pair(if (list.isEmpty()) listOf(entry) else list, idx)
 	}
@@ -551,16 +580,46 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		mutate { it.mkcol(join(path, finalName)) }
 	}
 
+	fun openAlbum(albumPath: String) {
+		selectedAlbumPath = albumPath
+	}
+
+	fun upAlbum() {
+		if (selectedAlbumPath.isBlank()) return
+		val parent = selectedAlbumPath.substringBeforeLast('/', "")
+		selectedAlbumPath = if (parent == "Photos" || parent == "相册") "" else parent
+	}
+
+	fun openMedia(mediaPath: String) {
+		selectedMediaPath = mediaPath
+	}
+
+	fun upMedia() {
+		if (selectedMediaPath.isBlank()) return
+		val parent = selectedMediaPath.substringBeforeLast('/', "")
+		selectedMediaPath = if (parent == "Movies" || parent == "影视" || parent == "影音") "" else parent
+	}
+
 	/** 在相册专属目录下新建相册文件夹 */
 	fun createAlbum(name: String) {
-		val targetDir = if (path.startsWith("Photos") || path.startsWith("相册")) path else "Photos"
-		mutate { it.mkcol(join(targetDir, name)) }
+		val targetDir = if (selectedAlbumPath.isNotBlank()) selectedAlbumPath else "Photos"
+		mutate { client ->
+			if (targetDir == "Photos") {
+				runCatching { client.mkcol("Photos") }
+			}
+			client.mkcol(join(targetDir, name))
+		}
 	}
 
 	/** 在影音专属目录下新建影集/分类文件夹 */
 	fun createMediaFolder(name: String) {
-		val targetDir = if (path.startsWith("Movies") || path.startsWith("影视") || path.startsWith("影音")) path else "Movies"
-		mutate { it.mkcol(join(targetDir, name)) }
+		val targetDir = if (selectedMediaPath.isNotBlank()) selectedMediaPath else "Movies"
+		mutate { client ->
+			if (targetDir == "Movies") {
+				runCatching { client.mkcol("Movies") }
+			}
+			client.mkcol(join(targetDir, name))
+		}
 	}
 
 	fun delete(entry: DavEntry) = mutate { it.delete(entry.path, entry.isDir) }
@@ -652,14 +711,45 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				val rootEntries = c.list("")
 				collectMediaFrom(rootEntries)
 				updateFolderPaths(rootEntries)
+
+				val albums = mutableListOf<DavEntry>()
+				val mediaAlbums = mutableListOf<DavEntry>()
+
 				for (dir in rootEntries.filter { it.isDir }) {
 					runCatching {
 						val sub = c.list(dir.path)
 						dirCache[dir.path] = sub
 						collectMediaFrom(sub)
 						updateFolderPaths(sub)
+
+						if (dir.name.equals("Photos", ignoreCase = true) || dir.name == "相册") {
+							albums.addAll(sub.filter { it.isDir })
+							for (subDir in sub.filter { it.isDir }) {
+								runCatching {
+									val subSub = c.list(subDir.path)
+									dirCache[subDir.path] = subSub
+									collectMediaFrom(subSub)
+									updateFolderPaths(subSub)
+								}
+							}
+						} else if (dir.name.equals("Movies", ignoreCase = true) || dir.name == "影视" || dir.name == "影音") {
+							mediaAlbums.addAll(sub.filter { it.isDir })
+							for (subDir in sub.filter { it.isDir }) {
+								runCatching {
+									val subSub = c.list(subDir.path)
+									dirCache[subDir.path] = subSub
+									collectMediaFrom(subSub)
+									updateFolderPaths(subSub)
+								}
+							}
+						} else {
+							if (sub.any { it.isImage }) albums.add(dir)
+							if (sub.any { it.isVideo }) mediaAlbums.add(dir)
+						}
 					}
 				}
+				allAlbumFolders = albums.distinctBy { it.path }
+				allMediaFolders = mediaAlbums.distinctBy { it.path }
 			} catch (_: Exception) {}
 		}
 	}

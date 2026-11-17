@@ -75,6 +75,7 @@ dependencies {
 
 	implementation("com.squareup.okhttp3:okhttp:4.12.0")
 	implementation("io.coil-kt:coil-compose:2.7.0")
+	implementation("io.coil-kt:coil-video:2.7.0")
 
 	// 一次性授权页用 Custom Tabs 打开，比丢给 ACTION_VIEW 体验好
 	implementation("androidx.browser:browser:1.8.0")

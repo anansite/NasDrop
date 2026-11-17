@@ -184,7 +184,7 @@ fun BrowserScreen(
 		contract = ActivityResultContracts.OpenMultipleDocuments(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
-			val targetDir = if (vm.path.startsWith("Photos") || vm.path.startsWith("相册")) vm.path else "Photos"
+			val targetDir = if (vm.selectedAlbumPath.isNotBlank()) vm.selectedAlbumPath else "Photos"
 			UploadService.start(context, uris, targetDir)
 			Toast.makeText(context, "已加入上传队列: ${uris.size} 张照片/视频", Toast.LENGTH_SHORT).show()
 		}
@@ -194,7 +194,7 @@ fun BrowserScreen(
 		contract = ActivityResultContracts.OpenMultipleDocuments(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
-			val targetDir = if (vm.path.startsWith("Movies") || vm.path.startsWith("影视") || vm.path.startsWith("影音")) vm.path else "Movies"
+			val targetDir = if (vm.selectedMediaPath.isNotBlank()) vm.selectedMediaPath else "Movies"
 			UploadService.start(context, uris, targetDir)
 			Toast.makeText(context, "已加入上传队列: ${uris.size} 部视频", Toast.LENGTH_SHORT).show()
 		}
@@ -302,8 +302,10 @@ fun BrowserScreen(
 
 				MainTab.Photos -> {
 					PhotosTopBar(
-						count = vm.allPhotos.size,
+						count = vm.currentAlbumPhotos.size,
+						selectedAlbumName = vm.selectedAlbumPath.substringAfterLast('/'),
 						activeTransferCount = vm.activeTransferCount,
+						onUpAlbum = { vm.upAlbum() },
 						onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 						onRefresh = { vm.refresh() },
 						onOpenTransferSheet = { showTransferSheet = true },
@@ -312,8 +314,10 @@ fun BrowserScreen(
 
 				MainTab.Media -> {
 					MediaTopBar(
-						count = vm.allVideos.size,
+						count = vm.currentMediaVideos.size,
+						selectedMediaName = vm.selectedMediaPath.substringAfterLast('/'),
 						activeTransferCount = vm.activeTransferCount,
+						onUpMedia = { vm.upMedia() },
 						onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
 						onRefresh = { vm.refresh() },
 						onOpenTransferSheet = { showTransferSheet = true },
@@ -370,15 +374,22 @@ fun BrowserScreen(
 					MainTab.Photos -> {
 						PhotoTimelineContent(
 							groups = vm.photoTimelineGroups,
+							allAlbums = vm.allAlbumFolders,
+							selectedAlbumPath = vm.selectedAlbumPath,
+							onSelectAlbum = { vm.openAlbum(it) },
+							onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 							urlOf = { vm.urlFor(it) },
 							onOpenImage = onOpenImage,
-							onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 						)
 					}
 
 					MainTab.Media -> {
 						MediaStreamContent(
-							videos = vm.allVideos,
+							videos = vm.currentMediaVideos,
+							allMediaFolders = vm.allMediaFolders,
+							selectedMediaPath = vm.selectedMediaPath,
+							onSelectMediaFolder = { vm.openMedia(it) },
+							onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
 							urlOf = { vm.urlFor(it) },
 							onOpenVideo = onOpenVideo,
 						)
@@ -648,7 +659,9 @@ private fun PickBar(
 @Composable
 private fun PhotosTopBar(
 	count: Int,
+	selectedAlbumName: String,
 	activeTransferCount: Int = 0,
+	onUpAlbum: () -> Unit,
 	onCreateAlbum: () -> Unit,
 	onRefresh: () -> Unit,
 	onOpenTransferSheet: () -> Unit,
@@ -657,37 +670,48 @@ private fun PhotosTopBar(
 		modifier = Modifier
 			.fillMaxWidth()
 			.background(Color(0xFFF7F8FA))
-			.padding(horizontal = 16.dp, vertical = 10.dp),
+			.padding(horizontal = 14.dp, vertical = 8.dp),
 		verticalAlignment = Alignment.CenterVertically,
 		horizontalArrangement = Arrangement.SpaceBetween,
 	) {
-		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-			Text("云端相册", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-			Text("共 $count 张照片", fontSize = 11.sp, color = Color(0xFF86909C))
-		}
-		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-			// 新建专属相册
-			IconButton(onClick = onCreateAlbum) {
-				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建相册", tint = Color(0xFF4E5969))
-			}
-			// 传输中心（采用下载云图标，避免误认为刷新）
-			IconButton(onClick = onOpenTransferSheet) {
-				Box(contentAlignment = Alignment.Center) {
-				Icon(Icons.Rounded.CloudDownload, contentDescription = "传输列表", tint = Color(0xFF4E5969))
-				if (activeTransferCount > 0) {
-					Box(
-						modifier = Modifier
-							.size(7.dp)
-							.clip(CircleShape)
-							.background(Color(0xFF2A72F6))
-							.align(Alignment.TopEnd)
-					)
+		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+			if (selectedAlbumName.isNotBlank()) {
+				IconButton(
+					onClick = onUpAlbum,
+					modifier = Modifier.size(32.dp),
+				) {
+					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部相册", tint = Color(0xFF2A72F6), modifier = Modifier.size(20.dp))
 				}
+				Column {
+					Text(selectedAlbumName, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+					Text("相册共 $count 张照片", fontSize = 11.sp, color = Color(0xFF86909C))
+				}
+			} else {
+				Text("云端相册", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+				Text("共 $count 张照片", fontSize = 11.sp, color = Color(0xFF86909C))
 			}
+		}
+
+		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+			IconButton(onClick = onCreateAlbum, modifier = Modifier.size(34.dp)) {
+				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属相册", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
-			// 刷新
-			IconButton(onClick = onRefresh) {
-				Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969))
+			IconButton(onClick = onRefresh, modifier = Modifier.size(34.dp)) {
+				Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
+			}
+			IconButton(onClick = onOpenTransferSheet, modifier = Modifier.size(34.dp)) {
+				Box(contentAlignment = Alignment.Center) {
+					Icon(Icons.Rounded.CloudDownload, contentDescription = "传输中心", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
+					if (activeTransferCount > 0) {
+						Box(
+							modifier = Modifier
+								.size(7.dp)
+								.clip(CircleShape)
+								.background(Color(0xFF2A72F6))
+								.align(Alignment.TopEnd)
+						)
+					}
+				}
 			}
 		}
 	}
@@ -696,7 +720,9 @@ private fun PhotosTopBar(
 @Composable
 private fun MediaTopBar(
 	count: Int,
+	selectedMediaName: String,
 	activeTransferCount: Int = 0,
+	onUpMedia: () -> Unit,
 	onCreateMediaFolder: () -> Unit,
 	onRefresh: () -> Unit,
 	onOpenTransferSheet: () -> Unit,
@@ -705,37 +731,48 @@ private fun MediaTopBar(
 		modifier = Modifier
 			.fillMaxWidth()
 			.background(Color(0xFFF7F8FA))
-			.padding(horizontal = 16.dp, vertical = 10.dp),
+			.padding(horizontal = 14.dp, vertical = 8.dp),
 		verticalAlignment = Alignment.CenterVertically,
 		horizontalArrangement = Arrangement.SpaceBetween,
 	) {
-		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-			Text("影音视界", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-			Text("共 $count 部视频", fontSize = 11.sp, color = Color(0xFF86909C))
-		}
-		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-			// 新建专属影集
-			IconButton(onClick = onCreateMediaFolder) {
-				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建影集", tint = Color(0xFF4E5969))
-			}
-			// 传输中心（采用下载云图标，避免误认为刷新）
-			IconButton(onClick = onOpenTransferSheet) {
-				Box(contentAlignment = Alignment.Center) {
-				Icon(Icons.Rounded.CloudDownload, contentDescription = "传输列表", tint = Color(0xFF4E5969))
-				if (activeTransferCount > 0) {
-					Box(
-						modifier = Modifier
-							.size(7.dp)
-							.clip(CircleShape)
-							.background(Color(0xFF2A72F6))
-							.align(Alignment.TopEnd)
-					)
+		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+			if (selectedMediaName.isNotBlank()) {
+				IconButton(
+					onClick = onUpMedia,
+					modifier = Modifier.size(32.dp),
+				) {
+					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部影视", tint = Color(0xFF2A72F6), modifier = Modifier.size(20.dp))
 				}
+				Column {
+					Text(selectedMediaName, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+					Text("影集共 $count 部视频", fontSize = 11.sp, color = Color(0xFF86909C))
+				}
+			} else {
+				Text("影音视界", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+				Text("共 $count 部视频", fontSize = 11.sp, color = Color(0xFF86909C))
 			}
+		}
+
+		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+			IconButton(onClick = onCreateMediaFolder, modifier = Modifier.size(34.dp)) {
+				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属影集", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 			}
-			// 刷新
-			IconButton(onClick = onRefresh) {
-				Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969))
+			IconButton(onClick = onRefresh, modifier = Modifier.size(34.dp)) {
+				Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
+			}
+			IconButton(onClick = onOpenTransferSheet, modifier = Modifier.size(34.dp)) {
+				Box(contentAlignment = Alignment.Center) {
+					Icon(Icons.Rounded.CloudDownload, contentDescription = "传输中心", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
+					if (activeTransferCount > 0) {
+						Box(
+							modifier = Modifier
+								.size(7.dp)
+								.clip(CircleShape)
+								.background(Color(0xFF2A72F6))
+								.align(Alignment.TopEnd)
+						)
+					}
+				}
 			}
 		}
 	}
@@ -968,25 +1005,20 @@ private fun FilesTopBar(
 						)
 					}
 
-					// 多选
-					IconButton(
-						onClick = onToggleMultiSelect,
-						modifier = Modifier.size(34.dp),
-					) {
-						Icon(
-							Icons.Rounded.Checklist,
-							contentDescription = "多选",
-							tint = if (vm.isMultiSelectMode) Color(0xFF2A72F6) else Color(0xFF4E5969),
-							modifier = Modifier.size(19.dp),
-						)
-					}
-
 					// 新建文件夹
 					IconButton(
 						onClick = onCreateFolder,
 						modifier = Modifier.size(34.dp),
 					) {
 						Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建文件夹", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
+					}
+
+					// 刷新
+					IconButton(
+						onClick = { vm.refresh() },
+						modifier = Modifier.size(34.dp),
+					) {
+						Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
 					}
 
 					// 传输中心（采用下载云图标，避免误认为刷新）
@@ -1419,50 +1451,121 @@ private fun SelectCheckbox(isSelected: Boolean, modifier: Modifier = Modifier) {
 @Composable
 private fun PhotoTimelineContent(
 	groups: List<com.nasdrop.TimelineGroup>,
+	allAlbums: List<DavEntry>,
+	selectedAlbumPath: String,
+	onSelectAlbum: (String) -> Unit,
+	onCreateAlbum: () -> Unit,
 	urlOf: (String) -> String?,
 	onOpenImage: (DavEntry) -> Unit,
-	onCreateAlbum: () -> Unit,
 ) {
-	if (groups.isEmpty()) {
-		Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-			Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-				FileIcon(category = FileCategory.Image, isDir = false, size = 56.dp)
-				Text("暂未发现相册图片", fontSize = 14.sp, color = Color(0xFF86909C))
-			}
-		}
-		return
-	}
-
-	LazyVerticalGrid(
-		columns = GridCells.Fixed(3),
-		contentPadding = PaddingValues(4.dp),
-		horizontalArrangement = Arrangement.spacedBy(3.dp),
-		verticalArrangement = Arrangement.spacedBy(3.dp),
-		modifier = Modifier.fillMaxSize(),
-	) {
-		groups.forEach { group ->
-			item(span = { GridItemSpan(3) }) {
-				Row(
-					modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(8.dp),
+	Column(modifier = Modifier.fillMaxSize()) {
+		// 1. 顶部子相册分类横滑条（让相册中创建的子相册/文件夹一目了然）
+		LazyRow(
+			contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+			horizontalArrangement = Arrangement.spacedBy(8.dp),
+			verticalAlignment = Alignment.CenterVertically,
+		) {
+			// "全部照片" 胶囊
+			item {
+				val isAll = selectedAlbumPath.isBlank()
+				Surface(
+					shape = RoundedCornerShape(16.dp),
+					color = if (isAll) Color(0xFFFF3D71) else Color.White,
+					shadowElevation = if (isAll) 3.dp else 1.dp,
+					onClick = { onSelectAlbum("") },
 				) {
-					Text(group.dateTitle, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-					Text("${group.count}张", fontSize = 12.sp, color = Color(0xFF86909C))
+					Row(
+						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(6.dp),
+					) {
+						Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, tint = if (isAll) Color.White else Color(0xFFFF3D71), modifier = Modifier.size(15.dp))
+						Text("全部照片", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isAll) Color.White else Color(0xFF1D2129))
+					}
 				}
 			}
 
-			items(group.items, key = { it.path }) { item ->
-				AsyncImage(
-					model = urlOf(item.path),
-					contentDescription = item.name,
-					contentScale = ContentScale.Crop,
-					modifier = Modifier
-						.aspectRatio(1f)
-						.clip(RoundedCornerShape(4.dp))
-						.background(Color(0xFFE5E6EB))
-						.clickable { onOpenImage(item) },
-				)
+			// 用户创建的各个子相册
+			items(allAlbums) { album ->
+				val isSelected = selectedAlbumPath == album.path
+				Surface(
+					shape = RoundedCornerShape(16.dp),
+					color = if (isSelected) Color(0xFFFF3D71) else Color.White,
+					shadowElevation = if (isSelected) 3.dp else 1.dp,
+					onClick = { onSelectAlbum(album.path) },
+				) {
+					Row(
+						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(6.dp),
+					) {
+						Icon(Icons.Rounded.Folder, contentDescription = null, tint = if (isSelected) Color.White else Color(0xFFFF9500), modifier = Modifier.size(15.dp))
+						Text(album.name, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isSelected) Color.White else Color(0xFF1D2129))
+					}
+				}
+			}
+
+			// 尾部新建专属相册快捷胶囊
+			item {
+				Surface(
+					shape = RoundedCornerShape(16.dp),
+					color = Color(0xFFFFF0F5),
+					onClick = onCreateAlbum,
+				) {
+					Row(
+						modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(4.dp),
+					) {
+						Icon(Icons.Rounded.Add, contentDescription = null, tint = Color(0xFFFF3D71), modifier = Modifier.size(15.dp))
+						Text("新建相册", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF3D71))
+					}
+				}
+			}
+		}
+
+		// 2. 照片内容展示
+		if (groups.isEmpty()) {
+			Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+				Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+					FileIcon(category = FileCategory.Image, isDir = false, size = 56.dp)
+					Text("当前相册暂无照片", fontSize = 14.sp, color = Color(0xFF86909C))
+					Text("可点击右下角「+ 上传照片」直接存入此相册", fontSize = 12.sp, color = Color(0xFFC9CDD4))
+				}
+			}
+		} else {
+			LazyVerticalGrid(
+				columns = GridCells.Fixed(3),
+				contentPadding = PaddingValues(4.dp),
+				horizontalArrangement = Arrangement.spacedBy(3.dp),
+				verticalArrangement = Arrangement.spacedBy(3.dp),
+				modifier = Modifier.fillMaxSize(),
+			) {
+				groups.forEach { group ->
+					item(span = { GridItemSpan(3) }) {
+						Row(
+							modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(8.dp),
+						) {
+							Text(group.dateTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+							Text("${group.count}张", fontSize = 12.sp, color = Color(0xFF86909C))
+						}
+					}
+
+					items(group.items, key = { it.path }) { item ->
+						AsyncImage(
+							model = urlOf(item.path),
+							contentDescription = item.name,
+							contentScale = ContentScale.Crop,
+							modifier = Modifier
+								.aspectRatio(1f)
+								.clip(RoundedCornerShape(4.dp))
+								.background(Color(0xFFE5E6EB))
+								.clickable { onOpenImage(item) },
+						)
+					}
+				}
 			}
 		}
 	}
@@ -1471,69 +1574,156 @@ private fun PhotoTimelineContent(
 @Composable
 private fun MediaStreamContent(
 	videos: List<DavEntry>,
+	allMediaFolders: List<DavEntry>,
+	selectedMediaPath: String,
+	onSelectMediaFolder: (String) -> Unit,
+	onCreateMediaFolder: () -> Unit,
 	urlOf: (String) -> String?,
 	onOpenVideo: (DavEntry) -> Unit,
 ) {
-	if (videos.isEmpty()) {
-		Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-			Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-				FileIcon(category = FileCategory.Video, isDir = false, size = 56.dp)
-				Text("暂未发现高清影音视频", fontSize = 14.sp, color = Color(0xFF86909C))
+	Column(modifier = Modifier.fillMaxSize()) {
+		// 1. 顶部影集/影视分类横滑栏（让影音中创建的分类一目了然）
+		LazyRow(
+			contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+			horizontalArrangement = Arrangement.spacedBy(8.dp),
+			verticalAlignment = Alignment.CenterVertically,
+		) {
+			// "全部影视" 胶囊
+			item {
+				val isAll = selectedMediaPath.isBlank()
+				Surface(
+					shape = RoundedCornerShape(16.dp),
+					color = if (isAll) Color(0xFF722ED1) else Color.White,
+					shadowElevation = if (isAll) 3.dp else 1.dp,
+					onClick = { onSelectMediaFolder("") },
+				) {
+					Row(
+						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(6.dp),
+					) {
+						Icon(Icons.Rounded.VideoLibrary, contentDescription = null, tint = if (isAll) Color.White else Color(0xFF722ED1), modifier = Modifier.size(15.dp))
+						Text("全部影视", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isAll) Color.White else Color(0xFF1D2129))
+					}
+				}
+			}
+
+			// 用户创建的各个影集文件夹
+			items(allMediaFolders) { folder ->
+				val isSelected = selectedMediaPath == folder.path
+				Surface(
+					shape = RoundedCornerShape(16.dp),
+					color = if (isSelected) Color(0xFF722ED1) else Color.White,
+					shadowElevation = if (isSelected) 3.dp else 1.dp,
+					onClick = { onSelectMediaFolder(folder.path) },
+				) {
+					Row(
+						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(6.dp),
+					) {
+						Icon(Icons.Rounded.Folder, contentDescription = null, tint = if (isSelected) Color.White else Color(0xFFFF9500), modifier = Modifier.size(15.dp))
+						Text(folder.name, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isSelected) Color.White else Color(0xFF1D2129))
+					}
+				}
+			}
+
+			// 尾部新建影集快捷胶囊
+			item {
+				Surface(
+					shape = RoundedCornerShape(16.dp),
+					color = Color(0xFFF9F0FF),
+					onClick = onCreateMediaFolder,
+				) {
+					Row(
+						modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(4.dp),
+					) {
+						Icon(Icons.Rounded.Add, contentDescription = null, tint = Color(0xFF722ED1), modifier = Modifier.size(15.dp))
+						Text("新建影集", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF722ED1))
+					}
+				}
 			}
 		}
-		return
-	}
 
-	LazyColumn(
-		contentPadding = PaddingValues(14.dp),
-		verticalArrangement = Arrangement.spacedBy(12.dp),
-		modifier = Modifier.fillMaxSize(),
-	) {
-		items(videos, key = { it.path }) { video ->
-			Card(
-				shape = RoundedCornerShape(16.dp),
-				colors = CardDefaults.cardColors(containerColor = Color.White),
-				elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-				modifier = Modifier
-					.fillMaxWidth()
-					.clickable { onOpenVideo(video) },
+		// 2. 视频内容展示（带高清海报缩略图）
+		if (videos.isEmpty()) {
+			Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+				Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+					FileIcon(category = FileCategory.Video, isDir = false, size = 56.dp)
+					Text("当前分类暂无视频", fontSize = 14.sp, color = Color(0xFF86909C))
+					Text("可点击右下角「+ 上传视频」直接存入此影集", fontSize = 12.sp, color = Color(0xFFC9CDD4))
+				}
+			}
+		} else {
+			LazyColumn(
+				contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+				verticalArrangement = Arrangement.spacedBy(12.dp),
+				modifier = Modifier.fillMaxSize(),
 			) {
-				Column {
-					// 16:9 视频海报视窗
-					Box(
+				items(videos, key = { it.path }) { video ->
+					Card(
+						shape = RoundedCornerShape(16.dp),
+						colors = CardDefaults.cardColors(containerColor = Color.White),
+						elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
 						modifier = Modifier
 							.fillMaxWidth()
-							.aspectRatio(16f / 9f)
-							.background(Color(0xFF1D2129)),
-						contentAlignment = Alignment.Center,
+							.clickable { onOpenVideo(video) },
 					) {
-						Surface(
-							shape = CircleShape,
-							color = Color(0xFF2A72F6).copy(alpha = 0.85f),
-							modifier = Modifier.size(48.dp),
-						) {
-							Box(contentAlignment = Alignment.Center) {
-								Icon(Icons.Rounded.PlayArrow, contentDescription = "播放", tint = Color.White, modifier = Modifier.size(30.dp))
+						Column {
+							// 16:9 视频海报视窗（带缩略图与半透明播放层）
+							Box(
+								modifier = Modifier
+									.fillMaxWidth()
+									.aspectRatio(16f / 9f)
+									.background(Color(0xFF1D2129)),
+								contentAlignment = Alignment.Center,
+							) {
+								val vidUrl = urlOf(video.path)
+								if (!vidUrl.isNullOrBlank()) {
+									AsyncImage(
+										model = vidUrl,
+										contentDescription = video.name,
+										contentScale = ContentScale.Crop,
+										modifier = Modifier.fillMaxSize(),
+									)
+									Box(
+										modifier = Modifier
+											.fillMaxSize()
+											.background(Color.Black.copy(alpha = 0.25f))
+									)
+								}
+
+								Surface(
+									shape = CircleShape,
+									color = Color(0xFF722ED1).copy(alpha = 0.85f),
+									modifier = Modifier.size(48.dp),
+								) {
+									Box(contentAlignment = Alignment.Center) {
+										Icon(Icons.Rounded.PlayArrow, contentDescription = "播放", tint = Color.White, modifier = Modifier.size(30.dp))
+									}
+								}
+
+								// 右下角 4K/HDR 标签
+								Surface(
+									shape = RoundedCornerShape(6.dp),
+									color = Color.Black.copy(alpha = 0.65f),
+									modifier = Modifier
+										.align(Alignment.BottomEnd)
+										.padding(8.dp),
+								) {
+									Text("高清视频", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+								}
+							}
+
+							// 标题与元数据
+							Column(modifier = Modifier.padding(12.dp)) {
+								Text(video.pureName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis)
+								Spacer(modifier = Modifier.height(4.dp))
+								Text(formatMeta(video), fontSize = 11.sp, color = Color(0xFF86909C), maxLines = 1, overflow = TextOverflow.Ellipsis)
 							}
 						}
-
-						// 右下角 4K/HDR 标签
-						Surface(
-							shape = RoundedCornerShape(6.dp),
-							color = Color.Black.copy(alpha = 0.65f),
-							modifier = Modifier
-								.align(Alignment.BottomEnd)
-								.padding(8.dp),
-						) {
-							Text("4K / 60FPS", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-						}
-					}
-
-					// 标题与元数据
-					Column(modifier = Modifier.padding(12.dp)) {
-						Text(video.displayName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis)
-						Spacer(modifier = Modifier.height(4.dp))
-						Text(formatMeta(video), fontSize = 11.sp, color = Color(0xFF86909C), maxLines = 1, overflow = TextOverflow.Ellipsis)
 					}
 				}
 			}
@@ -1541,12 +1731,6 @@ private fun MediaStreamContent(
 	}
 }
 
-// ==================== 抽屉弹窗实现 ====================
-
-/**
- * 传输中心管理抽屉
- */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TransferCenterSheet(
 	tasks: List<TransferTask>,
