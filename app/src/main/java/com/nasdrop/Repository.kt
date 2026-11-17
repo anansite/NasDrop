@@ -3,7 +3,6 @@ package com.nasdrop
 import android.content.Context
 import android.util.Log
 import coil.ImageLoader
-import coil.decode.VideoFrameDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -121,18 +120,16 @@ class Repository(private val context: Context) {
 
 	val imageLoader: ImageLoader by lazy {
 		ImageLoader.Builder(context)
-			.components {
-				add(VideoFrameDecoder.Factory())
-			}
+			// 注意：移除了 VideoFrameDecoder.Factory()，杜绝移动端远程 WebDAV 对大视频发起多路并发全量下载拖垮网速与阻塞
 			.memoryCache {
 				MemoryCache.Builder(context)
-					.maxSizePercent(0.20)
+					.maxSizePercent(0.25)
 					.build()
 			}
 			.diskCache {
 				DiskCache.Builder()
 					.directory(context.cacheDir.resolve("image_cache"))
-					.maxSizeBytes(40L * 1024 * 1024)
+					.maxSizeBytes(300L * 1024 * 1024) // 扩大至 300MB，避免频繁逐出重下
 					.build()
 			}
 			.okHttpClient { imageOkHttp }

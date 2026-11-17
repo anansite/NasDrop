@@ -28,6 +28,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import coil.request.ImageRequest
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -63,7 +65,7 @@ fun FileThumbnail(
 	val cornerRadius = 6.dp
 
 	when {
-		// 1. 图片真实缩略图
+		// 1. 图片真实缩略图（带轻量灰度矢量占位与平滑淡入，彻底杜绝黑块）
 		entry.isImage -> {
 			val url = urlOf(entry.path)
 			var isError by remember(entry.path) { mutableStateOf(false) }
@@ -76,8 +78,19 @@ fun FileThumbnail(
 						.background(Color(0xFFF2F3F5)),
 					contentAlignment = Alignment.Center,
 				) {
+					// 占位图标：在图片未加载完成前展示轻量矢量标，绝无黑块空缺感
+					Icon(
+						imageVector = Icons.Rounded.Image,
+						contentDescription = null,
+						tint = Color(0xFFC9CDD4),
+						modifier = Modifier.size(size * 0.48f),
+					)
 					AsyncImage(
-						model = url,
+						model = ImageRequest.Builder(LocalContext.current)
+							.data(url)
+							.crossfade(true)
+							.size(256, 256)
+							.build(),
 						contentDescription = entry.name,
 						contentScale = ContentScale.Crop,
 						onError = { isError = true },
@@ -89,48 +102,7 @@ fun FileThumbnail(
 			}
 		}
 
-		// 2. 视频（如果有缩略图则展示缩略图，且右上角/中央带微小半透明播放角标）
-		entry.isVideo -> {
-			val url = urlOf(entry.path)
-			var isError by remember(entry.path) { mutableStateOf(false) }
-
-			if (!isError && !url.isNullOrBlank()) {
-				Box(
-					modifier = modifier
-						.size(size)
-						.clip(RoundedCornerShape(cornerRadius))
-						.background(Color(0xFF1D2129)),
-					contentAlignment = Alignment.Center,
-				) {
-					AsyncImage(
-						model = url,
-						contentDescription = entry.name,
-						contentScale = ContentScale.Crop,
-						onError = { isError = true },
-						modifier = Modifier.fillMaxSize(),
-					)
-					// 微小半透明播放三角形覆盖层
-					Box(
-						modifier = Modifier
-							.size(size * 0.45f)
-							.clip(RoundedCornerShape(size * 0.2f))
-							.background(Color.Black.copy(alpha = 0.45f)),
-						contentAlignment = Alignment.Center,
-					) {
-						Icon(
-							imageVector = Icons.Rounded.PlayArrow,
-							contentDescription = "播放",
-							tint = Color.White,
-							modifier = Modifier.size(size * 0.32f),
-						)
-					}
-				}
-			} else {
-				FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, modifier = modifier)
-			}
-		}
-
-		// 3. 其他文件类型
+		// 2. 视频与其它文件类型：秒级专属高辨识度徽标，严禁对远程视频大文件发起全量拉取，零网络流量消耗、零黑块等待
 		else -> {
 			FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, modifier = modifier)
 		}

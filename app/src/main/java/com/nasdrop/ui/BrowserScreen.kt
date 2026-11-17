@@ -286,6 +286,8 @@ fun BrowserScreen(
 						onCreateFolder = { activeCreateType = CreateDialogType.Folder },
 						onNavigate = { vm.open(it) },
 						onUp = { vm.up() },
+						routeInfo = routeInfo,
+						onOpenSettings = onOpenSettings,
 					)
 				}
 
@@ -302,6 +304,8 @@ fun BrowserScreen(
 							if (cur != null) activeFolderForDelete = Pair(cur, true)
 						},
 						onOpenTransferSheet = { showTransferSheet = true },
+						routeInfo = routeInfo,
+						onOpenSettings = onOpenSettings,
 					)
 				}
 
@@ -318,14 +322,25 @@ fun BrowserScreen(
 							if (cur != null) activeFolderForDelete = Pair(cur, false)
 						},
 						onOpenTransferSheet = { showTransferSheet = true },
+						routeInfo = routeInfo,
+						onOpenSettings = onOpenSettings,
 					)
 				}
 
 				MainTab.Me -> {
-					NetworkTopBar(
+					FilesTopBar(
+						vm = vm,
+						onUpload = { filePicker.launch(arrayOf("*/*")) },
+						onOpenTransferSheet = { showTransferSheet = true },
+						onToggleViewMode = { vm.cycleViewMode() },
+						onToggleMultiSelect = {
+							if (vm.isMultiSelectMode) vm.exitMultiSelect()
+							else vm.enterMultiSelect()
+						},
+						onCreateFolder = { activeCreateType = CreateDialogType.Folder },
+						onNavigate = { vm.open(it) },
+						onUp = { vm.up() },
 						routeInfo = routeInfo,
-						hasUpdate = vm.hasUpdate,
-						onOpenUpdateDialog = { vm.openUpdateDialog() },
 						onOpenSettings = onOpenSettings,
 					)
 				}
@@ -810,6 +825,44 @@ private fun PickBar(
 	}
 }
 
+// ==================== 极简服务配置入口与网络状态圆点 ====================
+
+@Composable
+private fun SettingsWithStatusButton(
+	routeInfo: RouteInfo,
+	onClick: () -> Unit,
+	modifier: Modifier = Modifier,
+) {
+	val dotColor = when {
+		routeInfo.isLan -> Color(0xFF00B578)      // 🟢 局域网直连 (千兆绿)
+		routeInfo.isDirect -> Color(0xFF2A72F6)   // 🔵 Tailscale打洞直连 (极速蓝)
+		routeInfo.isRelay -> Color(0xFFFF7D00)    // 🟠 DERP中继 (橙点)
+		else -> Color(0xFFFF4D4F)                 // 🔴 离线/未连接 (红点)
+	}
+
+	IconButton(
+		onClick = onClick,
+		modifier = modifier.size(32.dp),
+	) {
+		Box(contentAlignment = Alignment.Center) {
+			Icon(
+				imageVector = Icons.Rounded.Settings,
+				contentDescription = "服务与配置",
+				tint = Color(0xFF4E5969),
+				modifier = Modifier.size(20.dp),
+			)
+			Box(
+				modifier = Modifier
+					.size(7.dp)
+					.clip(CircleShape)
+					.background(dotColor)
+					.border(1.dp, Color.White, CircleShape)
+					.align(Alignment.TopEnd),
+			)
+		}
+	}
+}
+
 // ==================== 顶部导航栏与状态胶囊 ====================
 
 @Composable
@@ -822,6 +875,8 @@ private fun PhotosTopBar(
 	onCreateAlbum: () -> Unit,
 	onDeleteCurrentAlbum: (() -> Unit)? = null,
 	onOpenTransferSheet: () -> Unit,
+	routeInfo: RouteInfo,
+	onOpenSettings: () -> Unit,
 ) {
 	// 固定 44dp 行高，平滑统一面包屑，杜绝跳动
 	Row(
@@ -876,6 +931,10 @@ private fun PhotosTopBar(
 					}
 				}
 			}
+			SettingsWithStatusButton(
+				routeInfo = routeInfo,
+				onClick = onOpenSettings,
+			)
 		}
 	}
 }
@@ -890,6 +949,8 @@ private fun MediaTopBar(
 	onCreateMediaFolder: () -> Unit,
 	onDeleteCurrentMedia: (() -> Unit)? = null,
 	onOpenTransferSheet: () -> Unit,
+	routeInfo: RouteInfo,
+	onOpenSettings: () -> Unit,
 ) {
 	// 固定 44dp 行高，平滑统一面包屑，杜绝跳动
 	Row(
@@ -944,6 +1005,10 @@ private fun MediaTopBar(
 					}
 				}
 			}
+			SettingsWithStatusButton(
+				routeInfo = routeInfo,
+				onClick = onOpenSettings,
+			)
 		}
 	}
 }
@@ -1004,6 +1069,8 @@ private fun FilesTopBar(
 	onCreateFolder: () -> Unit,
 	onNavigate: (String) -> Unit,
 	onUp: () -> Unit,
+	routeInfo: RouteInfo,
+	onOpenSettings: () -> Unit,
 ) {
 	var isSearchActive by remember { mutableStateOf(false) }
 	val parts = remember(vm.path) {
@@ -1149,6 +1216,11 @@ private fun FilesTopBar(
 							}
 						}
 					}
+
+					SettingsWithStatusButton(
+						routeInfo = routeInfo,
+						onClick = onOpenSettings,
+					)
 				}
 			}
 		}
@@ -1939,28 +2011,24 @@ private fun MediaStreamContent(
 							),
 					) {
 						Column {
-							// 16:9 高清缩略图海报视窗
+							// 16:9 院线质感海报视窗（零网络消耗，毫秒呈现，告别大视频拉取黑块等待）
 							Box(
 								modifier = Modifier
 									.fillMaxWidth()
 									.aspectRatio(16f / 9f)
-									.background(Color(0xFF1D2129)),
+									.background(
+										Brush.linearGradient(
+											listOf(Color(0xFF2E1C4E), Color(0xFF1D2129))
+										)
+									),
 								contentAlignment = Alignment.Center,
 							) {
-								val vidUrl = urlOf(video.path)
-								if (!vidUrl.isNullOrBlank()) {
-									AsyncImage(
-										model = vidUrl,
-										contentDescription = video.name,
-										contentScale = ContentScale.Crop,
-										modifier = Modifier.fillMaxSize(),
-									)
-									Box(
-										modifier = Modifier
-											.fillMaxSize()
-											.background(Color.Black.copy(alpha = 0.2f))
-									)
-								}
+								Icon(
+									imageVector = Icons.Rounded.Videocam,
+									contentDescription = null,
+									tint = Color.White.copy(alpha = 0.15f),
+									modifier = Modifier.size(52.dp),
+								)
 
 								// 微质感播放指示器
 								Surface(
@@ -2857,13 +2925,6 @@ private fun CommercialNavigationBar(
 					icon = Icons.Rounded.VideoLibrary,
 					selected = currentTab == MainTab.Media,
 					onClick = { onTabSelect(MainTab.Media) },
-					modifier = Modifier.weight(1f),
-				)
-				CompactTabItem(
-					title = "服务设置",
-					icon = Icons.Rounded.Speed,
-					selected = currentTab == MainTab.Me,
-					onClick = { onTabSelect(MainTab.Me) },
 					modifier = Modifier.weight(1f),
 				)
 			}
