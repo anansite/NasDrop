@@ -222,9 +222,15 @@ class WebDavClient(private val base: HttpUrl, private val http: OkHttpClient) {
 		parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
 		parser.setInput(input, null)
 
-		val rootDecoded = decode(base.encodedPath).trimEnd('/')
 		val targetRel = basePath.trim('/')
 		val out = ArrayList<DavEntry>()
+
+		// 先收集本页所有 <response>，再统一决定如何剥离 href 前缀。
+		// 不能直接用配置里 base 的路径当前缀：AList/OpenList 的 WebDAV 固定把根回报成
+		// /dav/…，而客户端 base 可能写的是 /nas/（反代路径）或 /dav/。硬用 base 路径去
+		// 剥会剥不掉，于是每个条目的 path 都带上一个多余的 "dav/"，后续删除/下载/进入
+		// 子目录就会拼成 /nas/dav/xxx → 404。这里改为从响应自身推断真实前缀。
+		val responses = ArrayList<Raw>()
 
 		var href: String? = null
 		var isDir = false
@@ -245,33 +251,90 @@ class WebDavClient(private val base: HttpUrl, private val http: OkHttpClient) {
 					"getlastmodified" -> modified = parseDate(parser.nextText())
 				}
 			} else if (event == XmlPullParser.END_TAG && parser.name == "response" && inResponse) {
-				val raw = href
-				if (raw != null) {
-					val decoded = decode(raw)
-					val rel = (if (rootDecoded.isNotEmpty() && decoded.startsWith(rootDecoded)) {
-						decoded.removePrefix(rootDecoded)
-					} else {
-						decoded
-					}).trim('/')
-					// 排除空路径以及当前所请求目录自身
-					if (rel.isNotEmpty() && rel != targetRel) {
-						out += DavEntry(
-							name = rel.substringAfterLast('/'),
-							path = rel,
-							isDir = isDir || decoded.endsWith("/"),
-							size = size,
-							modified = modified,
-						)
-					}
-				}
+				responses += Raw(href, isDir, size, modified)
 				inResponse = false
 			}
 			event = parser.next()
 		}
 
+		// 推断服务端 WebDAV 根的 href 前缀。 Depth:1 的响应里，第一条通常是目录自身
+		// （如 /dav/ 或 /dav/Photos/）；取所有 href 的最长公共目录前缀即可得到一个稳定的根。
+		// 更稳妥的做法：找到"目录自身"那条（其相对路径恰好等于 targetRel），
+		// 它去掉 targetRel 后的部分就是根前缀。找不到时再退回最长公共前缀。
+		val decodedHrefs = responses.mapNotNull { it.href }.map { decode(it) }
+		val rootPrefix = inferRootPrefix(decodedHrefs, targetRel, base.encodedPath)
+
+		for (r in responses) {
+			val raw = r.href
+			if (raw != null) {
+				val decoded = decode(raw)
+				val trimmed = decoded.trimEnd('/')
+				val rel = when {
+					rootPrefix.isNotEmpty() && trimmed == rootPrefix -> "" // 目录自身
+					rootPrefix.isNotEmpty() && trimmed.startsWith("$rootPrefix/") ->
+						trimmed.removePrefix("$rootPrefix/")
+					else -> decoded.trim('/')
+				}
+				// 排除空路径以及当前所请求目录自身
+				if (rel.isNotEmpty() && rel != targetRel) {
+					out += DavEntry(
+						name = rel.substringAfterLast('/'),
+						path = rel,
+						isDir = r.isDir || decoded.endsWith("/"),
+						size = r.size,
+						modified = r.modified,
+					)
+				}
+			}
+		}
+
 		return out.sortedWith(
 			compareByDescending<DavEntry> { it.isDir }.thenBy { it.name.lowercase(Locale.ROOT) },
 		)
+	}
+
+	/**
+	 * 从 PROPFIND 响应推断服务端的 WebDAV 根前缀（形如 "/dav"，不带结尾斜杠）。
+	 *
+	 * 优先路径：找一条 href，其解码后路径去掉尾斜杠，恰好以 "/$targetRel" 结尾，
+	 * 那么把它去掉 "/$targetRel" 就是根。这样 AList/OpenList(/dav)、原生 WebDAV(/nas)、
+	 * 甚至挂在子路径的服务都能自动适配，且不受配置里 base 写什么影响。
+	 * 兜底：取所有 href 的最长公共路径段前缀；再兜底用 base 的编码路径。
+	 */
+	private fun inferRootPrefix(hrefs: List<String>, targetRel: String, basePath: String): String {
+		fun norm(p: String) = p.trim().trimEnd('/').let { if (it.isEmpty()) "/" else it }
+
+		// 1) 目录自身那条：/dav/Photos → 去掉 /Photos 得到 /dav
+		if (targetRel.isNotEmpty()) {
+			val suffix = "/$targetRel"
+			hrefs.firstOrNull { h ->
+				val n = norm(h)
+				n == suffix || n.endsWith(suffix)
+			}?.let { h ->
+				val n = norm(h)
+				val cut = n.removeSuffix(suffix).trimEnd('/')
+				if (cut.isNotEmpty()) return cut
+			}
+		} else {
+			// 根目录：目录自身的 href 就是根，取层级最浅的一条
+			hrefs.map { norm(it) }.minByOrNull { it.count { c -> c == '/' } }?.let { return it }
+		}
+
+		// 2) 最长公共段前缀
+		val paths = hrefs.map { norm(it).split('/').filter { it.isNotEmpty() } }
+		if (paths.isNotEmpty()) {
+			val first = paths.first()
+			var common = first.size
+			for (p in paths) {
+				var i = 0
+				while (i < common && i < p.size && first[i] == p[i]) i++
+				common = i
+			}
+			if (common > 0) return "/" + first.take(common).joinToString("/")
+		}
+
+		// 3) 退回 base 路径
+		return norm(basePath)
 	}
 
 	private fun decode(raw: String): String = try {
@@ -287,6 +350,8 @@ class WebDavClient(private val base: HttpUrl, private val http: OkHttpClient) {
 	}
 
 	companion object {
+		private data class Raw(val href: String?, val isDir: Boolean, val size: Long, val modified: Long)
+
 		private const val PROPFIND_BODY = """<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:"><d:prop>
 <d:resourcetype/><d:getcontentlength/><d:getlastmodified/>

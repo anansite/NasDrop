@@ -19,8 +19,8 @@ enum class ConnectionMode(val title: String, val desc: String) {
 }
 
 data class Settings(
-	/** WebDAV 根地址，必须带结尾斜杠，例如 https://nas.205002.xyz/nas/ */
-	val baseUrl: String = "https://nas.205002.xyz/nas/",
+	/** WebDAV 根地址，必须带结尾斜杠，例如 https://nas.205002.xyz/dav/ 或 https://nas.205002.xyz/nas/ */
+	val baseUrl: String = "https://nas.205002.xyz/dav/",
 	val user: String = "admin",
 	val password: String = "admin",
 	/** 上次选择的上传目录（相对根路径），分享流程默认落在这里 */
