@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.align
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.videoFrameMillis
 import com.nasdrop.DavEntry
 import com.nasdrop.FileCategory
 import com.nasdrop.NasFolderIcon
@@ -101,7 +103,52 @@ fun FileThumbnail(
 			}
 		}
 
-		// 2. 视频与其它文件类型：秒级专属高辨识度徽标，严禁对远程视频大文件发起全量拉取，零网络流量消耗、零黑块等待
+		// 2. 视频首帧缩略图：小尺寸加载视频中间帧；加载中/失败回退渐变海报，绝不黑块、绝不卡列表
+		entry.isVideo -> {
+			val url = urlOf(entry.path)
+			var isError by remember(entry.path) { mutableStateOf(false) }
+
+			if (!isError && !url.isNullOrBlank()) {
+				Box(
+					modifier = modifier
+						.size(size)
+						.clip(RoundedCornerShape(cornerRadius))
+						.background(Brush.linearGradient(listOf(Color(0xFF391085), Color(0xFF1D2129)))),
+					contentAlignment = Alignment.Center,
+				) {
+					// 占位：播放图标，缩略图未就绪时可见
+					Icon(
+						imageVector = Icons.Rounded.PlayArrow,
+						contentDescription = null,
+						tint = Color(0xB3FFFFFF),
+						modifier = Modifier.size(size * 0.58f),
+					)
+					AsyncImage(
+						model = ImageRequest.Builder(LocalContext.current)
+							.data(url)
+							.crossfade(true)
+							.size(160, 160) // 极小尺寸，限制解码开销与内存
+							.videoFrameMillis(1000L) // 取第 1 秒帧，避开常见的纯黑首帧
+							.build(),
+						contentDescription = entry.name,
+						contentScale = ContentScale.Crop,
+						onError = { isError = true },
+						modifier = Modifier.fillMaxSize(),
+					)
+					// 半透明播放角标，保留"这是视频"的辨识度
+					Icon(
+						imageVector = Icons.Rounded.PlayArrow,
+						contentDescription = null,
+						tint = Color(0xCCFFFFFF),
+						modifier = Modifier.size(size * 0.34f).align(Alignment.BottomEnd).padding(2.dp),
+					)
+				}
+			} else {
+				FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, modifier = modifier)
+			}
+		}
+
+		// 3. 其它文件类型：秒级专属高辨识度徽标，零网络流量消耗
 		else -> {
 			FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, modifier = modifier)
 		}

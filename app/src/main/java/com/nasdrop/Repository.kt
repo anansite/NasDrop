@@ -120,7 +120,10 @@ class Repository(private val context: Context) {
 
 	val imageLoader: ImageLoader by lazy {
 		ImageLoader.Builder(context)
-			// 注意：移除了 VideoFrameDecoder.Factory()，杜绝移动端远程 WebDAV 对大视频发起多路并发全量下载拖垮网速与阻塞
+			// 恢复视频首帧解码：仅用于文件列表里的小尺寸缩略图（请求 160×160）。
+			// 配合 FileIcon 里对视频统一 .size(160,160) + 小内存缓存，
+			// MediaMetadataRetriever 走 OkHttp 拉流并 seek 到首帧，不会整段下载到内存。
+			.components { add(coil.decode.VideoFrameDecoder.Factory()) }
 			.memoryCache {
 				MemoryCache.Builder(context)
 					.maxSizePercent(0.25)
@@ -275,6 +278,13 @@ class Repository(private val context: Context) {
 				if (bytes.size == 4) {
 					val b0 = bytes[0].toInt() and 0xFF
 					val b1 = bytes[1].toInt() and 0xFF
+					// 100.64.0.0/10 是 CGNAT 保留段，Tailscale 的 tailnet 节点地址就落在这里。
+					// 域名解析到该段说明目标是 tailnet 内节点——必须交给内嵌 tsnet 打洞，
+					// 不能被原生 OkHttp 当成"系统专线直连"，否则等于绕过了隧道。
+					if (b0 == 100 && b1 in 64..127) {
+						Log.i("Repository", "Tailnet address detected ($ip), skip direct probe; let tsnet handle it")
+						return null
+					}
 					isLan = (b0 == 10) ||
 						(b0 == 172 && (b1 in 16..31)) ||
 						(b0 == 192 && b1 == 168) ||
