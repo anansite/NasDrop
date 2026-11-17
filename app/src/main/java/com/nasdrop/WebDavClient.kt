@@ -99,6 +99,14 @@ class WebDavClient(
 	private val thumbUrls = java.util.concurrent.ConcurrentHashMap<String, String>()
 	/** OpenList 原生直链签名：path -> sign（来自 fs/list），用于 /p/<path>?sign= 原图/原视频直链 */
 	private val signUrls = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+	/**
+	 * 服务端真实的 WebDAV 根前缀（例如 "/dav"），从 PROPFIND 的 href 推断。
+	 *
+	 * 为什么需要：客户端填的 base 可能是反代路径（如 /nas/），而 MOVE 的 Destination
+	 * 头不会被反代重写，必须写服务端自己的 WebDAV 根，否则 404。
+	 */
+	@Volatile private var davRootPrefix: String? = null
 	@Volatile private var openListToken: String? = null
 	/** 上次登录失败的时间戳：冷却期内不重复打卡，但过期后必须重试（见 ensureOpenListToken） */
 	@Volatile private var thumbAuthFailedAt = 0L
@@ -325,14 +333,18 @@ class WebDavClient(
 	/**
 	 * 移动 / 重命名。
 	 *
-	 * Destination 只给**路径**（/dav/movies/a.jpg），不带 scheme 和 host——这是实测结论：
-	 * OpenList 前置的 nginx 会校验 Destination 的主机名必须与请求的 Host 完全一致，
-	 * 只要不一致（哪怕同一个域名换个端口）就直接 502 Bad Gateway；而隧道模式下我们请求的
-	 * Host 是 127.0.0.1:<本地端口>、服务端看到的 Host 是真实域名，必然不一致。
-	 * 这正是"移动文件完全没反应"的根因。只给路径则两种模式都返回 201。
+	 * Destination 必须是**服务端视角**的绝对路径，而且主机名不能带（实测：带上任何
+	 * 与请求 Host 不一致的主机会被 nginx 直接 502）。
+	 *
+	 * 更坑的是路径前缀：客户端配置的 base 可能是反代路径（实测这台是
+	 * https://nas.205002.xyz/nas/，nginx 会把 /nas/ 重写成 /dav/），
+	 * 但 **nginx 只重写请求行，不重写 Destination 头**。所以 Destination 写
+	 * /nas/movies/x 会 404（实测），必须写服务端真实的 WebDAV 根 /dav/movies/x（实测 201）。
+	 * 这里用列目录时从 href 推断出的真实前缀，推断不到才退回 base 自身路径。
 	 */
 	fun move(from: String, to: String) {
-		val destination = urlFor(to).encodedPath
+		val prefix = (davRootPrefix ?: base.encodedPath).trimEnd('/')
+		val destination = "$prefix/" + to.trim('/')
 		val req = Request.Builder()
 			.url(urlFor(from))
 			.method("MOVE", null)
@@ -553,6 +565,8 @@ class WebDavClient(
 		// 它去掉 targetRel 后的部分就是根前缀。找不到时再退回最长公共前缀。
 		val decodedHrefs = responses.mapNotNull { it.href }.map { decode(it) }
 		val rootPrefix = inferRootPrefix(decodedHrefs, targetRel, base.encodedPath)
+		// 记住服务端真实的 WebDAV 根（如 /dav），MOVE 的 Destination 要用它
+		if (rootPrefix.isNotBlank()) davRootPrefix = rootPrefix.trimEnd('/')
 
 		for (r in responses) {
 			val raw = r.href
