@@ -1323,6 +1323,21 @@ private fun FileBrowserContent(
 					}
 					HorizontalDivider(color = Color(0xFFF7F8FA), thickness = 0.5.dp)
 				}
+
+				item {
+					Box(
+						modifier = Modifier
+							.fillMaxWidth()
+							.padding(vertical = 18.dp),
+						contentAlignment = Alignment.Center,
+					) {
+						Text(
+							text = "${items.size}项  已同步至私有云NAS",
+							fontSize = 11.sp,
+							color = Color(0xFFC9CDD4),
+						)
+					}
+				}
 			}
 		}
 
@@ -1853,6 +1868,13 @@ private fun TransferCenterSheet(
 					modifier = Modifier.fillMaxWidth(),
 				) {
 					items(tasks, key = { it.id }) { task ->
+						val statusText = when (task.status) {
+							TransferStatus.RUNNING -> if (task.isUpload) "正在上传" else "正在下载"
+							TransferStatus.QUEUED -> "排队等待中"
+							TransferStatus.PAUSED -> "已暂停"
+							TransferStatus.COMPLETED -> if (task.isUpload) "上传完成" else "下载完成"
+							TransferStatus.FAILED -> (if (task.isUpload) "上传失败" else "下载失败") + if (!task.error.isNullOrBlank()) ": ${task.error}" else ""
+						}
 						Surface(
 							shape = RoundedCornerShape(12.dp),
 							color = Color(0xFFF7F8FA),
@@ -1864,7 +1886,32 @@ private fun TransferCenterSheet(
 									verticalAlignment = Alignment.CenterVertically,
 									horizontalArrangement = Arrangement.SpaceBetween,
 								) {
-									Text(task.name, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+									Row(
+										verticalAlignment = Alignment.CenterVertically,
+										horizontalArrangement = Arrangement.spacedBy(6.dp),
+										modifier = Modifier.weight(1f),
+									) {
+										Surface(
+											shape = RoundedCornerShape(4.dp),
+											color = if (task.isUpload) Color(0xFFE8F3FF) else Color(0xFFE8FFEA),
+										) {
+											Text(
+												text = if (task.isUpload) "上传" else "下载",
+												fontSize = 10.sp,
+												fontWeight = FontWeight.Bold,
+												color = if (task.isUpload) Color(0xFF165DFF) else Color(0xFF00B578),
+												modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+											)
+										}
+										Text(
+											text = task.name,
+											fontSize = 13.sp,
+											fontWeight = FontWeight.Bold,
+											color = Color(0xFF1D2129),
+											maxLines = 1,
+											overflow = TextOverflow.Ellipsis,
+										)
+									}
 									Text(task.speedStr, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2A72F6))
 								}
 
@@ -1875,7 +1922,7 @@ private fun TransferCenterSheet(
 										.fillMaxWidth()
 										.height(5.dp)
 										.clip(RoundedCornerShape(3.dp)),
-									color = Color(0xFF2A72F6),
+									color = if (task.isUpload) Color(0xFF165DFF) else Color(0xFF2A72F6),
 									trackColor = Color(0xFFE5E6EB),
 								)
 								Spacer(modifier = Modifier.height(6.dp))
@@ -1886,18 +1933,27 @@ private fun TransferCenterSheet(
 									horizontalArrangement = Arrangement.SpaceBetween,
 								) {
 									Text(
-										text = "${formatSize(task.sentBytes)} / ${formatSize(task.totalBytes)} · ${task.status.name}",
+										text = "${formatSize(task.sentBytes)} / ${if (task.totalBytes > 0) formatSize(task.totalBytes) else "--"} · $statusText",
 										fontSize = 11.sp,
 										color = Color(0xFF86909C),
+										maxLines = 1,
+										overflow = TextOverflow.Ellipsis,
+										modifier = Modifier.weight(1f, fill = false),
 									)
 
 									Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-										if (task.status == TransferStatus.RUNNING) {
+										if (task.status == TransferStatus.RUNNING && !task.isUpload) {
 											Text("暂停", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2A72F6), modifier = Modifier.clickable { onPauseTask(task.id) })
-										} else if (task.status == TransferStatus.PAUSED) {
+										} else if (task.status == TransferStatus.PAUSED && !task.isUpload) {
 											Text("继续", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00B578), modifier = Modifier.clickable { onResumeTask(task.id) })
 										}
-										Text("取消", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF4D4F), modifier = Modifier.clickable { onCancelTask(task.id) })
+										Text(
+											text = if (task.status == TransferStatus.COMPLETED) "清除" else "取消",
+											fontSize = 11.sp,
+											fontWeight = FontWeight.Bold,
+											color = Color(0xFFFF4D4F),
+											modifier = Modifier.clickable { onCancelTask(task.id) },
+										)
 									}
 								}
 							}

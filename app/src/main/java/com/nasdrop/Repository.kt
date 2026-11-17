@@ -6,7 +6,9 @@ import coil.ImageLoader
 import coil.decode.VideoFrameDecoder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import okhttp3.ConnectionPool
 import okhttp3.Credentials
+import okhttp3.Dispatcher
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
@@ -74,6 +76,11 @@ class Repository(private val context: Context) {
 	}
 
 	private val okHttp: OkHttpClient = OkHttpClient.Builder()
+		.dispatcher(Dispatcher().apply {
+			maxRequests = 128
+			maxRequestsPerHost = 64
+		})
+		.connectionPool(ConnectionPool(32, 5, TimeUnit.MINUTES))
 		.addInterceptor { chain ->
 			val b = chain.request().newBuilder()
 			authHeader?.let { b.header("Authorization", it) }
@@ -92,12 +99,23 @@ class Repository(private val context: Context) {
 		.readTimeout(1500, TimeUnit.MILLISECONDS)
 		.build()
 
+	private val imageOkHttp: OkHttpClient by lazy {
+		okHttp.newBuilder()
+			.dispatcher(Dispatcher().apply {
+				maxRequests = 24
+				maxRequestsPerHost = 16
+			})
+			.connectTimeout(10, TimeUnit.SECONDS)
+			.readTimeout(30, TimeUnit.SECONDS)
+			.build()
+	}
+
 	val imageLoader: ImageLoader by lazy {
 		ImageLoader.Builder(context)
 			.components {
 				add(VideoFrameDecoder.Factory())
 			}
-			.okHttpClient { okHttp }
+			.okHttpClient { imageOkHttp }
 			.crossfade(true)
 			.build()
 	}

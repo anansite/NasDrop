@@ -15,6 +15,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -185,8 +187,17 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		private set
 
 	// ========== 传输管理中心状态 ==========
+	private var downloadTasks by mutableStateOf<List<TransferTask>>(emptyList())
+	private var uploadTasks by mutableStateOf<List<TransferTask>>(emptyList())
+
 	var transferTasks by mutableStateOf<List<TransferTask>>(emptyList())
 		private set
+
+	private fun syncTransferTasks() {
+		viewModelScope.launch(Dispatchers.Main) {
+			transferTasks = uploadTasks + downloadTasks
+		}
+	}
 
 	val activeTransferCount: Int
 		get() = transferTasks.count { it.status == TransferStatus.RUNNING || it.status == TransferStatus.QUEUED }
@@ -239,6 +250,41 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch { scanGlobalMedia() }
 		viewModelScope.launch { startAutoHealing() }
 		startTransferWorker()
+		viewModelScope.launch {
+			val lastSentMap = mutableMapOf<String, Long>()
+			val lastTimeMap = mutableMapOf<String, Long>()
+			Uploads.tasks.collect { list ->
+				val now = System.currentTimeMillis()
+				uploadTasks = list.map { up ->
+					val prevSent = lastSentMap[up.uri] ?: 0L
+					val prevTime = lastTimeMap[up.uri] ?: now
+					val dt = (now - prevTime).coerceAtLeast(1)
+					val dSent = (up.sent - prevSent).coerceAtLeast(0)
+					val speed = if (up.done || up.error != null) 0L else (dSent * 1000 / dt)
+					lastSentMap[up.uri] = up.sent
+					lastTimeMap[up.uri] = now
+
+					val status = when {
+						up.done && up.error == null -> TransferStatus.COMPLETED
+						up.error != null -> TransferStatus.FAILED
+						up.sent > 0 -> TransferStatus.RUNNING
+						else -> TransferStatus.QUEUED
+					}
+					TransferTask(
+						id = "upload_${up.uri.hashCode()}",
+						name = up.name,
+						path = up.uri,
+						isUpload = true,
+						totalBytes = up.total,
+						sentBytes = up.sent,
+						speedBytesPerSec = speed,
+						status = status,
+						error = up.error,
+					)
+				}
+				syncTransferTasks()
+			}
+		}
 		viewModelScope.launch {
 			Uploads.uploadCompletedEvent.collect {
 				refresh()
@@ -360,7 +406,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	// ==================== 并发传输队列管理 ====================
 	fun enqueueDownload(context: Context, entry: DavEntry) {
 		// 避免重复入队
-		if (transferTasks.any { it.path == entry.path && it.status != TransferStatus.FAILED }) return
+		if (downloadTasks.any { it.path == entry.path && it.status != TransferStatus.FAILED }) return
 		val task = TransferTask(
 			name = entry.name,
 			path = entry.path,
@@ -368,52 +414,65 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			totalBytes = entry.size,
 			status = TransferStatus.QUEUED,
 		)
-		transferTasks = transferTasks + task
+		downloadTasks = downloadTasks + task
+		syncTransferTasks()
 		// 每次发起传输时，若当前不是直连，顺便触发一次打洞自愈
 		punchHole()
 	}
 
 	fun pauseTask(taskId: String) {
-		transferTasks = transferTasks.map {
+		downloadTasks = downloadTasks.map {
 			if (it.id == taskId && (it.status == TransferStatus.RUNNING || it.status == TransferStatus.QUEUED)) {
 				it.copy(status = TransferStatus.PAUSED, speedBytesPerSec = 0)
 			} else it
 		}
+		syncTransferTasks()
 	}
 
 	fun resumeTask(taskId: String) {
-		transferTasks = transferTasks.map {
+		downloadTasks = downloadTasks.map {
 			if (it.id == taskId && it.status == TransferStatus.PAUSED) {
 				it.copy(status = TransferStatus.QUEUED)
 			} else it
 		}
+		syncTransferTasks()
 	}
 
 	fun cancelTask(taskId: String) {
-		transferTasks = transferTasks.filterNot { it.id == taskId }
+		if (taskId.startsWith("upload_")) {
+			uploadTasks = uploadTasks.filterNot { it.id == taskId }
+			if (uploadTasks.isEmpty()) {
+				Uploads.clear()
+			}
+		} else {
+			downloadTasks = downloadTasks.filterNot { it.id == taskId }
+		}
+		syncTransferTasks()
 	}
 
 	fun pauseAll() {
-		transferTasks = transferTasks.map {
+		downloadTasks = downloadTasks.map {
 			if (it.status == TransferStatus.RUNNING || it.status == TransferStatus.QUEUED) {
 				it.copy(status = TransferStatus.PAUSED, speedBytesPerSec = 0)
 			} else it
 		}
+		syncTransferTasks()
 	}
 
 	fun resumeAll() {
-		transferTasks = transferTasks.map {
+		downloadTasks = downloadTasks.map {
 			if (it.status == TransferStatus.PAUSED) {
 				it.copy(status = TransferStatus.QUEUED)
 			} else it
 		}
+		syncTransferTasks()
 	}
 
 	private fun startTransferWorker() {
 		transferJob?.cancel()
 		transferJob = viewModelScope.launch(Dispatchers.IO) {
 			while (isActive) {
-				val nextTask = transferTasks.firstOrNull { it.status == TransferStatus.QUEUED }
+				val nextTask = downloadTasks.firstOrNull { it.status == TransferStatus.QUEUED }
 				if (nextTask == null) {
 					delay(1000)
 					continue
@@ -511,16 +570,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	private fun updateTask(taskId: String, block: (TransferTask) -> Unit) {
-		val list = transferTasks.map {
+		downloadTasks = downloadTasks.map {
 			if (it.id == taskId) {
 				val copy = it.copy()
 				block(copy)
 				copy
 			} else it
 		}
-		viewModelScope.launch(Dispatchers.Main) {
-			transferTasks = list
-		}
+		syncTransferTasks()
 	}
 
 	// ==================== 浏览与目录 ====================
@@ -721,12 +778,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		allFolderPaths = (allFolderPaths + dirs).distinct().sorted()
 	}
 
+	private val scanSemaphore = Semaphore(2)
+
 	private suspend fun scanGlobalMedia() {
 		withContext(Dispatchers.IO) {
 			try {
 				val s = app.prefs.current()
 				val c = app.repo.client(s)
-				val rootEntries = c.list("")
+				val rootEntries = scanSemaphore.withPermit { c.list("") }
 				collectMediaFrom(rootEntries)
 				updateFolderPaths(rootEntries)
 
@@ -734,8 +793,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				val mediaAlbums = mutableListOf<DavEntry>()
 
 				for (dir in rootEntries.filter { it.isDir }) {
+					if (loading) delay(200)
 					runCatching {
-						val sub = c.list(dir.path)
+						val sub = scanSemaphore.withPermit { c.list(dir.path) }
 						dirCache[dir.path] = sub
 						collectMediaFrom(sub)
 						updateFolderPaths(sub)
@@ -743,8 +803,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						if (dir.name.equals("Photos", ignoreCase = true) || dir.name == "相册") {
 							albums.addAll(sub.filter { it.isDir })
 							for (subDir in sub.filter { it.isDir }) {
+								if (loading) delay(200)
 								runCatching {
-									val subSub = c.list(subDir.path)
+									val subSub = scanSemaphore.withPermit { c.list(subDir.path) }
 									dirCache[subDir.path] = subSub
 									collectMediaFrom(subSub)
 									updateFolderPaths(subSub)
@@ -753,8 +814,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						} else if (dir.name.equals("Movies", ignoreCase = true) || dir.name == "影视" || dir.name == "影音") {
 							mediaAlbums.addAll(sub.filter { it.isDir })
 							for (subDir in sub.filter { it.isDir }) {
+								if (loading) delay(200)
 								runCatching {
-									val subSub = c.list(subDir.path)
+									val subSub = scanSemaphore.withPermit { c.list(subDir.path) }
 									dirCache[subDir.path] = subSub
 									collectMediaFrom(subSub)
 									updateFolderPaths(subSub)

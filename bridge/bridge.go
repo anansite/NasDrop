@@ -31,6 +31,7 @@ import (
 	// 那个包的注册文件构建标签是 (linux && !android) || (android && !cgo)，
 	// 而 gomobile bind 是 android + cgo，导入它等于什么都没做（.so 里不会有任何
 	// androidbin 符号）。网卡枚举的绕行方案在本包的 interfaces.go 里自己注册。
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 )
@@ -300,6 +301,65 @@ func AuthURL() string {
 	return st.AuthURL
 }
 
+// targetPeer 优先根据用户配置的 target 寻找对端的 PeerStatus。
+// 如果找不到精确匹配，则遍历查找当前正在活跃通信或拥有有效直连地址的 peer。
+func targetPeer(st *ipnstate.Status) *ipnstate.PeerStatus {
+	if st == nil || len(st.Peer) == 0 {
+		return nil
+	}
+
+	mu.Lock()
+	t := target
+	mu.Unlock()
+
+	var targetHost string
+	if u, err := url.Parse(t); err == nil && u.Hostname() != "" {
+		targetHost = strings.ToLower(u.Hostname())
+	}
+
+	// 1. 如果有 targetHost，优先按 IP 或 Hostname 精确匹配
+	if targetHost != "" {
+		for _, p := range st.Peer {
+			if strings.EqualFold(p.HostName, targetHost) ||
+				strings.EqualFold(strings.Split(p.DNSName, ".")[0], targetHost) {
+				return p
+			}
+			for _, ip := range p.TailscaleIPs {
+				if ip.String() == targetHost {
+					return p
+				}
+			}
+		}
+	}
+
+	// 2. 优先返回已有活跃直连地址（CurAddr != ""）的 Peer
+	for _, p := range st.Peer {
+		if p.CurAddr != "" {
+			return p
+		}
+	}
+
+	// 3. 再次优先返回在线且活跃的 Peer
+	for _, p := range st.Peer {
+		if p.Online && p.Active {
+			return p
+		}
+	}
+
+	// 4. 再次优先返回在线的 Peer
+	for _, p := range st.Peer {
+		if p.Online {
+			return p
+		}
+	}
+
+	// 5. 兜底返回任意 Peer
+	for _, p := range st.Peer {
+		return p
+	}
+	return nil
+}
+
 // PeerLinkInfo 返回对端节点名称、是否为 P2P 直连打洞、当前端点或 DERP 中继信息。
 // 返回形如: "direct|39.163.49.110:20045|istoreos" 或 "relay|hongkong|istoreos"
 func PeerLinkInfo() string {
@@ -320,28 +380,33 @@ func PeerLinkInfo() string {
 		return "connecting"
 	}
 
-	for _, p := range st.Peer {
-		name := p.HostName
-		if p.CurAddr != "" {
-			return fmt.Sprintf("direct|%s|%s", p.CurAddr, name)
-		}
-		if p.Relay != "" {
-			return fmt.Sprintf("relay|%s|%s", p.Relay, name)
-		}
-		return fmt.Sprintf("relay|DERP 中继|%s", name)
+	p := targetPeer(st)
+	if p == nil {
+		return "running"
 	}
-	return "running"
+
+	name := p.HostName
+	if name == "" {
+		name = strings.Split(p.DNSName, ".")[0]
+	}
+	if p.CurAddr != "" {
+		return fmt.Sprintf("direct|%s|%s", p.CurAddr, name)
+	}
+	if p.Relay != "" {
+		return fmt.Sprintf("relay|%s|%s", p.Relay, name)
+	}
+	return fmt.Sprintf("relay|DERP 中继|%s", name)
 }
 
 // PunchHole 显式主动向对端 Peer 发起 Disco Ping 探测，促成 NAT 端口打洞。
 func PunchHole() string {
 	mu.Lock()
-	s := srv
+	s, t := srv, target
 	mu.Unlock()
 	if s == nil {
 		return "节点未启动"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	cl, err := s.LocalClient()
 	if err != nil {
@@ -352,23 +417,57 @@ func PunchHole() string {
 		return "获取状态失败: " + err.Error()
 	}
 
-	for _, p := range st.Peer {
-		if len(p.TailscaleIPs) > 0 {
-			ip := p.TailscaleIPs[0]
-			res, err := cl.Ping(ctx, ip, tailcfg.PingDisco)
-			if err != nil {
-				return fmt.Sprintf("打洞探测失败: %v", err)
-			}
+	p := targetPeer(st)
+	if p == nil || len(p.TailscaleIPs) == 0 {
+		return "未发现对端 Peer"
+	}
+
+	ip := p.TailscaleIPs[0]
+	// 连续发送 2 次 PingDisco（间隔 200ms），大幅提升在移动蜂窝网络和对称 NAT 下的打洞成功率
+	var lastRes *tailcfg.PingResult
+	for i := 0; i < 2; i++ {
+		res, err := cl.Ping(ctx, ip, tailcfg.PingDisco)
+		if err == nil {
+			lastRes = res
 			if res.Endpoint != "" {
-				return fmt.Sprintf("打洞成功！直连 %s (%.1f ms)", res.Endpoint, res.LatencySeconds*1000)
+				break
 			}
-			if res.DERPRegionCode != "" {
-				return fmt.Sprintf("直连受阻，当前中继至 %s (%.1f ms)", res.DERPRegionCode, res.LatencySeconds*1000)
-			}
-			return fmt.Sprintf("探测完成 (%.1f ms)", res.LatencySeconds*1000)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// 关键步骤：通过 tsnet 发起一次轻量 TCP 连接（触发出站数据包），
+	// 促使 Magicsock 将 WireGuard 隧道真正绑定到刚才打洞成功的 UDP Endpoint
+	if u, err := url.Parse(t); err == nil && u.Host != "" {
+		dialCtx, dCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if conn, dErr := s.Dial(dialCtx, "tcp", u.Host); dErr == nil {
+			conn.Close()
+		}
+		dCancel()
+	}
+
+	// 留 300ms 供本地状态机刷新
+	time.Sleep(300 * time.Millisecond)
+
+	stNew, errNew := cl.Status(ctx)
+	if errNew == nil {
+		pNew := targetPeer(stNew)
+		if pNew != nil && pNew.CurAddr != "" {
+			return fmt.Sprintf("打洞成功！直连 %s", pNew.CurAddr)
 		}
 	}
-	return "未发现对端 Peer"
+
+	if lastRes != nil {
+		if lastRes.Endpoint != "" {
+			return fmt.Sprintf("打洞成功！直连 %s (%.1f ms)", lastRes.Endpoint, lastRes.LatencySeconds*1000)
+		}
+		if lastRes.DERPRegionCode != "" {
+			return fmt.Sprintf("当前中继至 %s (%.1f ms)，正在持续尝试打洞", lastRes.DERPRegionCode, lastRes.LatencySeconds*1000)
+		}
+		return fmt.Sprintf("探测完成 (%.1f ms)", lastRes.LatencySeconds*1000)
+	}
+
+	return "未发现可用对端"
 }
 
 // Token 返回本地代理的访问令牌。只有带着这个头的请求才会被转发，
@@ -479,8 +578,8 @@ func newReverseProxy(u *url.URL, s *tsnet.Server, ready <-chan struct{}) *httput
 		TLSHandshakeTimeout:    20 * time.Second,
 		ResponseHeaderTimeout:  60 * time.Second,
 		IdleConnTimeout:        90 * time.Second,
-		MaxIdleConns:           16,
-		MaxIdleConnsPerHost:    8,
+		MaxIdleConns:           64,
+		MaxIdleConnsPerHost:    32,
 		// 关掉自动解压：否则 Content-Length 和 Range 会失真，视频没法 seek。
 		DisableCompression: true,
 	}
