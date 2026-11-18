@@ -81,6 +81,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var linkStatus by mutableStateOf("探测中...")
 		private set
 
+	var connectionMode by mutableStateOf(ConnectionMode.Auto)
+		private set
+
 	var authUrl by mutableStateOf("")
 		private set
 
@@ -323,6 +326,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		open("")
 		startUnifiedLinkMonitor()
 		cleanupOldCache()
+		viewModelScope.launch {
+			app.prefs.settings.collect { s ->
+				connectionMode = s.connectionMode
+			}
+		}
 		viewModelScope.launch {
 			downloads.tasks.collect { tasks -> downloadTasks = tasks; syncTransferTasks() }
 		}
@@ -833,6 +841,24 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			if (entries.isEmpty() || msg.contains("直连") || msg.contains("打洞成功")) {
 				refresh()
 			}
+		}
+	}
+
+	/** 切换并应用连接模式（如一键锁定直连或切回智能模式） */
+	fun setConnectionMode(mode: ConnectionMode, onComplete: (String) -> Unit = {}) {
+		connectionMode = mode
+		viewModelScope.launch {
+			withContext(Dispatchers.IO) {
+				app.prefs.setConnectionMode(mode)
+				app.repo.invalidate()
+			}
+			refresh()
+			val msg = when (mode) {
+				ConnectionMode.Direct -> "已切换为【强制直连模式】"
+				ConnectionMode.Auto -> "已切换为【智能自动模式】"
+				ConnectionMode.Tailscale -> "已切换为【强制组网模式】"
+			}
+			onComplete(msg)
 		}
 	}
 

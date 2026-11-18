@@ -101,8 +101,8 @@ class Repository(private val context: Context) {
 
 	@Volatile private var trustAllCerts = false
 	private val okHttp: OkHttpClient get() = if (trustAllCerts) permissiveHttp else verifiedHttp
-	private val verifiedProbe = verifiedHttp.newBuilder().connectTimeout(1500, TimeUnit.MILLISECONDS).readTimeout(1500, TimeUnit.MILLISECONDS).build()
-	private val permissiveProbe by lazy { permissiveHttp.newBuilder().connectTimeout(1500, TimeUnit.MILLISECONDS).readTimeout(1500, TimeUnit.MILLISECONDS).build() }
+	private val verifiedProbe = verifiedHttp.newBuilder().connectTimeout(3000, TimeUnit.MILLISECONDS).readTimeout(3000, TimeUnit.MILLISECONDS).build()
+	private val permissiveProbe by lazy { permissiveHttp.newBuilder().connectTimeout(3000, TimeUnit.MILLISECONDS).readTimeout(3000, TimeUnit.MILLISECONDS).build() }
 	private val probeHttp: OkHttpClient get() = if (trustAllCerts) permissiveProbe else verifiedProbe
 
 	private fun imageClient(client: OkHttpClient): OkHttpClient = client.newBuilder()
@@ -436,6 +436,8 @@ class Repository(private val context: Context) {
 						val direct = doDirectProbe(root, settings.user, settings.password)
 						if (direct != null) {
 							directConfirmed = direct
+							val apiOrigin = root.newBuilder().encodedPath("/").query(null).fragment(null).build()
+							cached = WebDavClient(root, okHttp, apiOrigin, settings.user, settings.password)
 							_routeInfo.value = RouteInfo(
 								isDirect = true,
 								isRelay = false,

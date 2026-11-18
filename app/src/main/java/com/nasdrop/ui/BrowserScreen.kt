@@ -599,8 +599,19 @@ fun BrowserScreen(
 	if (showNetSheet) {
 		NetworkManagerSheet(
 			routeInfo = routeInfo,
+			currentMode = vm.connectionMode,
 			onDismiss = { showNetSheet = false },
-			onTriggerPunch = { vm.punchHole() },
+			onTriggerPunch = {
+				vm.punchHole { msg ->
+					Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+				}
+			},
+			onSwitchMode = { mode ->
+				vm.setConnectionMode(mode) { msg ->
+					Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+				}
+				showNetSheet = false
+			},
 			onOpenSettings = onOpenSettings,
 		)
 	}
@@ -2432,8 +2443,10 @@ private fun TransferCenterSheet(
 @Composable
 private fun NetworkManagerSheet(
 	routeInfo: RouteInfo,
+	currentMode: com.nasdrop.ConnectionMode,
 	onDismiss: () -> Unit,
 	onTriggerPunch: () -> Unit,
+	onSwitchMode: (com.nasdrop.ConnectionMode) -> Unit,
 	onOpenSettings: () -> Unit,
 ) {
 	ModalBottomSheet(
@@ -2447,7 +2460,7 @@ private fun NetworkManagerSheet(
 				.fillMaxWidth()
 				.padding(horizontal = 20.dp, vertical = 10.dp),
 		) {
-			Text("网络连接与智能自愈", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+			Text("网络连接与模式控制", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
 			Spacer(modifier = Modifier.height(14.dp))
 
 			// 网络质量大卡片
@@ -2460,16 +2473,53 @@ private fun NetworkManagerSheet(
 					HumanNetworkPill(routeInfo = routeInfo, onClick = {})
 					Spacer(modifier = Modifier.height(8.dp))
 					Text(
-						text = if (routeInfo.isDirect) "当前通过直连访问 NAS。"
-						else "当前使用中继连接。可重新检测连接状态或检查服务配置。",
+						text = if (routeInfo.isDirect) "当前通过直连高速访问 NAS。"
+						else "当前通过 Tailscale 中继转发，速度受 DERP 服务器带宽限制。若在同网络或已配置系统组网，可强制锁定直连。",
 						fontSize = 12.sp,
 						color = MaterialTheme.colorScheme.onSurface,
 						lineHeight = 18.sp,
+					)
+					Spacer(modifier = Modifier.height(4.dp))
+					Text(
+						text = "当前工作模式：${currentMode.title}（${currentMode.desc}）",
+						fontSize = 11.sp,
+						color = MaterialTheme.colorScheme.primary,
+						fontWeight = FontWeight.Medium,
 					)
 				}
 			}
 
 			Spacer(modifier = Modifier.height(14.dp))
+
+			// 快捷强制直连 / 恢复自动
+			if (currentMode != com.nasdrop.ConnectionMode.Direct) {
+				Button(
+					onClick = { onSwitchMode(com.nasdrop.ConnectionMode.Direct) },
+					colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
+					shape = RoundedCornerShape(14.dp),
+					modifier = Modifier
+						.fillMaxWidth()
+						.height(48.dp),
+				) {
+					Icon(Icons.Rounded.ElectricBolt, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiary)
+					Spacer(modifier = Modifier.width(6.dp))
+					Text("⚡ 强制锁定【仅直连模式】", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onTertiary)
+				}
+				Spacer(modifier = Modifier.height(10.dp))
+			} else {
+				OutlinedButton(
+					onClick = { onSwitchMode(com.nasdrop.ConnectionMode.Auto) },
+					shape = RoundedCornerShape(14.dp),
+					modifier = Modifier
+						.fillMaxWidth()
+						.height(48.dp),
+				) {
+					Icon(Icons.Rounded.Autorenew, contentDescription = null)
+					Spacer(modifier = Modifier.width(6.dp))
+					Text("切回【智能自动模式】", fontWeight = FontWeight.Bold)
+				}
+				Spacer(modifier = Modifier.height(10.dp))
+			}
 
 			Button(
 				onClick = onTriggerPunch,
@@ -2481,7 +2531,7 @@ private fun NetworkManagerSheet(
 			) {
 				Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
 				Spacer(modifier = Modifier.width(6.dp))
-				Text("重新检测连接", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+				Text("重新探测直连与打洞", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
 			}
 
 			Spacer(modifier = Modifier.height(10.dp))

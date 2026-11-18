@@ -179,6 +179,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 					horizontalArrangement = Arrangement.SpaceBetween,
 				) {
 					Row(
+						modifier = Modifier.weight(1f),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(12.dp),
 					) {
@@ -201,13 +202,15 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 							)
 						}
 
-						Column {
+						Column(modifier = Modifier.weight(1f)) {
 							Row(verticalAlignment = Alignment.CenterVertically) {
 								Text(
 									text = "当前版本 v${vm.currentVersionName}",
 									fontSize = 14.sp,
 									fontWeight = FontWeight.Bold,
 									color = colors.onSurface,
+									maxLines = 1,
+									overflow = TextOverflow.Ellipsis,
 								)
 								if (vm.hasUpdate) {
 									Spacer(modifier = Modifier.width(6.dp))
@@ -230,9 +233,13 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 								text = if (vm.hasUpdate) "发现新版本，点击立即自动更新" else "当前已是最新版本，可随时检查更新",
 								fontSize = 11.sp,
 								color = colors.onSurfaceVariant,
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
 							)
 						}
 					}
+
+					Spacer(modifier = Modifier.width(8.dp))
 
 					Button(
 						enabled = !checkingUpdate && !saving,
@@ -253,8 +260,9 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 							containerColor = if (vm.hasUpdate) colors.primary else colors.outlineVariant,
 							contentColor = if (vm.hasUpdate) colors.onPrimary else colors.onSurfaceVariant,
 						),
+						modifier = Modifier.defaultMinSize(minWidth = 78.dp),
 						shape = RoundedCornerShape(16.dp),
-						contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+						contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
 					) {
 						if (checkingUpdate) {
 							CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = colors.primary)
@@ -263,6 +271,8 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 								text = if (vm.hasUpdate) "立即更新" else "检查更新",
 								fontSize = 12.sp,
 								fontWeight = FontWeight.Bold,
+								maxLines = 1,
+								softWrap = false,
 							)
 						}
 					}

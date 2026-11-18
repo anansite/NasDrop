@@ -49,6 +49,15 @@ import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Cast
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.FullscreenExit
+import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import android.net.Uri
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -171,15 +180,14 @@ fun ImageViewer(
 			Size(maxWidth.roundToPx().coerceAtLeast(1), maxHeight.roundToPx().coerceAtLeast(1))
 		}
 
-		// 预热原图：进入看图/翻页时就把 当前±1 张原图提交给 Coil 预加载。
-		// 带上 targetSize 后预取结果直接落在内存缓存，翻页/回看时命中即显示，无需再解码。
+		// 预热：进入看图/翻页时就把 当前±1 张缩略图提交给 Coil 预加载，避免预拉取几十兆原图抢带宽
 		val imageLoader = context.app.repo.imageLoader
 		val currentPage = pager.currentPage
 		LaunchedEffect(currentPage, targetSize) {
 			val center = currentPage.coerceIn(0, imageList.lastIndex)
 			for (i in (center - 1)..(center + 1)) {
 				val e = imageList.getOrNull(i) ?: continue
-				val u = urlOf(e.path) ?: continue
+				val u = thumbOf?.invoke(e.path) ?: urlOf(e.path) ?: continue
 				imageLoader.enqueue(
 					ImageRequest.Builder(context)
 						.data(u)
@@ -198,6 +206,7 @@ fun ImageViewer(
 				url = urlOf(entry.path),
 				thumbUrl = thumbOf?.invoke(entry.path),
 				name = entry.name,
+				sizeHuman = entry.sizeHuman,
 				targetSize = targetSize,
 				onToggleControls = { controlsVisible = !controlsVisible },
 				onZoomChanged = { zoomed ->
@@ -427,6 +436,7 @@ private fun ZoomableImage(
 	url: String?,
 	thumbUrl: String?,
 	name: String,
+	sizeHuman: String = "",
 	targetSize: Size,
 	onToggleControls: () -> Unit,
 	onZoomChanged: (Boolean) -> Unit = {},
@@ -436,16 +446,22 @@ private fun ZoomableImage(
 	var dy by remember { mutableFloatStateOf(0f) }
 	val context = LocalContext.current
 
+	// 用户是否主动或手势触发了查看原图；若无缩略图则直接拉取原图
+	var isFullRequested by remember(url) { mutableStateOf(thumbUrl.isNullOrBlank()) }
+	var isFullLoading by remember(url) { mutableStateOf(false) }
+	var isFullLoaded by remember(url) { mutableStateOf(false) }
+	var fullLoadFailed by remember(url) { mutableStateOf(false) }
+	var retryKey by remember(url) { mutableIntStateOf(0) }
+
 	LaunchedEffect(scale) {
 		onZoomChanged(scale > 1.05f)
+		// 用户主动双指放大超过 1.2 倍时，自动无缝触发原图加载以呈现极致细节
+		if (scale > 1.2f && !isFullRequested) {
+			isFullRequested = true
+		}
 	}
 
-	// 原图加载态：loading / 失败重试。切图（url 变化）时全部复位。
-	var loadFailed by remember(url) { mutableStateOf(false) }
-	var retryKey by remember(url) { mutableIntStateOf(0) }
-	var isLoading by remember(url) { mutableStateOf(true) }
-
-	// 每次 url / retryKey 变化重建请求；retryKey 让失败后能强制重新拉取（带 CachePolicy 绕过坏缓存）
+	// 每次 url / retryKey 变化重建请求
 	val fullRequest = remember(url, retryKey, targetSize) {
 		ImageRequest.Builder(context)
 			.data(url)
@@ -464,9 +480,8 @@ private fun ZoomableImage(
 			},
 		contentAlignment = Alignment.Center,
 	) {
-		// 第 1 层：先完整展示已缓存的缩略图（ContentScale.Fit，原比例无裁剪、不加重度磨砂暗罩）
-		// 让用户第一时间看清画面主体，高清原图到货后自然淡入取代
-		if (!thumbUrl.isNullOrBlank() && (isLoading || loadFailed)) {
+		// 第 1 层：优先完整展示低带宽缩略图（原比例 Fit），秒开、零截断
+		if (!thumbUrl.isNullOrBlank() && !isFullLoaded) {
 			AsyncImage(
 				model = thumbUrl,
 				contentDescription = null,
@@ -482,15 +497,15 @@ private fun ZoomableImage(
 			)
 		}
 
-		// 第 2 层：原图（可自由缩放与多指手势）
-		if (!url.isNullOrBlank() && !loadFailed) {
+		// 第 2 层：原图（在用户点击“查看原图”或双指放大时按需拉取）
+		if (!url.isNullOrBlank() && isFullRequested && !fullLoadFailed) {
 			AsyncImage(
 				model = fullRequest,
 				contentDescription = name,
 				contentScale = ContentScale.Fit,
-				onLoading = { isLoading = true },
-				onSuccess = { isLoading = false; loadFailed = false },
-				onError = { isLoading = false; loadFailed = true },
+				onLoading = { isFullLoading = true; fullLoadFailed = false },
+				onSuccess = { isFullLoading = false; isFullLoaded = true; fullLoadFailed = false },
+				onError = { isFullLoading = false; fullLoadFailed = true },
 				modifier = Modifier
 					.fillMaxSize()
 					.graphicsLayer {
@@ -526,6 +541,7 @@ private fun ZoomableImage(
 									scale = 1f; dx = 0f; dy = 0f
 								} else {
 									scale = 2.5f
+									isFullRequested = true
 								}
 							},
 						)
@@ -533,54 +549,103 @@ private fun ZoomableImage(
 			)
 		}
 
-		// 动态加载动画指示器：不加全屏遮罩，底部胶囊优雅提示高清加载进度
-		if (isLoading && !loadFailed) {
+		// 默认只加载缩略图下的“查看原图”胶囊控制与加载进度指示器
+		if (!thumbUrl.isNullOrBlank() && !isFullLoaded) {
 			Surface(
-				shape = RoundedCornerShape(16.dp),
+				shape = RoundedCornerShape(20.dp),
 				color = Color.Black.copy(alpha = 0.65f),
+				border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
 				modifier = Modifier
 					.align(Alignment.BottomCenter)
-					.padding(bottom = 88.dp),
+					.padding(bottom = 92.dp)
+					.clickable(enabled = !isFullLoading) {
+						if (fullLoadFailed) {
+							fullLoadFailed = false
+							isFullLoading = true
+							retryKey++
+						} else if (!isFullRequested) {
+							isFullRequested = true
+						}
+					},
 			) {
 				Row(
 					modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
 					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(8.dp),
+					horizontalArrangement = Arrangement.spacedBy(7.dp),
 				) {
-					CircularProgressIndicator(
-						strokeWidth = 2.dp,
-						color = Color.White,
-						modifier = Modifier.size(13.dp),
-					)
-					Text(
-						text = if (!thumbUrl.isNullOrBlank()) "正在载入高清细节…" else "正在加载图片…",
-						fontSize = 11.sp,
-						fontWeight = FontWeight.Medium,
-						color = Color.White,
-					)
+					if (isFullLoading) {
+						CircularProgressIndicator(
+							strokeWidth = 2.dp,
+							color = Color.White,
+							modifier = Modifier.size(13.dp),
+						)
+						Text(
+							text = "正在载入原图…",
+							fontSize = 12.sp,
+							fontWeight = FontWeight.Medium,
+							color = Color.White,
+						)
+					} else if (fullLoadFailed) {
+						Text(
+							text = "原图载入失败，点击重试",
+							fontSize = 12.sp,
+							fontWeight = FontWeight.Medium,
+							color = Color(0xFFFFB4AB),
+						)
+					} else {
+						Icon(
+							Icons.Rounded.HighQuality,
+							contentDescription = null,
+							tint = Color.White,
+							modifier = Modifier.size(15.dp),
+						)
+						Text(
+							text = if (sizeHuman.isNotBlank()) "查看原图 ($sizeHuman)" else "查看原图",
+							fontSize = 12.sp,
+							fontWeight = FontWeight.Medium,
+							color = Color.White,
+						)
+					}
 				}
 			}
 		}
 
-		// 加载失败：明确提示 + 点击重试，绝不静默黑屏
-		if (loadFailed && thumbUrl.isNullOrBlank()) {
-			Column(
-				horizontalAlignment = Alignment.CenterHorizontally,
-				verticalArrangement = Arrangement.spacedBy(12.dp),
-				modifier = Modifier
-					.clip(RoundedCornerShape(12.dp))
-					.background(MediaOverlay.copy(alpha = 0.9f))
-					.pointerInput(Unit) {
-						detectTapGestures(onTap = {
-							loadFailed = false
-							isLoading = true
-							retryKey++
-						})
+		// 无缩略图且直接拉原图时的全屏加载中或失败处理
+		if (thumbUrl.isNullOrBlank()) {
+			if (isFullLoading) {
+				Surface(
+					shape = RoundedCornerShape(16.dp),
+					color = Color.Black.copy(alpha = 0.65f),
+					modifier = Modifier
+						.align(Alignment.BottomCenter)
+						.padding(bottom = 92.dp),
+				) {
+					Row(
+						modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(8.dp),
+					) {
+						CircularProgressIndicator(strokeWidth = 2.dp, color = Color.White, modifier = Modifier.size(13.dp))
+						Text(text = "正在加载图片…", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White)
 					}
-					.padding(horizontal = 24.dp, vertical = 18.dp),
-			) {
-				Text("图片加载失败", color = OnMediaBackdrop, fontWeight = FontWeight.Bold)
-				Text("点击重试", color = MediaAccent, fontSize = 13.sp)
+				}
+			} else if (fullLoadFailed) {
+				Column(
+					horizontalAlignment = Alignment.CenterHorizontally,
+					verticalArrangement = Arrangement.spacedBy(12.dp),
+					modifier = Modifier
+						.clip(RoundedCornerShape(12.dp))
+						.background(MediaOverlay.copy(alpha = 0.9f))
+						.clickable {
+							fullLoadFailed = false
+							isFullLoading = true
+							retryKey++
+						}
+						.padding(horizontal = 24.dp, vertical = 18.dp),
+				) {
+					Text("图片加载失败", color = OnMediaBackdrop, fontWeight = FontWeight.Bold)
+					Text("点击重试", color = MediaAccent, fontSize = 13.sp)
+				}
 			}
 		}
 	}
@@ -744,6 +809,13 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 	var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
 	var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
 	var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+	// 退出播放器时自动恢复系统方向
+	DisposableEffect(Unit) {
+		onDispose {
+			activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+		}
+	}
 
 	// 手势 HUD 状态
 	var hudText by remember { mutableStateOf("") }
@@ -1051,51 +1123,53 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 
 					Row(
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(8.dp),
+						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
-						// 画面比例切换按钮
-						Surface(
-							shape = RoundedCornerShape(14.dp),
-							color = OnMediaBackdrop.copy(alpha = 0.2f),
+						// 投屏 / 外部播放按钮
+						IconButton(
 							onClick = {
-								resizeMode = when (resizeMode) {
-									AspectRatioFrameLayout.RESIZE_MODE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-									AspectRatioFrameLayout.RESIZE_MODE_FILL -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-									else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+								lastInteractionTime = System.currentTimeMillis()
+								if (!url.isNullOrBlank()) {
+									try {
+										val intent = Intent(Intent.ACTION_VIEW).apply {
+											setDataAndType(Uri.parse(url), "video/*")
+											addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+										}
+										context.startActivity(Intent.createChooser(intent, "投屏 / 外部播放"))
+									} catch (e: Exception) {
+										Toast.makeText(context, "未找到支持投屏或外部播放的应用", Toast.LENGTH_SHORT).show()
+									}
 								}
-							},
-						) {
-							Row(
-								modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-									.padding(horizontal = 8.dp, vertical = 4.dp),
-								verticalAlignment = Alignment.CenterVertically,
-								horizontalArrangement = Arrangement.spacedBy(4.dp),
-							) {
-								Icon(Icons.Rounded.AspectRatio, contentDescription = "画幅", tint = OnMediaBackdrop, modifier = Modifier.size(14.dp))
-								Text(
-									text = when (resizeMode) {
-										AspectRatioFrameLayout.RESIZE_MODE_FIT -> "适应"
-										AspectRatioFrameLayout.RESIZE_MODE_FILL -> "铺满"
-										else -> "居中"
-									},
-									color = OnMediaBackdrop,
-									fontSize = 11.sp,
-									fontWeight = FontWeight.Bold,
-								)
 							}
+						) {
+							Icon(
+								Icons.Rounded.Cast,
+								contentDescription = "投屏 / 外部播放",
+								tint = OnMediaBackdrop,
+								modifier = Modifier.size(24.dp),
+							)
 						}
 
-						// 直接播放原文件，不根据容器格式宣称实际分辨率。
-						Surface(
-							shape = RoundedCornerShape(14.dp),
-							color = MediaAccent.copy(alpha = 0.85f),
+						// 全屏 / 横竖屏旋转切换按钮
+						IconButton(
+							onClick = {
+								lastInteractionTime = System.currentTimeMillis()
+								activity?.let { act ->
+									val isCurrentlyLandscape = act.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+									if (isCurrentlyLandscape) {
+										act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+									} else {
+										act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+									}
+								}
+							}
 						) {
-							Text(
-								text = "原始文件",
-								color = MediaBackdrop,
-								fontSize = 11.sp,
-								fontWeight = FontWeight.Bold,
-								modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+							val isLandscape = activity?.resources?.configuration?.orientation == Configuration.ORIENTATION_LANDSCAPE
+							Icon(
+								imageVector = if (isLandscape) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+								contentDescription = if (isLandscape) "退出横屏" else "横屏全屏",
+								tint = OnMediaBackdrop,
+								modifier = Modifier.size(26.dp),
 							)
 						}
 					}

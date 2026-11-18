@@ -280,13 +280,14 @@ class WebDavClient(
 				if (!resp.isSuccessful) return
 				val text = resp.body?.string() ?: return
 				val content = org.json.JSONObject(text).optJSONObject("data")?.optJSONArray("content") ?: return
-				val prefix = if (dirPath.isEmpty()) "" else "$dirPath/"
+				val cleanDir = dirPath.trim('/')
+				val prefix = if (cleanDir.isEmpty()) "" else "$cleanDir/"
 				val added = HashSet<String>()
 				for (i in 0 until content.length()) {
 					val item = content.optJSONObject(i) ?: continue
 					val name = item.optString("name")
 					val thumb = item.optString("thumb")
-					val key = prefix + name
+					val key = (prefix + name).trim('/')
 					val sign = item.optString("sign").takeIf { it.isNotBlank() }
 					if (sign != null) {
 						signUrls[key] = sign
@@ -299,25 +300,31 @@ class WebDavClient(
 							try {
 								val cleanPath = thumb.substringBefore('?')
 								val query = thumb.substringAfter('?', "")
-								val b = base.newBuilder().encodedPath(cleanPath)
+								val b = (apiOrigin ?: base).newBuilder().encodedPath(cleanPath)
 								if (query.isNotEmpty()) {
 									query.split('&').forEach { param ->
 										val kv = param.split('=', limit = 2)
 										if (kv.size == 2) b.addQueryParameter(kv[0], kv[1])
 									}
 								}
-								b.build().toString()
+								// origin 换成本客户端入口：直连模式=原域名；bridge 模式=127.0.0.1:port
+								b.build().newBuilder()
+									.scheme(base.scheme).host(base.host).port(base.port)
+									.build().toString()
 							} catch (_: Exception) { null }
 						} else null
 					}
 					// 若服务端未直接返回 thumb，但有原生直链 sign，OpenList 原生支持 /d/<path>?sign=...&type=thumb 服务端秒级裁切微缩图
 					if (resolvedThumb == null && sign != null && (name.endsWith(".jpg", true) || name.endsWith(".png", true) || name.endsWith(".jpeg", true) || name.endsWith(".webp", true))) {
 						try {
-							val b = base.newBuilder().addPathSegment("d")
+							val b = (apiOrigin ?: base).newBuilder().encodedPath("/d")
 							key.split('/').forEach { if (it.isNotEmpty()) b.addPathSegment(it) }
 							b.addQueryParameter("sign", sign)
 							b.addQueryParameter("type", "thumb")
-							resolvedThumb = b.build().toString()
+							val url = b.build().newBuilder()
+								.scheme(base.scheme).host(base.host).port(base.port)
+								.build()
+							resolvedThumb = url.toString()
 						} catch (_: Exception) {}
 					}
 					if (name.isNotEmpty() && !resolvedThumb.isNullOrBlank()) {
