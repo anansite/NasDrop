@@ -1794,12 +1794,6 @@ private fun PhotoTimelineContent(
 				}
 			}
 		}
-						Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(15.dp))
-						Text("新建相册", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
-					}
-				}
-			}
-		}
 
 		// 2. 照片内容展示
 		if (groups.isEmpty()) {
@@ -1964,12 +1958,6 @@ private fun MediaStreamContent(
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
 						Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(14.dp))
-						Text("新建影集", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
-					}
-				}
-			}
-		}
-						Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(15.dp))
 						Text("新建影集", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
 					}
 				}
