@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Xml
+import okhttp3.Call
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -18,6 +19,8 @@ import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import java.util.logging.Level
+import java.util.logging.Logger
 
 enum class FileCategory(val label: String, val icon: String) {
 	All("全部", "📁"),
@@ -80,10 +83,25 @@ data class DavEntry(
 	}
 }
 
-class DavException(val code: Int, what: String) : IOException("$what（HTTP $code）")
+/** 保留可定位的 HTTP 码，同时给出用户可以采取的恢复操作。 */
+class DavException(val code: Int, what: String) : IOException(
+	when (code) {
+		401 -> "认证失败，请检查账号或密码（HTTP 401）"
+		403 -> "当前账号没有操作权限，请检查账号权限或目标目录（HTTP 403）"
+		404 -> "$what：文件或目录不存在，请检查地址或刷新重试（HTTP 404）"
+		507 -> "NAS 存储空间不足，请清理空间后重试（HTTP 507）"
+		else -> "$what（HTTP $code）"
+	},
+)
+
+/** 续传响应无法安全追加；调用方必须关闭并清空临时文件，再从零下载。 */
+class ResumeRestartRequiredException(val code: Int, what: String) : IOException("$what（HTTP $code）")
+
+/** 显式取消必须直接结束传输，不能落入网络失败的重试分支。 */
+class TransferCanceledException(cause: IOException? = null) : IOException("传输已取消", cause)
 
 /**
- * 极简 WebDAV 客户端：只做 NasDrop 需要的五个动作。
+ * WebDAV 客户端：封装文件操作、流式传输和连接检查。
  *
  * base 既可能是真实服务器地址，也可能是 127.0.0.1 上的 bridge 端口——对这里完全透明，
  * 这正是把 Tailscale 关在 Go 侧换来的好处。
@@ -208,8 +226,31 @@ class WebDavClient(
 		val call = http.newCall(req)
 		call.timeout().timeout(8, TimeUnit.SECONDS)
 		call.execute().use { resp ->
-			// WebDAV 成功一般是 207 Multi-Status；2xx/3xx/4xx 都算"服务器可达且协议正常"
-			if (resp.code !in 200..499) throw DavException(resp.code, "服务器返回异常状态 ${resp.code}")
+			if (!resp.isSuccessful) {
+				val reason = when (resp.code) {
+					401 -> "认证失败，请检查用户名和密码"
+					403 -> "当前账号无权访问 WebDAV"
+					404 -> "WebDAV 路径不存在，请检查服务器地址"
+					else -> "WebDAV 连通性测试失败"
+				}
+				logger.warning("WebDAV 探测失败 code=${resp.code} reason=$reason")
+				throw DavException(resp.code, reason)
+			}
+		}
+	}
+
+	/** 仅查询目标是否存在；只有明确的 404 表示不存在，权限和网络错误交由调用方处理。 */
+	fun exists(path: String): Boolean {
+		val req = Request.Builder().url(urlFor(path)).header("Depth", "0")
+			.method("PROPFIND", PROPFIND_BODY.toRequestBody("application/xml; charset=utf-8".toMediaTypeOrNull()))
+			.build()
+		metaCall(req).execute().use { resp ->
+			if (resp.code == 404) return false
+			if (!resp.isSuccessful) {
+				logger.warning("WebDAV 存在性检查失败 path=$path code=${resp.code}")
+				throw DavException(resp.code, "检查远端文件失败")
+			}
+			return true
 		}
 	}
 
@@ -357,36 +398,89 @@ class WebDavClient(
 	}
 
 	/**
-	 * 下载指定路径的文件并写入本地目标输出流，支持断点续传（Range 请求）。
+	 * 下载并写入目标流；续传只接受起点、范围和长度一致的 206，绝不把完整响应追加到旧片段。
+	 * [onCall] 在执行请求前登记可取消的调用；[onProgress] 返回整个文件的已完成字节数和总大小。
+	 * [validator] 是旧片段对应的强 ETag 或 Last-Modified；[onValidator] 在写入前回传新身份，便于安全暂停恢复。
 	 */
 	fun download(
 		path: String,
 		output: java.io.OutputStream,
 		startByte: Long = 0L,
+		onCall: (Call) -> Unit = {},
+		validator: String? = null,
+		onValidator: (String?) -> Unit = {},
 		onProgress: (Long, Long) -> Unit,
 	) {
-		val reqBuilder = Request.Builder().url(urlFor(path)).get()
+		require(startByte >= 0L) { "下载起点不能为负数" }
+		val expectedValidator = validator?.trim()?.takeIf { it.isNotEmpty() }
+		val reqBuilder = Request.Builder().url(urlFor(path)).header("Accept-Encoding", "identity").get()
 		if (startByte > 0L) {
 			reqBuilder.header("Range", "bytes=$startByte-")
+			if (expectedValidator != null) reqBuilder.header("If-Range", expectedValidator)
 		}
-		val req = reqBuilder.build()
-		http.newCall(req).execute().use { resp ->
-			if (!resp.isSuccessful && resp.code != 206) throw DavException(resp.code, "下载失败")
-			val body = resp.body ?: throw DavException(resp.code, "响应体为空")
-			val contentLength = body.contentLength()
-			val total = if (resp.code == 206) contentLength + startByte else if (contentLength > 0) contentLength else -1L
-			body.byteStream().use { ins ->
-				val buf = ByteArray(64 * 1024)
-				var sent = if (resp.code == 206) startByte else 0L
-				while (true) {
-					val n = ins.read(buf)
-					if (n <= 0) break
-					output.write(buf, 0, n)
-					sent += n
-					onProgress(sent, total)
+		val call = http.newCall(reqBuilder.build())
+		onCall(call)
+		try {
+			call.throwIfCanceled()
+			call.execute().use { resp ->
+				call.throwIfCanceled()
+				if (startByte > 0L && resp.code in listOf(200, 416)) {
+					throw ResumeRestartRequiredException(resp.code, "服务器无法继续当前下载，需要重新下载")
 				}
-				output.flush()
+				if (!resp.isSuccessful) throw DavException(resp.code, "下载失败")
+				val body = resp.body ?: throw DavException(resp.code, "响应体为空")
+				val contentLength = body.contentLength()
+				var expectedLength = contentLength
+				var total = contentLength
+				if (resp.code == 206) {
+					val range = Regex("bytes (\\d+)-(\\d+)/(\\d+|\\*)", RegexOption.IGNORE_CASE)
+						.matchEntire(resp.header("Content-Range").orEmpty().trim())
+					val rangeStart = range?.groupValues?.get(1)?.toLongOrNull()
+					val rangeEnd = range?.groupValues?.get(2)?.toLongOrNull()
+					val rangeTotal = range?.groupValues?.get(3)?.toLongOrNull()
+					val rangeLength = if (rangeStart != null && rangeEnd != null && rangeEnd >= rangeStart) rangeEnd - rangeStart + 1 else -1L
+					// 开放尾请求只执行一次；总长未知时无法确认响应已经覆盖文件末尾。
+					if (rangeTotal == null) throw ResumeRestartRequiredException(resp.code, "服务器未提供有效的文件总长，需要重新下载")
+					if (rangeStart != startByte || rangeLength <= 0 || rangeEnd != rangeTotal - 1 || rangeTotal <= 0 ||
+						(contentLength >= 0 && contentLength != rangeLength)) {
+						throw ResumeRestartRequiredException(resp.code, "服务器返回的续传范围或长度不匹配，需要重新下载")
+					}
+					expectedLength = rangeLength
+					total = rangeTotal
+				} else if (startByte > 0L) {
+					throw ResumeRestartRequiredException(resp.code, "服务器未返回有效的续传响应，需要重新下载")
+				}
+				// 弱 ETag 不代表字节完全相同；优先使用强 ETag，否则退回修改时间。
+				val responseValidator = resp.header("ETag")?.trim()?.takeIf {
+					it.length >= 2 && it.startsWith('"') && it.endsWith('"')
+				} ?: resp.header("Last-Modified")?.trim()?.takeIf { it.isNotEmpty() }
+				if (startByte > 0L && expectedValidator != null && responseValidator != null && responseValidator != expectedValidator) {
+					throw ResumeRestartRequiredException(resp.code, "远端文件已变化，需要重新下载")
+				}
+				onValidator(responseValidator)
+				body.byteStream().use { ins ->
+					val buf = ByteArray(64 * 1024)
+					var received = 0L
+					while (true) {
+						call.throwIfCanceled()
+						val n = ins.read(buf)
+						if (n < 0) break
+						if (n == 0) continue
+						call.throwIfCanceled()
+						if (expectedLength >= 0 && n.toLong() > expectedLength - received) throw IOException("下载响应超过声明长度")
+						output.write(buf, 0, n)
+						received += n
+						onProgress(startByte + received, total)
+					}
+					if (expectedLength >= 0 && received != expectedLength) throw IOException("下载响应提前结束：预期 $expectedLength 字节，实际 $received 字节")
+					call.throwIfCanceled()
+					output.flush()
+				}
 			}
+		} catch (e: IOException) {
+			call.throwIfCanceled(e)
+			logger.log(Level.WARNING, "下载失败 path=$path startByte=$startByte", e)
+			throw e
 		}
 	}
 
@@ -397,6 +491,7 @@ class WebDavClient(
 	 * [onBodySent] 在**全部字节写进 socket** 的那一刻回调一次（只回调一次）。
 	 * 它与"服务端返回 201"之间可能隔着一段落盘/rename 的时间，UI 用它在 100% 时
 	 * 立刻把文件乐观显示出来，而不是卡在"等待服务端写入"。
+	 * [onCall] 在每次 PUT 或父目录预检前登记调用，取消后不再重试。
 	 */
 	fun upload(
 		context: Context,
@@ -404,26 +499,45 @@ class WebDavClient(
 		remoteDir: String,
 		onProgress: (Long, Long) -> Unit,
 		onBodySent: () -> Unit = {},
+		onCall: (Call) -> Unit = {},
 	) {
 		val name = Query.nameOf(context, uri)
 		val total = Query.sizeOf(context, uri)
+		uploadStream(name, total, context.contentResolver.getType(uri), remoteDir,
+			openInput = { context.contentResolver.openInputStream(uri) ?: throw IOException("无法读取上传文件") },
+			onProgress = onProgress, onBodySent = onBodySent, onCall = onCall)
+	}
+
+	/** 流式 PUT；仅安全重试时重开输入源，每次 HTTP 调用都通过 [onCall] 登记，发送回调与远端确认独立。 */
+	internal fun uploadStream(
+		name: String,
+		total: Long,
+		mimeType: String?,
+		remoteDir: String,
+		openInput: () -> java.io.InputStream,
+		onProgress: (Long, Long) -> Unit,
+		onBodySent: () -> Unit = {},
+		onCall: (Call) -> Unit = {},
+	) {
 		val path = listOf(remoteDir.trim('/'), name).filter { it.isNotEmpty() }.joinToString("/")
 		val bodySentOnce = java.util.concurrent.atomic.AtomicBoolean(false)
 
 		// body 工厂：每次 PUT 调用都新建（重试时需要重新读 Uri 输入流）。
 		// written 记录"这次尝试实际写出去多少字节"——决定失败后能不能安全重传，
 		// 见下面 putOnce 的注释。
-		fun newBody(written: java.util.concurrent.atomic.AtomicLong) = object : RequestBody() {
-			override fun contentType() = context.contentResolver.getType(uri)?.toMediaTypeOrNull()
+		fun newBody(written: java.util.concurrent.atomic.AtomicLong, checkCanceled: () -> Unit) = object : RequestBody() {
+			override fun contentType() = mimeType?.toMediaTypeOrNull()
 			override fun contentLength() = total
+			// 禁止 OkHttp 在响应丢失后悄悄重放大文件；仅由下面的显式策略决定重试。
+			override fun isOneShot() = true
 			override fun writeTo(sink: BufferedSink) {
-				val input = context.contentResolver.openInputStream(uri)
-					?: throw IOException("无法读取：$uri")
+				val input = openInput()
 				var sent = 0L
 				input.use { ins ->
 					val buf = ByteArray(64 * 1024)
 					var lastReport = 0L
 					while (true) {
+						checkCanceled()
 						val n = ins.read(buf)
 						if (n <= 0) break
 						sink.write(buf, 0, n)
@@ -437,6 +551,10 @@ class WebDavClient(
 						}
 					}
 				}
+				// 未知大小的小文件也必须发布最终进度，并在冲出本地缓冲后标记已发送。
+				sink.flush()
+				checkCanceled()
+				onProgress(sent, total)
 				if (total <= 0 || sent >= total) {
 					if (bodySentOnce.compareAndSet(false, true)) onBodySent()
 				}
@@ -450,13 +568,18 @@ class WebDavClient(
 		 *
 		 * 已写出字节数是关键：旧实现把所有 IOException 都当成"可能缺父目录"从而无条件
 		 * 重传一遍，于是一个传到 99% 断掉的视频会**从头再传一次**——用户看到的就是
-		 * "传完了又从头开始/传完还要等很久"。现在只有"服务端明确 409"或"一个字节都没
-		 * 写出去"（连接是死的）才重试，写过数据就如实失败，让用户决定而不是偷偷重传。
+		 * "传完了又从头开始/传完还要等很久"。现在只有明确 409，或连接失败且写出
+		 * 不足 1MB 时允许再试；大文件已传出较多数据就如实失败，避免整段重传。
 		 */
 		fun putOnce(): PutResult {
 			val written = java.util.concurrent.atomic.AtomicLong(0)
+			lateinit var call: Call
+			call = http.newCall(Request.Builder().url(url).put(newBody(written) { call.throwIfCanceled() }).build())
+			onCall(call)
 			return try {
-				http.newCall(Request.Builder().url(url).put(newBody(written)).build()).execute().use {
+				call.throwIfCanceled()
+				call.execute().use {
+					call.throwIfCanceled()
 					when {
 						it.isSuccessful -> PutResult(true, written.get(), it.code)
 						it.code == 409 -> PutResult(false, written.get(), 409)
@@ -464,9 +587,13 @@ class WebDavClient(
 					}
 				}
 			} catch (e: DavException) {
-				if (e.code == 409) PutResult(false, written.get(), 409) else throw e
+				call.throwIfCanceled(e)
+				logger.log(Level.WARNING, "上传被服务端拒绝 path=$path code=${e.code}", e)
+				throw e
 			} catch (e: java.io.IOException) {
-				PutResult(false, written.get(), 0)
+				call.throwIfCanceled(e)
+				logger.log(Level.WARNING, "上传请求失败 path=$path written=${written.get()}", e)
+				PutResult(false, written.get(), 0, e)
 			}
 		}
 
@@ -475,36 +602,44 @@ class WebDavClient(
 		// 409。几十上百 MB 的视频因此会白传一遍、再建目录重传一遍，等于双倍时间——
 		// 用户感知就是"传了很久，又从头开始"。小文件不预检，省掉这次 RTT。
 		if (total <= 0 || total >= 8L * 1024 * 1024) {
-			runCatching { ensureParentDirs(remoteDir) }
+			try {
+				ensureParentDirs(remoteDir, onCall)
+			} catch (e: TransferCanceledException) {
+				throw e
+			} catch (e: IOException) {
+				// 父目录预检是优化；普通失败仍尝试 PUT，让服务端给出最终结果。
+				logger.log(Level.WARNING, "上传父目录预检失败 dir=$remoteDir", e)
+			}
 		}
 
-		// 先直接 PUT（正常目录零额外开销）；只有"明确 409"或"一个字节都没发出去"才重试。
+		// 先直接 PUT；只有明确 409 或写出不足 1MB 的连接失败才按显式策略重试。
 		val first = putOnce()
 		if (!first.ok) {
 			val retryable = first.code == 409 || first.written < 1L * 1024 * 1024
 			if (!retryable) {
 				// 已经传了实打实的数据再断：重传等于让用户重新等一遍，不如如实报错。
-				throw IOException("传输中断（已发送 ${first.written / 1024 / 1024}MB），请重试")
+				throw IOException("传输中断（已发送 ${first.written / 1024 / 1024}MB），请重试", first.error)
 			}
-			ensureParentDirs(remoteDir)
+			ensureParentDirs(remoteDir, onCall)
 			val second = putOnce()
 			if (!second.ok) {
+				if (second.code == 0) throw IOException("上传连接失败，请重试", second.error)
 				throw DavException(second.code.takeIf { it > 0 } ?: 409, "上传失败：父目录创建后仍失败")
 			}
 		}
 	}
 
 	/** 单次 PUT 的结果：成功与否、已写出字节数、HTTP 码（0 = 传输层异常） */
-	private class PutResult(val ok: Boolean, val written: Long, val code: Int)
+	private class PutResult(val ok: Boolean, val written: Long, val code: Int, val error: IOException? = null)
 
 	/** 逐级创建远端父目录：MKCOL 每级路径，405（已存在）/409 都算成功。空目录直接返回。 */
-	private fun ensureParentDirs(remoteDir: String) {
+	private fun ensureParentDirs(remoteDir: String, onCall: (Call) -> Unit = {}) {
 		val parts = remoteDir.trim('/').split('/').filter { it.isNotEmpty() }
 		var cur = ""
 		for (part in parts) {
 			cur = if (cur.isEmpty()) part else "$cur/$part"
 			try {
-				exec("MKCOL", urlFor(cur, dir = true))
+				exec("MKCOL", urlFor(cur, dir = true), onCall)
 			} catch (e: DavException) {
 				// 405 Method Not Allowed = 目录已存在；部分实现返回 409。都视为已就绪。
 				if (e.code != 405 && e.code != 409) throw e
@@ -512,11 +647,26 @@ class WebDavClient(
 		}
 	}
 
-	private fun exec(method: String, url: HttpUrl) {
+	/** 元数据请求也登记到传输任务，取消预检时不得继续后续 PUT。 */
+	private fun exec(method: String, url: HttpUrl, onCall: (Call) -> Unit = {}) {
 		val req = Request.Builder().url(url).method(method, null).build()
-		metaCall(req).execute().use {
-			if (!it.isSuccessful) throw DavException(it.code, "$method 失败")
+		val call = metaCall(req)
+		onCall(call)
+		try {
+			call.throwIfCanceled()
+			call.execute().use {
+				call.throwIfCanceled()
+				if (!it.isSuccessful) throw DavException(it.code, "$method 失败")
+			}
+		} catch (e: IOException) {
+			call.throwIfCanceled(e)
+			throw e
 		}
+	}
+
+	/** 统一将 OkHttp 的取消结果与可重试的传输异常区分，保留底层异常原因。 */
+	private fun Call.throwIfCanceled(cause: IOException? = null) {
+		if (isCanceled()) throw if (cause is TransferCanceledException) cause else TransferCanceledException(cause)
 	}
 
 	private fun parse(input: java.io.InputStream, basePath: String): List<DavEntry> {
@@ -654,6 +804,7 @@ class WebDavClient(
 	}
 
 	companion object {
+		private val logger = Logger.getLogger("WebDavClient")
 		private data class Raw(val href: String?, val isDir: Boolean, val size: Long, val modified: Long)
 
 		private const val PROPFIND_BODY = """<?xml version="1.0" encoding="utf-8"?>

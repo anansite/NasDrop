@@ -31,6 +31,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -82,6 +87,9 @@ import androidx.compose.material.icons.rounded.ViewAgenda
 import androidx.compose.material.icons.rounded.ViewHeadline
 import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ButtonDefaults
@@ -114,6 +122,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -173,6 +182,7 @@ fun BrowserScreen(
 	onOpenSettings: () -> Unit = {},
 	onLogin: () -> Unit = {},
 	onConfirm: (String) -> Unit = {},
+	transferRequest: Int = 0,
 ) {
 	val context = LocalContext.current
 	val routeInfo by vm.routeInfo.collectAsState()
@@ -193,7 +203,7 @@ fun BrowserScreen(
 	var activeEntryForMove by remember { mutableStateOf<DavEntry?>(null) }
 	var activeEntryForDelete by remember { mutableStateOf<DavEntry?>(null) }
 	// showCreateDialog replaced by activeCreateType
-	var showTransferSheet by remember { mutableStateOf(false) }
+	var showTransferSheet by rememberSaveable { mutableStateOf(false) }
 	var showNetSheet by remember { mutableStateOf(false) }
 
 	var activeCreateType by remember { mutableStateOf<CreateDialogType?>(null) }
@@ -201,15 +211,28 @@ fun BrowserScreen(
 	var showBatchDeleteConfirm by remember { mutableStateOf(false) }
 	var showBatchMoveSheet by remember { mutableStateOf(false) }
 	var activeEntryForIconPicker by remember { mutableStateOf<DavEntry?>(null) }
+	LaunchedEffect(transferRequest) {
+		if (transferRequest > 0) showTransferSheet = true
+	}
+
+	// 三个入口共用提交行为：保留读取授权，提交成功后立即显示进度与结果。
+	fun startUpload(uris: List<android.net.Uri>, dir: String) {
+		if (uris.isEmpty()) return
+		runCatching {
+			uris.forEach { uri ->
+				runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+			}
+			vm.startUploads(uris, dir) { showTransferSheet = true }
+		}.onFailure {
+			Toast.makeText(context, "无法开始上传：${it.message}", Toast.LENGTH_LONG).show()
+		}
+	}
 
 	// 系统文件选择器（上传）
 	val filePicker = rememberLauncherForActivityResult(
 		contract = ActivityResultContracts.OpenMultipleDocuments(),
 	) { uris ->
-		if (uris.isNotEmpty()) {
-			UploadService.start(context, uris, vm.path)
-			Toast.makeText(context, "已加入上传队列: ${uris.size} 个文件", Toast.LENGTH_SHORT).show()
-		}
+		startUpload(uris, vm.path)
 	}
 
 	val photoPicker = rememberLauncherForActivityResult(
@@ -217,8 +240,7 @@ fun BrowserScreen(
 	) { uris ->
 		if (uris.isNotEmpty()) {
 			val targetDir = if (vm.selectedAlbumPath.isNotBlank()) vm.selectedAlbumPath else "Photos"
-			UploadService.start(context, uris, targetDir)
-			Toast.makeText(context, "已加入上传队列: ${uris.size} 张照片", Toast.LENGTH_SHORT).show()
+			startUpload(uris, targetDir)
 		}
 	}
 
@@ -227,13 +249,12 @@ fun BrowserScreen(
 	) { uris ->
 		if (uris.isNotEmpty()) {
 			val targetDir = if (vm.selectedMediaPath.isNotBlank()) vm.selectedMediaPath else "movies"
-			UploadService.start(context, uris, targetDir)
-			Toast.makeText(context, "已加入上传队列: ${uris.size} 部视频", Toast.LENGTH_SHORT).show()
+			startUpload(uris, targetDir)
 		}
 	}
 
 	Scaffold(
-		containerColor = Color(0xFFF7F8FA),
+		containerColor = MaterialTheme.colorScheme.background,
 		bottomBar = {
 			if (mode == BrowserMode.Pick) {
 				PickBar(
@@ -264,7 +285,7 @@ fun BrowserScreen(
 					onCancel = { vm.exitMultiSelect() },
 				)
 			} else {
-				// 主流商业网盘标准四栏 Tab
+				// 保留文件、相册、影音三个主入口。
 				CommercialNavigationBar(
 					currentTab = vm.currentTab,
 					onTabSelect = { tab ->
@@ -369,12 +390,30 @@ fun BrowserScreen(
 
 			// 主内容区域根据 Tab 呈现，并接入标准下拉刷新
 			Box(modifier = Modifier.weight(1f)) {
+				val mediaTab = vm.currentTab == MainTab.Photos || vm.currentTab == MainTab.Media
+				val contentError = if (mediaTab) vm.mediaError else vm.error
+				val initialLoading = (if (mediaTab) vm.mediaScanning else vm.loading) && vm.currentTabEntries.isEmpty()
 				PullToRefreshBox(
 					isRefreshing = vm.isRefreshing,
 					onRefresh = { vm.pullRefresh() },
 					modifier = Modifier.fillMaxSize(),
 				) {
-					when (vm.currentTab) {
+					when {
+						vm.needsLogin -> BrowserStatus(
+							title = "需要授权内网连接",
+							detail = contentError ?: "请先完成 Tailscale 授权，再访问 NAS。",
+							onPrimary = onLogin, primaryLabel = "前往登录", onSettings = onOpenSettings,
+						)
+						contentError != null -> BrowserStatus(
+							title = if (mediaTab) "媒体加载失败" else "文件加载失败",
+							detail = contentError,
+							onPrimary = { if (mediaTab) vm.ensureMediaScanned(force = true) else vm.refresh() },
+							primaryLabel = "重试", onSettings = onOpenSettings,
+						)
+						initialLoading -> BrowserStatus(
+							title = if (mediaTab) "正在扫描媒体…" else "正在加载文件…", loading = true,
+						)
+						else -> when (vm.currentTab) {
 						MainTab.Files -> {
 							FileBrowserContent(
 								vm = vm,
@@ -449,15 +488,8 @@ fun BrowserScreen(
 								logs = vm.logs(),
 							)
 						}
+						}
 					}
-				}
-
-				// 仅在当前完全无数据首次加载时显示中央菊花，有数据时静默刷新绝不打扰用户
-				if (vm.loading && vm.currentTabEntries.isEmpty()) {
-					CircularProgressIndicator(
-						modifier = Modifier.align(Alignment.Center),
-						color = Color(0xFF2A72F6),
-					)
 				}
 
 				// 可自由拖拽吸附的悬浮上传球（按住任意拖动，松手平滑贴边，绝不挡列表底部）
@@ -474,6 +506,31 @@ fun BrowserScreen(
 	}
 
 	// ==================== 抽屉与对话框组件 ====================
+	// 检查同名文件完成后才允许开始上传；确认窗口只预览有限文件名，避免大批次撑满屏幕。
+	if (vm.checkingUploadDestination) {
+		AlertDialog(
+			onDismissRequest = { vm.cancelUploadPreparation() },
+			title = { Text("正在检查上传位置…") },
+			text = { LinearProgressIndicator(Modifier.fillMaxWidth()) },
+			confirmButton = { TextButton(onClick = { vm.cancelUploadPreparation() }) { Text("取消") } },
+		)
+	}
+	val overwriteNames = vm.pendingUploadOverwriteNames
+	if (overwriteNames.isNotEmpty()) {
+		AlertDialog(
+			onDismissRequest = { vm.dismissUploadOverwrite() },
+			title = { Text("发现 ${overwriteNames.size} 个同名文件") },
+			text = {
+				Column(Modifier.verticalScroll(rememberScrollState())) {
+					Text("继续上传将覆盖 NAS 中的同名文件：")
+					overwriteNames.take(5).forEach { name -> Text("• $name", maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp)) }
+					if (overwriteNames.size > 5) Text("还有 ${overwriteNames.size - 5} 个文件", modifier = Modifier.padding(top = 8.dp))
+				}
+			},
+			confirmButton = { Button(onClick = { vm.confirmUploadOverwrite() }) { Text("覆盖上传") } },
+			dismissButton = { TextButton(onClick = { vm.dismissUploadOverwrite() }) { Text("取消") } },
+		)
+	}
 
 	// 1. 统一底部文件操作抽屉
 	activeEntryForAction?.let { entry ->
@@ -534,6 +591,12 @@ fun BrowserScreen(
 			onCancelTask = { vm.cancelTask(it) },
 			onPauseAll = { vm.pauseAll() },
 			onResumeAll = { vm.resumeAll() },
+			onRetryTask = { vm.retryTask(it) },
+			onClearFinished = { vm.clearFinishedTransfers() },
+			onOpenResult = { taskId ->
+				vm.openTransferResult(context, taskId)
+				if (vm.transferTasks.any { it.id == taskId && it.isUpload }) showTransferSheet = false
+			},
 		)
 	}
 
@@ -572,14 +635,14 @@ fun BrowserScreen(
 						trailingIcon = if (hasExt) {
 							{
 								Surface(
-									color = Color(0xFFF1F5F9),
+									color = MaterialTheme.colorScheme.surfaceVariant,
 									shape = RoundedCornerShape(6.dp),
 									modifier = Modifier.padding(end = 8.dp),
 								) {
 									Text(
 										text = extension,
 										style = MaterialTheme.typography.labelMedium,
-										color = Color(0xFF64748B),
+										color = MaterialTheme.colorScheme.onSurfaceVariant,
 										fontWeight = FontWeight.Bold,
 										modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
 									)
@@ -605,7 +668,7 @@ fun BrowserScreen(
 						}
 						activeEntryForRename = null
 					},
-					colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
+					colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
 				) { Text("确定") }
 			},
 			dismissButton = {
@@ -652,7 +715,7 @@ fun BrowserScreen(
 						}
 						showBatchDeleteConfirm = false
 					},
-					colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF4D4F)),
+					colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
 				) { Text("确认彻底删除") }
 			},
 			dismissButton = {
@@ -697,7 +760,7 @@ fun BrowserScreen(
 						activeFolderForDelete = null
 						Toast.makeText(context, "已删除: ${folder.name}", Toast.LENGTH_SHORT).show()
 					},
-					colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF4D4F)),
+					colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
 				) { Text("确认删除") }
 			},
 			dismissButton = {
@@ -760,13 +823,13 @@ private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
 	// 只表达"连没连上"，不暴露直连/中继/打洞等细节——这些由 App 自动处理，用户无需关心。
 	val (bgColor, textColor, dotColor, label) = when {
 		routeInfo.isDirect || routeInfo.isLan -> {
-			Quadruple(Color(0xFFE8F9F2), Color(0xFF00A870), Color(0xFF00B578), "已连接")
+				Quadruple(MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer, MaterialTheme.colorScheme.tertiary, "已连接")
 		}
 		routeInfo.isRelay -> {
-			Quadruple(Color(0xFFEAF2FF), Color(0xFF2A72F6), Color(0xFF2A72F6), "已连接")
+			Quadruple(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary, "已连接")
 		}
 		else -> {
-			Quadruple(Color(0xFFFFF4E5), Color(0xFFE66A00), Color(0xFFFF7A00), "连接中…")
+				Quadruple(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant, MaterialTheme.colorScheme.outline, "未连接")
 		}
 	}
 
@@ -806,7 +869,7 @@ private fun PickBar(
 ) {
 	Surface(
 		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-		color = Color.White,
+		color = MaterialTheme.colorScheme.surface,
 		shadowElevation = 12.dp,
 	) {
 		Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
@@ -820,14 +883,14 @@ private fun PickBar(
 						"存入位置: /${path.ifEmpty { "根目录" }}",
 						fontSize = 14.sp,
 						fontWeight = FontWeight.Bold,
-						color = Color(0xFF1D2129),
+						color = MaterialTheme.colorScheme.onSurface,
 						maxLines = 1,
 						overflow = TextOverflow.Ellipsis,
 					)
 					Text(
 						"可点击下方文件夹进入子目录，选定后点击确认存入",
 						fontSize = 11.sp,
-						color = Color(0xFF86909C),
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
 					)
 				}
 				OutlinedButton(
@@ -845,13 +908,13 @@ private fun PickBar(
 
 			Button(
 				onClick = onConfirm,
-				colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
+				colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
 				shape = RoundedCornerShape(14.dp),
 				modifier = Modifier.fillMaxWidth().height(46.dp),
 			) {
-				Icon(Icons.Rounded.CloudUpload, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+				Icon(Icons.Rounded.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
 				Spacer(modifier = Modifier.width(6.dp))
-				Text("存入当前目录", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 15.sp)
+				Text("存入当前目录", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary, fontSize = 15.sp)
 			}
 		}
 	}
@@ -868,20 +931,20 @@ private fun SettingsWithStatusButton(
 	// 连接状态只做极轻量的底色提示，不再用右上角圆点——那会被误认成"有新消息"。
 	// 用户无需关心直连/中继，这里只区分"在线 / 离线"两种状态。
 	val indicatorColor = if (routeInfo.isDirect || routeInfo.isRelay || routeInfo.isLan) {
-		Color(0xFF00B578) // 在线（柔和绿）
+		MaterialTheme.colorScheme.tertiary
 	} else {
-		Color(0xFFC9CDD4) // 未连接（中性灰，不用刺眼的红）
+		MaterialTheme.colorScheme.outlineVariant // 未连接（中性灰，不用刺眼的红）
 	}
 
 	IconButton(
 		onClick = onClick,
-		modifier = modifier.size(32.dp),
+		modifier = modifier.size(48.dp),
 	) {
 		Box(contentAlignment = Alignment.Center) {
 			Icon(
 				imageVector = Icons.Rounded.Settings,
 				contentDescription = "服务与配置",
-				tint = Color(0xFF4E5969),
+				tint = MaterialTheme.colorScheme.onSurface,
 				modifier = Modifier.size(20.dp),
 			)
 			// 齿轮正下方一条极细状态线，弱化存在感，绝不像通知角标
@@ -899,6 +962,66 @@ private fun SettingsWithStatusButton(
 
 // ==================== 顶部导航栏与状态胶囊 ====================
 
+/** 相册与影音共用稳定顶栏；标题占剩余宽度，次级操作收进菜单。 */
+@Composable
+private fun CollectionTopBar(
+	title: String,
+	subtitle: String,
+	isInside: Boolean,
+	activeTransferCount: Int,
+	onUp: () -> Unit,
+	onUpload: () -> Unit,
+	onCreate: () -> Unit,
+	onDelete: (() -> Unit)?,
+	onTransfer: () -> Unit,
+	onSettings: () -> Unit,
+) {
+	var menuOpen by remember { mutableStateOf(false) }
+	Surface(color = MaterialTheme.colorScheme.surface) {
+		Row(
+			Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 8.dp),
+			verticalAlignment = Alignment.CenterVertically,
+		) {
+			if (isInside) {
+				IconButton(onClick = onUp, modifier = Modifier.size(48.dp)) {
+					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部")
+				}
+			}
+			Column(Modifier.weight(1f).padding(start = if (isInside) 0.dp else 12.dp)) {
+				Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+				Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+			}
+			TransferButton(activeTransferCount, onTransfer)
+			Box {
+				IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(48.dp)) {
+					Icon(Icons.Rounded.MoreVert, contentDescription = "更多操作")
+				}
+				DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+					DropdownMenuItem(text = { Text("上传文件") }, onClick = { menuOpen = false; onUpload() })
+					DropdownMenuItem(text = { Text("新建文件夹") }, onClick = { menuOpen = false; onCreate() })
+					if (isInside && onDelete != null) {
+						DropdownMenuItem(text = { Text("删除当前文件夹", color = MaterialTheme.colorScheme.error) }, onClick = { menuOpen = false; onDelete() })
+					}
+					DropdownMenuItem(text = { Text("设置") }, onClick = { menuOpen = false; onSettings() })
+				}
+			}
+		}
+	}
+}
+
+/** 传输入口保留独立触控区，数量提示不参与标题宽度分配。 */
+@Composable
+private fun TransferButton(count: Int, onClick: () -> Unit) {
+	IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
+		Box {
+			Icon(Icons.Rounded.CloudDownload, contentDescription = if (count > 0) "传输中心，$count 个任务进行中" else "传输中心")
+			if (count > 0) {
+				Box(Modifier.size(8.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary).align(Alignment.TopEnd))
+			}
+		}
+	}
+}
+
 @Composable
 private fun PhotosTopBar(
 	count: Int,
@@ -912,65 +1035,14 @@ private fun PhotosTopBar(
 	routeInfo: RouteInfo,
 	onOpenSettings: () -> Unit,
 ) {
-	// 固定 44dp 行高，平滑统一面包屑，杜绝跳动
-	Row(
-		modifier = Modifier
-			.fillMaxWidth()
-			.height(44.dp)
-			.background(Color.White)
-			.padding(horizontal = 14.dp),
-		verticalAlignment = Alignment.CenterVertically,
-		horizontalArrangement = Arrangement.SpaceBetween,
-	) {
-		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-			if (selectedAlbumName.isNotBlank()) {
-				IconButton(
-					onClick = onUpAlbum,
-					modifier = Modifier.size(28.dp),
-				) {
-					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部相册", tint = Color(0xFF2A72F6), modifier = Modifier.size(18.dp))
-				}
-				Text("全部相册", fontSize = 14.sp, color = Color(0xFF86909C), modifier = Modifier.clickable(onClick = onUpAlbum))
-				Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = Color(0xFFC9CDD4), modifier = Modifier.size(14.dp))
-				Text(selectedAlbumName, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1)
-			} else {
-				Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, tint = Color(0xFFFF3D71), modifier = Modifier.size(20.dp))
-				Spacer(modifier = Modifier.width(2.dp))
-				Text("云端相册", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-				Text("· $count 张", fontSize = 12.sp, color = Color(0xFF86909C))
-			}
-		}
-
-		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-			if (selectedAlbumName.isNotBlank() && onDeleteCurrentAlbum != null) {
-				IconButton(onClick = onDeleteCurrentAlbum, modifier = Modifier.size(32.dp)) {
-					Icon(Icons.Rounded.Delete, contentDescription = "删除当前相册", tint = Color(0xFFFF4D4F), modifier = Modifier.size(19.dp))
-				}
-			}
-			IconButton(onClick = onCreateAlbum, modifier = Modifier.size(32.dp)) {
-				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属相册", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
-			}
-
-			IconButton(onClick = onOpenTransferSheet, modifier = Modifier.size(32.dp)) {
-				Box(contentAlignment = Alignment.Center) {
-					Icon(Icons.Rounded.CloudDownload, contentDescription = "传输中心", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
-					if (activeTransferCount > 0) {
-						Box(
-							modifier = Modifier
-								.size(7.dp)
-								.clip(CircleShape)
-								.background(Color(0xFF2A72F6))
-								.align(Alignment.TopEnd)
-						)
-					}
-				}
-			}
-			SettingsWithStatusButton(
-				routeInfo = routeInfo,
-				onClick = onOpenSettings,
-			)
-		}
-	}
+	CollectionTopBar(
+		title = selectedAlbumName.ifBlank { "云端相册" },
+		subtitle = if (selectedAlbumName.isBlank()) "$count 张照片" else "相册 · $count 张照片",
+		isInside = selectedAlbumName.isNotBlank(),
+		activeTransferCount = activeTransferCount,
+		onUp = onUpAlbum, onUpload = onUploadPhoto, onCreate = onCreateAlbum,
+		onDelete = onDeleteCurrentAlbum, onTransfer = onOpenTransferSheet, onSettings = onOpenSettings,
+	)
 }
 
 @Composable
@@ -986,65 +1058,14 @@ private fun MediaTopBar(
 	routeInfo: RouteInfo,
 	onOpenSettings: () -> Unit,
 ) {
-	// 固定 44dp 行高，平滑统一面包屑，杜绝跳动
-	Row(
-		modifier = Modifier
-			.fillMaxWidth()
-			.height(44.dp)
-			.background(Color.White)
-			.padding(horizontal = 14.dp),
-		verticalAlignment = Alignment.CenterVertically,
-		horizontalArrangement = Arrangement.SpaceBetween,
-	) {
-		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-			if (selectedMediaName.isNotBlank()) {
-				IconButton(
-					onClick = onUpMedia,
-					modifier = Modifier.size(28.dp),
-				) {
-					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部影视", tint = Color(0xFF2A72F6), modifier = Modifier.size(18.dp))
-				}
-				Text("全部影视", fontSize = 14.sp, color = Color(0xFF86909C), modifier = Modifier.clickable(onClick = onUpMedia))
-				Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = Color(0xFFC9CDD4), modifier = Modifier.size(14.dp))
-				Text(selectedMediaName, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1)
-			} else {
-				Icon(Icons.Rounded.VideoLibrary, contentDescription = null, tint = Color(0xFF722ED1), modifier = Modifier.size(20.dp))
-				Spacer(modifier = Modifier.width(2.dp))
-				Text("影音视界", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-				Text("· $count 部", fontSize = 12.sp, color = Color(0xFF86909C))
-			}
-		}
-
-		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-			if (selectedMediaName.isNotBlank() && onDeleteCurrentMedia != null) {
-				IconButton(onClick = onDeleteCurrentMedia, modifier = Modifier.size(32.dp)) {
-					Icon(Icons.Rounded.Delete, contentDescription = "删除当前影集", tint = Color(0xFFFF4D4F), modifier = Modifier.size(19.dp))
-				}
-			}
-			IconButton(onClick = onCreateMediaFolder, modifier = Modifier.size(32.dp)) {
-				Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建专属影集", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
-			}
-
-			IconButton(onClick = onOpenTransferSheet, modifier = Modifier.size(32.dp)) {
-				Box(contentAlignment = Alignment.Center) {
-					Icon(Icons.Rounded.CloudDownload, contentDescription = "传输中心", tint = Color(0xFF4E5969), modifier = Modifier.size(19.dp))
-					if (activeTransferCount > 0) {
-						Box(
-							modifier = Modifier
-								.size(7.dp)
-								.clip(CircleShape)
-								.background(Color(0xFF2A72F6))
-								.align(Alignment.TopEnd)
-						)
-					}
-				}
-			}
-			SettingsWithStatusButton(
-				routeInfo = routeInfo,
-				onClick = onOpenSettings,
-			)
-		}
-	}
+	CollectionTopBar(
+		title = selectedMediaName.ifBlank { "影音视界" },
+		subtitle = if (selectedMediaName.isBlank()) "$count 个视频" else "影集 · $count 个视频",
+		isInside = selectedMediaName.isNotBlank(),
+		activeTransferCount = activeTransferCount,
+		onUp = onUpMedia, onUpload = onUploadVideo, onCreate = onCreateMediaFolder,
+		onDelete = onDeleteCurrentMedia, onTransfer = onOpenTransferSheet, onSettings = onOpenSettings,
+	)
 }
 
 @Composable
@@ -1057,12 +1078,12 @@ private fun NetworkTopBar(
 	Row(
 		modifier = Modifier
 			.fillMaxWidth()
-			.background(Color(0xFFF7F8FA))
+			.background(MaterialTheme.colorScheme.surfaceVariant)
 			.padding(horizontal = 16.dp, vertical = 10.dp),
 		verticalAlignment = Alignment.CenterVertically,
 		horizontalArrangement = Arrangement.SpaceBetween,
 	) {
-		Text("服务与设置", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+		Text("服务与设置", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
 
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
 			HumanNetworkPill(routeInfo = routeInfo, onClick = {})
@@ -1073,13 +1094,13 @@ private fun NetworkTopBar(
 						Icon(
 							imageVector = Icons.Rounded.CloudDownload,
 							contentDescription = "发现新版本",
-							tint = Color(0xFF2A72F6),
+							tint = MaterialTheme.colorScheme.primary,
 						)
 						Box(
 							modifier = Modifier
 								.size(8.dp)
 								.clip(CircleShape)
-								.background(Color(0xFFFF4D4F))
+								.background(MaterialTheme.colorScheme.error)
 								.align(Alignment.TopEnd)
 						)
 					}
@@ -1087,12 +1108,13 @@ private fun NetworkTopBar(
 			}
 
 			IconButton(onClick = onOpenSettings) {
-				Icon(Icons.Rounded.Settings, contentDescription = "设置", tint = Color(0xFF4E5969))
+				Icon(Icons.Rounded.Settings, contentDescription = "设置", tint = MaterialTheme.colorScheme.onSurface)
 			}
 		}
 	}
 }
 
+/** 文件顶栏把搜索、标题与固定操作区分开，长路径只影响标题省略。 */
 @Composable
 private fun FilesTopBar(
 	vm: BrowserViewModel,
@@ -1107,235 +1129,67 @@ private fun FilesTopBar(
 	onOpenSettings: () -> Unit,
 ) {
 	var isSearchActive by remember { mutableStateOf(false) }
-	val parts = remember(vm.path) {
-		if (vm.path.isBlank()) emptyList()
-		else vm.path.trim('/').split('/')
-	}
-
-	Column(
-		modifier = Modifier
-			.fillMaxWidth()
-			.background(Color.White),
-	) {
-		// 第 1 行：夸克同款极简单层顶栏（返回/标题 + 搜索 + 新建 + 刷新 + 传输列表）
-		Row(
-			modifier = Modifier
-				.fillMaxWidth()
-				.height(46.dp)
-				.padding(horizontal = 14.dp),
-			verticalAlignment = Alignment.CenterVertically,
-		) {
+	var menuOpen by remember { mutableStateOf(false) }
+	val parts = remember(vm.path) { vm.path.trim('/').split('/').filter { it.isNotBlank() } }
+	Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
+		Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
 			if (isSearchActive) {
-				// 原地平滑展开搜索条
-				Surface(
-					shape = RoundedCornerShape(20.dp),
-					color = Color(0xFFF7F8FA),
-					modifier = Modifier
-						.weight(1f)
-						.height(36.dp),
-				) {
-					Row(
-						modifier = Modifier.padding(horizontal = 10.dp),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(6.dp),
-					) {
-						Icon(Icons.Rounded.Search, contentDescription = null, tint = Color(0xFF2A72F6), modifier = Modifier.size(18.dp))
-						BasicTextField(
-							value = vm.searchQuery,
-						onValueChange = { vm.searchQuery = it },
-							singleLine = true,
-							modifier = Modifier.weight(1f),
-							decorationBox = { innerTextField ->
-								if (vm.searchQuery.isEmpty()) {
-									Text("搜索文件名...", fontSize = 13.sp, color = Color(0xFF86909C))
-								}
-								innerTextField()
-							},
-						)
-						if (vm.searchQuery.isNotEmpty()) {
-							IconButton(
-								onClick = { vm.searchQuery = "" },
-								modifier = Modifier.size(24.dp),
-							) {
-								Icon(Icons.Rounded.Close, contentDescription = "清空", tint = Color(0xFF86909C), modifier = Modifier.size(16.dp))
-							}
-						}
-					}
-				}
-
-				TextButton(
-					onClick = {
-						vm.searchQuery = ""
-						isSearchActive = false
-					},
-					modifier = Modifier.padding(start = 4.dp),
-				) {
-					Text("取消", fontSize = 13.sp, color = Color(0xFF2A72F6), fontWeight = FontWeight.Bold)
+				OutlinedTextField(
+					value = vm.searchQuery,
+					onValueChange = { vm.searchQuery = it },
+					singleLine = true,
+					placeholder = { Text("搜索文件名") },
+					modifier = Modifier.weight(1f),
+				)
+				IconButton(onClick = { vm.searchQuery = ""; isSearchActive = false }, modifier = Modifier.size(48.dp)) {
+					Icon(Icons.Rounded.Close, contentDescription = "关闭搜索")
 				}
 			} else {
-				// 常态：左侧标题与返回
-				Row(
-					modifier = Modifier.weight(1f),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(6.dp),
-				) {
-					if (parts.isNotEmpty()) {
-						IconButton(
-							onClick = onUp,
-							modifier = Modifier.size(30.dp),
-						) {
-							Icon(
-								imageVector = Icons.Rounded.ArrowBack,
-								contentDescription = "返回上一级",
-								tint = Color(0xFF1D2129),
-								modifier = Modifier.size(20.dp),
-							)
-						}
-						Text(
-							text = parts.last(),
-							fontSize = 17.sp,
-							fontWeight = FontWeight.Bold,
-							color = Color(0xFF1D2129),
-							maxLines = 1,
-							overflow = TextOverflow.Ellipsis,
-						)
-					} else {
-						Icon(
-							imageVector = Icons.Rounded.FolderOpen,
-							contentDescription = null,
-							tint = Color(0xFF2A72F6),
-							modifier = Modifier.size(22.dp),
-						)
-						Text(
-							text = "我的文件",
-							fontSize = 18.sp,
-							fontWeight = FontWeight.Bold,
-							color = Color(0xFF1D2129),
-						)
+				if (parts.isNotEmpty()) {
+					IconButton(onClick = onUp, modifier = Modifier.size(48.dp)) {
+						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回上一级")
 					}
 				}
-
-				// 右侧极简操作（上传 + 搜索 + 新建 + 刷新 + 传输中心）
-				Row(
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(2.dp),
-				) {
-					IconButton(
-						onClick = { isSearchActive = true },
-						modifier = Modifier.size(32.dp),
-					) {
-						Icon(Icons.Rounded.Search, contentDescription = "搜索", tint = Color(0xFF4E5969), modifier = Modifier.size(20.dp))
-					}
-					IconButton(
-						onClick = onCreateFolder,
-						modifier = Modifier.size(32.dp),
-					) {
-						Icon(Icons.Rounded.CreateNewFolder, contentDescription = "新建文件夹", tint = Color(0xFF4E5969), modifier = Modifier.size(20.dp))
-					}
-
-					IconButton(
-						onClick = onOpenTransferSheet,
-						modifier = Modifier.size(32.dp),
-					) {
-						Box(contentAlignment = Alignment.Center) {
-							Icon(Icons.Rounded.CloudDownload, contentDescription = "传输列表", tint = Color(0xFF4E5969), modifier = Modifier.size(20.dp))
-							if (vm.activeTransferCount > 0) {
-								Box(
-									modifier = Modifier
-										.size(7.dp)
-										.clip(CircleShape)
-										.background(Color(0xFF2A72F6))
-										.align(Alignment.TopEnd)
-								)
-							}
-						}
-					}
-
-					SettingsWithStatusButton(
-						routeInfo = routeInfo,
-						onClick = onOpenSettings,
-					)
-				}
-			}
-		}
-
-		// 第 2 行：夸克同款精致面包屑路径（固定 26dp 高度，平滑杜绝高度跳动）
-		Row(
-			modifier = Modifier
-				.fillMaxWidth()
-				.height(26.dp)
-				.padding(horizontal = 14.dp),
-			verticalAlignment = Alignment.CenterVertically,
-		) {
-			LazyRow(
-				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(4.dp),
-			) {
-				item {
-					val isCurrent = parts.isEmpty()
-					Text(
-						text = "NAS 私有云",
-						fontSize = 12.sp,
-						color = if (isCurrent) Color(0xFF2A72F6) else Color(0xFF86909C),
-						modifier = Modifier
-							.clip(RoundedCornerShape(4.dp))
-							.clickable { onNavigate("") }
-							.padding(horizontal = 2.dp, vertical = 2.dp),
-					)
-				}
-				items(parts.indices.toList()) { i ->
-					Text("/", fontSize = 11.sp, color = Color(0xFFC9CDD4))
-					val isLast = i == parts.size - 1
-					val p = parts.take(i + 1).joinToString("/")
-					Text(
-						text = parts[i],
-						fontSize = 12.sp,
-						color = if (isLast) Color(0xFF1D2129) else Color(0xFF86909C),
-						fontWeight = if (isLast) FontWeight.Bold else FontWeight.Normal,
-						modifier = Modifier
-							.clip(RoundedCornerShape(4.dp))
-							.clickable { onNavigate(p) }
-							.padding(horizontal = 2.dp, vertical = 2.dp),
-					)
-				}
-			}
-		}
-
-		// 第 3 行：夸克同款排序与视图切换条（左侧：按修改时间 ↓；右侧：纯线框四宫格图标）
-		Row(
-			modifier = Modifier
-				.fillMaxWidth()
-				.height(32.dp)
-				.padding(horizontal = 14.dp),
-			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.SpaceBetween,
-		) {
-			Row(
-				modifier = Modifier
-					.clip(RoundedCornerShape(6.dp))
-					.clickable { vm.cycleSortOrder() }
-					.padding(vertical = 4.dp),
-				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(4.dp),
-			) {
 				Text(
-					text = vm.sortOrder.label,
-					fontSize = 12.sp,
-					fontWeight = FontWeight.Medium,
-					color = Color(0xFF4E5969),
+					parts.lastOrNull() ?: "我的文件",
+					modifier = Modifier.weight(1f).padding(start = if (parts.isEmpty()) 12.dp else 0.dp),
+					style = MaterialTheme.typography.titleMedium,
+					maxLines = 1, overflow = TextOverflow.Ellipsis,
 				)
+				IconButton(onClick = { isSearchActive = true }, modifier = Modifier.size(48.dp)) {
+					Icon(Icons.Rounded.Search, contentDescription = "搜索")
+				}
+				TransferButton(vm.activeTransferCount, onOpenTransferSheet)
+				Box {
+					IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(48.dp)) {
+						Icon(Icons.Rounded.MoreVert, contentDescription = "更多操作")
+					}
+					DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+						DropdownMenuItem(text = { Text("上传文件") }, onClick = { menuOpen = false; onUpload() })
+						DropdownMenuItem(text = { Text("新建文件夹") }, onClick = { menuOpen = false; onCreateFolder() })
+						DropdownMenuItem(text = { Text("多选文件") }, onClick = { menuOpen = false; onToggleMultiSelect() })
+						DropdownMenuItem(text = { Text("刷新") }, onClick = { menuOpen = false; vm.refresh() })
+						DropdownMenuItem(text = { Text("设置") }, onClick = { menuOpen = false; onOpenSettings() })
+					}
+				}
 			}
-
-			IconButton(
-				onClick = onToggleViewMode,
-				modifier = Modifier.size(28.dp),
-			) {
-				Icon(
-					imageVector = if (vm.viewMode == ViewMode.Cards) Icons.Rounded.GridView else Icons.Rounded.ViewHeadline,
-					contentDescription = "切换视图",
-					tint = Color(0xFF4E5969),
-					modifier = Modifier.size(19.dp),
-				)
+		}
+		LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+			item {
+				TextButton(onClick = { onNavigate("") }) { Text("NAS") }
+			}
+			items(parts.indices.toList()) { i ->
+				Icon(Icons.Rounded.ChevronRight, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+				TextButton(onClick = { onNavigate(parts.take(i + 1).joinToString("/")) }) {
+					Text(parts[i], maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+				}
+			}
+		}
+		Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+			TextButton(onClick = { vm.cycleSortOrder() }) { Text(vm.sortOrder.label, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+			Spacer(Modifier.weight(1f))
+			IconButton(onClick = onToggleViewMode, modifier = Modifier.size(48.dp)) {
+				Icon(if (vm.viewMode == ViewMode.Cards) Icons.Rounded.GridView else Icons.Rounded.ViewHeadline, contentDescription = "切换视图")
 			}
 		}
 	}
@@ -1365,26 +1219,26 @@ private fun CategoryFilterRow(
 			val active = cat == selected
 			Surface(
 				shape = RoundedCornerShape(16.dp),
-				color = if (active) Color(0xFF2A72F6) else Color.White,
+				color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
 				shadowElevation = if (active) 3.dp else 1.dp,
 				onClick = { onSelect(cat) },
 			) {
 				Row(
-					modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+					modifier = Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 6.dp),
 					verticalAlignment = Alignment.CenterVertically,
 					horizontalArrangement = Arrangement.spacedBy(6.dp),
 				) {
 					Icon(
 						imageVector = icon,
 						contentDescription = null,
-						tint = if (active) Color.White else Color(0xFF4E5969),
+						tint = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
 						modifier = Modifier.size(14.dp),
 					)
 					Text(
 						text = title,
 						fontSize = 12.sp,
 						fontWeight = FontWeight.SemiBold,
-						color = if (active) Color.White else Color(0xFF4E5969),
+						color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
 					)
 				}
 			}
@@ -1402,7 +1256,7 @@ private fun MultiSelectHeaderStrip(
 ) {
 	Surface(
 		shape = RoundedCornerShape(12.dp),
-		color = Color.White,
+		color = MaterialTheme.colorScheme.surface,
 		shadowElevation = 1.dp,
 		modifier = Modifier
 			.fillMaxWidth()
@@ -1417,21 +1271,21 @@ private fun MultiSelectHeaderStrip(
 				text = "已选中 $selectedCount 项",
 				fontSize = 13.sp,
 				fontWeight = FontWeight.Bold,
-				color = Color(0xFF1D2129),
+				color = MaterialTheme.colorScheme.onSurface,
 			)
 			Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
 				Text(
 					text = "全选",
 					fontSize = 13.sp,
 					fontWeight = FontWeight.Bold,
-					color = Color(0xFF2A72F6),
+					color = MaterialTheme.colorScheme.primary,
 					modifier = Modifier.clickable { onSelectAll() },
 				)
 				Text(
 					text = "完成",
 					fontSize = 13.sp,
 					fontWeight = FontWeight.Bold,
-					color = Color(0xFF2A72F6),
+					color = MaterialTheme.colorScheme.primary,
 					modifier = Modifier.clickable { onComplete() },
 				)
 			}
@@ -1449,7 +1303,7 @@ private fun BatchActionTray(
 ) {
 	Surface(
 		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-		color = Color(0xFF1D2129),
+		color = MaterialTheme.colorScheme.surface,
 		shadowElevation = 16.dp,
 		modifier = Modifier.fillMaxWidth(),
 	) {
@@ -1462,7 +1316,7 @@ private fun BatchActionTray(
 		) {
 			BatchActionItem(icon = Icons.Rounded.CloudDownload, label = "批量下载", onClick = onDownload)
 			BatchActionItem(icon = Icons.Rounded.DriveFileMove, label = "批量移动", onClick = onMove)
-			BatchActionItem(icon = Icons.Rounded.Delete, label = "彻底删除", onClick = onDelete, tint = Color(0xFFFF4D4F))
+			BatchActionItem(icon = Icons.Rounded.Delete, label = "彻底删除", onClick = onDelete, tint = MaterialTheme.colorScheme.error)
 			BatchActionItem(icon = Icons.Rounded.ArrowBack, label = "取消", onClick = onCancel)
 		}
 	}
@@ -1473,12 +1327,12 @@ private fun BatchActionItem(
 	icon: ImageVector,
 	label: String,
 	onClick: () -> Unit,
-	tint: Color = Color.White,
+	tint: Color = MaterialTheme.colorScheme.onSurface,
 ) {
 	Column(
 		horizontalAlignment = Alignment.CenterHorizontally,
 		verticalArrangement = Arrangement.spacedBy(4.dp),
-		modifier = Modifier.clickable { onClick() },
+		modifier = Modifier.sizeIn(minWidth = 56.dp, minHeight = 48.dp).clickable { onClick() },
 	) {
 		Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(22.dp))
 		Text(text = label, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = tint)
@@ -1488,6 +1342,30 @@ private fun BatchActionItem(
 // ==================== 文件浏览内容区 ====================
 
 @OptIn(ExperimentalFoundationApi::class)
+/** 加载、授权与网络失败分别说明后续操作，错误详情允许完整换行。 */
+@Composable
+private fun BrowserStatus(
+	title: String,
+	detail: String? = null,
+	loading: Boolean = false,
+	onPrimary: (() -> Unit)? = null,
+	primaryLabel: String = "重试",
+	onSettings: (() -> Unit)? = null,
+) {
+	Column(
+		Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 40.dp),
+		horizontalAlignment = Alignment.CenterHorizontally,
+		verticalArrangement = Arrangement.Center,
+	) {
+		if (loading) CircularProgressIndicator(Modifier.padding(bottom = 20.dp))
+		else Icon(Icons.Rounded.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
+		Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
+		if (!detail.isNullOrBlank()) Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 12.dp))
+		if (onPrimary != null) Button(onClick = onPrimary, modifier = Modifier.padding(top = 20.dp)) { Text(primaryLabel) }
+		if (onSettings != null) TextButton(onClick = onSettings) { Text("检查连接设置") }
+	}
+}
+
 @Composable
 private fun FileBrowserContent(
 	vm: BrowserViewModel,
@@ -1512,7 +1390,7 @@ private fun FileBrowserContent(
 				Text(
 					text = if (vm.searchQuery.isNotBlank()) "未找到匹配「${vm.searchQuery}」的文件" else "此文件夹空空如也",
 					fontSize = 14.sp,
-					color = Color(0xFF86909C),
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
 				)
 			}
 		}
@@ -1525,13 +1403,14 @@ private fun FileBrowserContent(
 			LazyColumn(
 				modifier = Modifier
 					.fillMaxSize()
-					.background(Color.White),
+					.background(MaterialTheme.colorScheme.surface),
 			) {
 				items(items, key = { it.path }) { entry ->
 					val isSelected = vm.selectedEntries.contains(entry)
 					Row(
 						modifier = Modifier
 							.fillMaxWidth()
+							.background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
 							.combinedClickable(
 								onClick = { onOpenEntry(entry) },
 								onLongClick = { onLongClickEntry(entry) },
@@ -1549,7 +1428,7 @@ private fun FileBrowserContent(
 								text = entry.name,
 								fontSize = 14.sp,
 								fontWeight = FontWeight.Medium,
-								color = Color(0xFF1D2129),
+								color = MaterialTheme.colorScheme.onSurface,
 								maxLines = 1,
 								overflow = TextOverflow.Ellipsis,
 							)
@@ -1557,7 +1436,7 @@ private fun FileBrowserContent(
 							Text(
 								text = formatMeta(entry),
 								fontSize = 11.sp,
-								color = Color(0xFF86909C),
+								color = MaterialTheme.colorScheme.onSurfaceVariant,
 								maxLines = 1,
 								overflow = TextOverflow.Ellipsis,
 							)
@@ -1569,18 +1448,18 @@ private fun FileBrowserContent(
 						} else {
 							IconButton(
 								onClick = { onOpenAction(entry) },
-								modifier = Modifier.size(28.dp),
+								modifier = Modifier.size(48.dp),
 							) {
 								Icon(
 									Icons.Rounded.MoreVert,
 									contentDescription = "更多",
-									tint = Color(0xFFC9CDD4),
+									tint = MaterialTheme.colorScheme.onSurfaceVariant,
 									modifier = Modifier.size(18.dp),
 								)
 							}
 						}
 					}
-					HorizontalDivider(color = Color(0xFFF7F8FA), thickness = 0.5.dp)
+					HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 0.5.dp)
 				}
 
 				item {
@@ -1591,9 +1470,9 @@ private fun FileBrowserContent(
 						contentAlignment = Alignment.Center,
 					) {
 						Text(
-							text = "${items.size}项  已同步至私有云NAS",
+							text = "共 ${items.size} 项",
 							fontSize = 11.sp,
-							color = Color(0xFFC9CDD4),
+							color = MaterialTheme.colorScheme.onSurfaceVariant,
 						)
 					}
 				}
@@ -1604,13 +1483,14 @@ private fun FileBrowserContent(
 			LazyColumn(
 				modifier = Modifier
 					.fillMaxSize()
-					.background(Color.White),
+					.background(MaterialTheme.colorScheme.surface),
 			) {
 				items(items, key = { it.path }) { entry ->
 					val isSelected = vm.selectedEntries.contains(entry)
 					Row(
 						modifier = Modifier
 							.fillMaxWidth()
+							.background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
 							.combinedClickable(
 								onClick = { onOpenEntry(entry) },
 								onLongClick = { onLongClickEntry(entry) },
@@ -1630,7 +1510,7 @@ private fun FileBrowserContent(
 								text = entry.displayName,
 								fontSize = 13.sp,
 								fontWeight = FontWeight.SemiBold,
-								color = Color(0xFF1D2129),
+								color = MaterialTheme.colorScheme.onSurface,
 								maxLines = 1,
 								overflow = TextOverflow.Ellipsis,
 							)
@@ -1638,19 +1518,19 @@ private fun FileBrowserContent(
 							Text(
 								text = formatMeta(entry),
 								fontSize = 11.sp,
-								color = Color(0xFF86909C),
+								color = MaterialTheme.colorScheme.onSurfaceVariant,
 								maxLines = 1,
 								overflow = TextOverflow.Ellipsis,
 							)
 						}
 
 						if (!isMulti) {
-							IconButton(onClick = { onOpenAction(entry) }, modifier = Modifier.size(24.dp)) {
-								Icon(Icons.Rounded.MoreVert, contentDescription = "更多", tint = Color(0xFF86909C), modifier = Modifier.size(16.dp))
+							IconButton(onClick = { onOpenAction(entry) }, modifier = Modifier.size(48.dp)) {
+								Icon(Icons.Rounded.MoreVert, contentDescription = "更多", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
 							}
 						}
 					}
-					HorizontalDivider(color = Color(0xFFF2F3F5), thickness = 0.5.dp)
+					HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 0.5.dp)
 				}
 			}
 		}
@@ -1668,7 +1548,7 @@ private fun FileBrowserContent(
 					val imgUrl = if (entry.isImage) vm.thumbnailUrlFor(entry.path) else null
 					Card(
 						shape = RoundedCornerShape(14.dp),
-						colors = CardDefaults.cardColors(containerColor = Color.White),
+						colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
 						elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
 						modifier = Modifier
 							.fillMaxWidth()
@@ -1689,10 +1569,10 @@ private fun FileBrowserContent(
 									IconButton(
 										onClick = { onOpenAction(entry) },
 										modifier = Modifier
-											.size(24.dp)
+											.size(48.dp)
 											.align(Alignment.TopEnd),
 									) {
-										Icon(Icons.Rounded.MoreVert, contentDescription = "更多", tint = Color(0xFF86909C), modifier = Modifier.size(16.dp))
+										Icon(Icons.Rounded.MoreVert, contentDescription = "更多", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
 									}
 								}
 							}
@@ -1707,7 +1587,7 @@ private fun FileBrowserContent(
 										.fillMaxWidth()
 										.aspectRatio(1.2f)
 										.clip(RoundedCornerShape(8.dp))
-										.background(Color(0xFFE5E6EB)),
+										.background(MaterialTheme.colorScheme.outlineVariant),
 								)
 							} else {
 								FileIconByEntry(entry = entry, size = 52.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
@@ -1718,7 +1598,7 @@ private fun FileBrowserContent(
 								text = entry.displayName,
 								fontSize = 13.sp,
 								fontWeight = FontWeight.Bold,
-								color = Color(0xFF1D2129),
+								color = MaterialTheme.colorScheme.onSurface,
 								maxLines = 1,
 								overflow = TextOverflow.Ellipsis,
 							)
@@ -1726,7 +1606,7 @@ private fun FileBrowserContent(
 							Text(
 								text = formatMeta(entry),
 								fontSize = 10.sp,
-								color = Color(0xFF86909C),
+								color = MaterialTheme.colorScheme.onSurfaceVariant,
 								maxLines = 1,
 								overflow = TextOverflow.Ellipsis,
 							)
@@ -1742,13 +1622,13 @@ private fun FileBrowserContent(
 private fun SelectCheckbox(isSelected: Boolean, modifier: Modifier = Modifier) {
 	Surface(
 		shape = CircleShape,
-		color = if (isSelected) Color(0xFF2A72F6) else Color.Transparent,
-		border = BorderStroke(2.dp, if (isSelected) Color(0xFF2A72F6) else Color(0xFFC9CDD4)),
+		color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+		border = BorderStroke(2.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
 		modifier = modifier.size(20.dp),
 	) {
 		if (isSelected) {
 			Box(contentAlignment = Alignment.Center) {
-				Icon(Icons.Rounded.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+				Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(12.dp))
 			}
 		}
 	}
@@ -1785,17 +1665,17 @@ private fun PhotoTimelineContent(
 				val isAll = selectedAlbumPath.isBlank()
 				Surface(
 					shape = RoundedCornerShape(16.dp),
-					color = if (isAll) Color(0xFFFF3D71) else Color.White,
+					color = if (isAll) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surface,
 					shadowElevation = if (isAll) 3.dp else 1.dp,
 					onClick = { onSelectAlbum("") },
 				) {
 					Row(
-						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+						modifier = Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 6.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(6.dp),
 					) {
-						Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, tint = if (isAll) Color.White else Color(0xFFFF3D71), modifier = Modifier.size(15.dp))
-						Text("全部照片", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isAll) Color.White else Color(0xFF1D2129))
+						Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, tint = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.secondary, modifier = Modifier.size(15.dp))
+						Text("全部照片", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface)
 					}
 				}
 			}
@@ -1805,7 +1685,7 @@ private fun PhotoTimelineContent(
 				val isSelected = selectedAlbumPath == album.path
 				Surface(
 					shape = RoundedCornerShape(16.dp),
-					color = if (isSelected) Color(0xFFFF3D71) else Color(0xFFF7F8FA),
+					color = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surfaceVariant,
 					shadowElevation = if (isSelected) 2.dp else 0.dp,
 					modifier = Modifier.combinedClickable(
 						onClick = { onSelectAlbum(album.path) },
@@ -1813,12 +1693,12 @@ private fun PhotoTimelineContent(
 					),
 				) {
 					Row(
-						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+						modifier = Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 6.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(6.dp),
 					) {
-						Icon(Icons.Rounded.Folder, contentDescription = null, tint = if (isSelected) Color.White else Color(0xFFFF9500), modifier = Modifier.size(15.dp))
-						Text(album.name, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isSelected) Color.White else Color(0xFF1D2129))
+						Icon(Icons.Rounded.Folder, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.onSecondary else Color(0xFFFF9500), modifier = Modifier.size(15.dp))
+						Text(album.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = if (isSelected) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
 					}
 				}
 			}
@@ -1827,7 +1707,7 @@ private fun PhotoTimelineContent(
 			item {
 				Surface(
 					shape = RoundedCornerShape(16.dp),
-					color = Color(0xFFFFF0F5),
+					color = MaterialTheme.colorScheme.secondaryContainer,
 					onClick = onCreateAlbum,
 				) {
 					Row(
@@ -1835,8 +1715,8 @@ private fun PhotoTimelineContent(
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
-						Icon(Icons.Rounded.Add, contentDescription = null, tint = Color(0xFFFF3D71), modifier = Modifier.size(15.dp))
-						Text("新建相册", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF3D71))
+						Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(15.dp))
+						Text("新建相册", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
 					}
 				}
 			}
@@ -1847,8 +1727,8 @@ private fun PhotoTimelineContent(
 			Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
 				Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
 					FileIcon(category = FileCategory.Image, isDir = false, size = 56.dp)
-					Text("当前相册暂无照片", fontSize = 14.sp, color = Color(0xFF86909C))
-					Text("可点击右下角「+ 上传照片」直接存入此相册", fontSize = 12.sp, color = Color(0xFFC9CDD4))
+					Text("当前相册暂无照片", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+					Text("点击上传按钮，添加照片到当前相册", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 				}
 			}
 		} else {
@@ -1866,8 +1746,8 @@ private fun PhotoTimelineContent(
 							verticalAlignment = Alignment.CenterVertically,
 							horizontalArrangement = Arrangement.spacedBy(8.dp),
 						) {
-							Text(group.dateTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-							Text("${group.count}张", fontSize = 12.sp, color = Color(0xFF86909C))
+							Text(group.dateTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+							Text("${group.count}张", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 						}
 					}
 
@@ -1877,7 +1757,7 @@ private fun PhotoTimelineContent(
 							modifier = Modifier
 								.aspectRatio(1f)
 								.clip(RoundedCornerShape(4.dp))
-								.background(Color(0xFFE5E6EB))
+								.background(MaterialTheme.colorScheme.outlineVariant)
 								.combinedClickable(
 									onClick = {
 										if (isMulti) {
@@ -1947,17 +1827,17 @@ private fun MediaStreamContent(
 				val isAll = selectedMediaPath.isBlank()
 				Surface(
 					shape = RoundedCornerShape(16.dp),
-					color = if (isAll) Color(0xFF722ED1) else Color.White,
+					color = if (isAll) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surface,
 					shadowElevation = if (isAll) 3.dp else 1.dp,
 					onClick = { onSelectMediaFolder("") },
 				) {
 					Row(
-						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+						modifier = Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 6.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(6.dp),
 					) {
-						Icon(Icons.Rounded.VideoLibrary, contentDescription = null, tint = if (isAll) Color.White else Color(0xFF722ED1), modifier = Modifier.size(15.dp))
-						Text("全部影视", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isAll) Color.White else Color(0xFF1D2129))
+						Icon(Icons.Rounded.VideoLibrary, contentDescription = null, tint = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.secondary, modifier = Modifier.size(15.dp))
+						Text("全部影视", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface)
 					}
 				}
 			}
@@ -1967,7 +1847,7 @@ private fun MediaStreamContent(
 				val isSelected = selectedMediaPath == folder.path
 				Surface(
 					shape = RoundedCornerShape(16.dp),
-					color = if (isSelected) Color(0xFF722ED1) else Color(0xFFF7F8FA),
+					color = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surfaceVariant,
 					shadowElevation = if (isSelected) 2.dp else 0.dp,
 					modifier = Modifier.combinedClickable(
 						onClick = { onSelectMediaFolder(folder.path) },
@@ -1975,12 +1855,12 @@ private fun MediaStreamContent(
 					),
 				) {
 					Row(
-						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+						modifier = Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 6.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(6.dp),
 					) {
-						Icon(Icons.Rounded.Folder, contentDescription = null, tint = if (isSelected) Color.White else Color(0xFFFF9500), modifier = Modifier.size(15.dp))
-						Text(folder.name, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isSelected) Color.White else Color(0xFF1D2129))
+						Icon(Icons.Rounded.Folder, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.onSecondary else Color(0xFFFF9500), modifier = Modifier.size(15.dp))
+						Text(folder.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = if (isSelected) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
 					}
 				}
 			}
@@ -1989,7 +1869,7 @@ private fun MediaStreamContent(
 			item {
 				Surface(
 					shape = RoundedCornerShape(16.dp),
-					color = Color(0xFFF9F0FF),
+					color = MaterialTheme.colorScheme.secondaryContainer,
 					onClick = onCreateMediaFolder,
 				) {
 					Row(
@@ -1997,8 +1877,8 @@ private fun MediaStreamContent(
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
-						Icon(Icons.Rounded.Add, contentDescription = null, tint = Color(0xFF722ED1), modifier = Modifier.size(15.dp))
-						Text("新建影集", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF722ED1))
+						Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(15.dp))
+						Text("新建影集", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
 					}
 				}
 			}
@@ -2009,8 +1889,8 @@ private fun MediaStreamContent(
 			Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
 				Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
 					FileIcon(category = FileCategory.Video, isDir = false, size = 56.dp)
-					Text("当前分类暂无视频", fontSize = 14.sp, color = Color(0xFF86909C))
-					Text("可点击右下角「+ 上传视频」直接存入此影集", fontSize = 12.sp, color = Color(0xFFC9CDD4))
+					Text("当前分类暂无视频", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+					Text("点击上传按钮，添加视频到当前影集", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 				}
 			}
 		} else {
@@ -2025,7 +1905,7 @@ private fun MediaStreamContent(
 					val isSelected = selectedPaths.contains(video.path)
 					Card(
 						shape = RoundedCornerShape(14.dp),
-						colors = CardDefaults.cardColors(containerColor = Color.White),
+						colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
 						elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
 						modifier = Modifier
 							.fillMaxWidth()
@@ -2053,7 +1933,7 @@ private fun MediaStreamContent(
 									.aspectRatio(16f / 9f)
 									.background(
 										Brush.linearGradient(
-											listOf(Color(0xFF2E1C4E), Color(0xFF1D2129))
+										listOf(MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.surfaceVariant)
 										)
 									),
 								contentAlignment = Alignment.Center,
@@ -2076,21 +1956,21 @@ private fun MediaStreamContent(
 								Icon(
 									imageVector = Icons.Rounded.Movie,
 									contentDescription = null,
-									tint = Color.White.copy(alpha = 0.15f),
+									tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.35f),
 									modifier = Modifier.size(52.dp),
 								)
 
 								// 微质感播放指示器
 								Surface(
 									shape = CircleShape,
-									color = Color(0xFF722ED1).copy(alpha = 0.85f),
+									color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.85f),
 									modifier = Modifier.size(32.dp),
 								) {
 									Box(contentAlignment = Alignment.Center) {
 										Icon(
 											Icons.Rounded.PlayArrow,
 											contentDescription = "播放",
-											tint = Color.White,
+											tint = MaterialTheme.colorScheme.onSecondary,
 											modifier = Modifier.size(20.dp),
 										)
 									}
@@ -2099,7 +1979,7 @@ private fun MediaStreamContent(
 								// 右下角格式/清晰度微徽标
 								Surface(
 									shape = RoundedCornerShape(4.dp),
-									color = Color.Black.copy(alpha = 0.65f),
+									color = MediaBackdrop.copy(alpha = 0.65f),
 									modifier = Modifier
 										.align(Alignment.BottomEnd)
 										.padding(6.dp),
@@ -2108,7 +1988,7 @@ private fun MediaStreamContent(
 										text = video.ext.uppercase(Locale.ROOT).ifEmpty { "HD" },
 										fontSize = 9.sp,
 										fontWeight = FontWeight.Bold,
-										color = Color.White,
+										color = OnMediaBackdrop,
 										modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
 									)
 								}
@@ -2137,7 +2017,7 @@ private fun MediaStreamContent(
 										text = video.displayName,
 										fontSize = 12.sp,
 										fontWeight = FontWeight.Bold,
-										color = Color(0xFF1D2129),
+										color = MaterialTheme.colorScheme.onSurface,
 										maxLines = 1,
 										overflow = TextOverflow.Ellipsis,
 									)
@@ -2145,7 +2025,7 @@ private fun MediaStreamContent(
 									Text(
 										text = formatMeta(video),
 										fontSize = 10.sp,
-										color = Color(0xFF86909C),
+										color = MaterialTheme.colorScheme.onSurfaceVariant,
 										maxLines = 1,
 										overflow = TextOverflow.Ellipsis,
 									)
@@ -2153,12 +2033,12 @@ private fun MediaStreamContent(
 								if (!isMulti) {
 									IconButton(
 										onClick = { onOpenAction(video) },
-										modifier = Modifier.size(24.dp)
+										modifier = Modifier.size(48.dp)
 									) {
 										Icon(
 											Icons.Rounded.MoreVert,
 											contentDescription = "管理",
-											tint = Color(0xFF86909C),
+											tint = MaterialTheme.colorScheme.onSurfaceVariant,
 											modifier = Modifier.size(16.dp)
 										)
 									}
@@ -2172,8 +2052,8 @@ private fun MediaStreamContent(
 	}
 }
 
+/** 传输列表按方向或完成结果筛选；只有实际可执行的操作才显示。 */
 @Composable
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 private fun TransferCenterSheet(
 	tasks: List<TransferTask>,
 	totalSpeedBps: Long = 0L,
@@ -2183,159 +2063,108 @@ private fun TransferCenterSheet(
 	onCancelTask: (String) -> Unit,
 	onPauseAll: () -> Unit,
 	onResumeAll: () -> Unit,
+	onRetryTask: (String) -> Unit,
+	onClearFinished: () -> Unit,
+	onOpenResult: (String) -> Unit,
 ) {
+	var filter by rememberSaveable { mutableIntStateOf(0) }
+	val finishedStates = setOf(TransferStatus.COMPLETED, TransferStatus.FAILED, TransferStatus.CANCELLED)
+	val visibleTasks = tasks.filter {
+		when (filter) {
+			1 -> it.isUpload
+			2 -> !it.isUpload
+			3 -> it.status == TransferStatus.COMPLETED
+			else -> true
+		}
+	}.sortedBy { it.status in finishedStates }
 	ModalBottomSheet(
 		onDismissRequest = onDismiss,
 		sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-		containerColor = Color.White,
-		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+		containerColor = MaterialTheme.colorScheme.surface,
 	) {
-		Column(
-			modifier = Modifier
-				.fillMaxWidth()
-				.padding(horizontal = 20.dp, vertical = 10.dp),
-		) {
-			Row(
-				modifier = Modifier.fillMaxWidth(),
-				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.SpaceBetween,
-			) {
-				Text("传输管理中心", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-				Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-					Text("全部暂停", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF86909C), modifier = Modifier.clickable { onPauseAll() })
-					Text("全部开始", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2A72F6), modifier = Modifier.clickable { onResumeAll() })
-				}
+		Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).fillMaxHeight(0.88f)) {
+			Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+				Text("传输中心", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+				IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, contentDescription = "关闭传输中心") }
 			}
-
+			Text(
+				"${tasks.count { it.status !in finishedStates }} 个进行中 · ${tasks.count { it.status == TransferStatus.COMPLETED }} 个完成 · ${tasks.count { it.status == TransferStatus.FAILED }} 个失败 · ${tasks.count { it.status == TransferStatus.CANCELLED }} 个取消",
+				style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+			)
 			if (totalSpeedBps > 0) {
-				Spacer(modifier = Modifier.height(10.dp))
-				Surface(
-					shape = RoundedCornerShape(12.dp),
-					color = Color(0xFFEAF2FF),
-					modifier = Modifier.fillMaxWidth(),
-				) {
-					Row(
-						modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.SpaceBetween,
-					) {
-						Text("⚡ 3通道并行传输", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2A72F6))
-						val mb = totalSpeedBps / (1024.0 * 1024.0)
-						val speedStr = if (mb >= 1.0) String.format(Locale.ROOT, "%.1f MB/s", mb) else String.format(Locale.ROOT, "%.0f KB/s", totalSpeedBps / 1024.0)
-						Text("实时总速率 $speedStr", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00B578))
-					}
+				Text("当前总速率 ${formatSize(totalSpeedBps)}/s", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
+			}
+			LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
+				items(listOf("全部", "上传", "下载", "已完成").withIndex().toList()) { item ->
+					FilterChip(selected = filter == item.index, onClick = { filter = item.index }, label = { Text(item.value) })
 				}
 			}
-
-			Spacer(modifier = Modifier.height(16.dp))
-
-			if (tasks.isEmpty()) {
-				Box(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(vertical = 40.dp),
-					contentAlignment = Alignment.Center,
-				) {
-					Text("当前无正在传输的任务", fontSize = 13.sp, color = Color(0xFF86909C))
+			LazyRow {
+				if (tasks.any { !it.isUpload && it.status in setOf(TransferStatus.RUNNING, TransferStatus.QUEUED) }) {
+					item { TextButton(onClick = onPauseAll) { Text("暂停下载") } }
+				}
+				if (tasks.any { !it.isUpload && it.status == TransferStatus.PAUSED }) {
+					item { TextButton(onClick = onResumeAll) { Text("继续下载") } }
+				}
+				if (tasks.any { it.status in finishedStates }) {
+					item { TextButton(onClick = onClearFinished) { Text("清除结束任务") } }
+				}
+			}
+			if (visibleTasks.isEmpty()) {
+				Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+					Text(if (tasks.isEmpty()) "暂无传输任务" else "此筛选下暂无任务", color = MaterialTheme.colorScheme.onSurfaceVariant)
 				}
 			} else {
-				LazyColumn(
-					verticalArrangement = Arrangement.spacedBy(10.dp),
-					modifier = Modifier.fillMaxWidth(),
-				) {
-					items(tasks, key = { it.id }) { task ->
+				LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+					items(visibleTasks, key = { it.id }) { task ->
+						val terminal = task.status in finishedStates
 						val statusText = when (task.status) {
-							TransferStatus.RUNNING -> {
-								if (task.isUpload) {
-									if (task.totalBytes > 0 && task.sentBytes >= task.totalBytes) "已发送完成，等待服务端写入…" else "正在上传"
-								} else {
-									"正在下载"
-								}
-							}
+							TransferStatus.RUNNING -> if (task.isUpload) "正在上传" else "正在下载"
+							TransferStatus.CONFIRMING -> "已发送，等待服务器确认"
 							TransferStatus.QUEUED -> "排队等待中"
 							TransferStatus.PAUSED -> "已暂停"
 							TransferStatus.COMPLETED -> if (task.isUpload) "上传完成" else "下载完成"
-							TransferStatus.FAILED -> (if (task.isUpload) "上传失败" else "下载失败") + if (!task.error.isNullOrBlank()) ": ${task.error}" else ""
+							TransferStatus.FAILED -> "传输失败"
+							TransferStatus.CANCELLED -> "已取消"
 						}
-						Surface(
-							shape = RoundedCornerShape(12.dp),
-							color = Color(0xFFF7F8FA),
-							modifier = Modifier.fillMaxWidth(),
-						) {
-							Column(modifier = Modifier.padding(12.dp)) {
-								Row(
-									modifier = Modifier.fillMaxWidth(),
-									verticalAlignment = Alignment.CenterVertically,
-									horizontalArrangement = Arrangement.SpaceBetween,
-								) {
-									Row(
-										verticalAlignment = Alignment.CenterVertically,
-										horizontalArrangement = Arrangement.spacedBy(6.dp),
-										modifier = Modifier.weight(1f),
-									) {
-										Surface(
-											shape = RoundedCornerShape(4.dp),
-											color = if (task.isUpload) Color(0xFFE8F3FF) else Color(0xFFE8FFEA),
-										) {
-											Text(
-												text = if (task.isUpload) "上传" else "下载",
-												fontSize = 10.sp,
-												fontWeight = FontWeight.Bold,
-												color = if (task.isUpload) Color(0xFF165DFF) else Color(0xFF00B578),
-												modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-											)
-										}
-										Text(
-											text = task.name,
-											fontSize = 13.sp,
-											fontWeight = FontWeight.Bold,
-											color = Color(0xFF1D2129),
-											maxLines = 1,
-											overflow = TextOverflow.Ellipsis,
-										)
-									}
-									Text(task.speedStr, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2A72F6))
+						Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.medium) {
+							Column(Modifier.fillMaxWidth().padding(16.dp)) {
+								Row(verticalAlignment = Alignment.CenterVertically) {
+									Icon(if (task.isUpload) Icons.Rounded.CloudUpload else Icons.Rounded.CloudDownload, contentDescription = if (task.isUpload) "上传" else "下载", tint = MaterialTheme.colorScheme.primary)
+									Text(task.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f).padding(start = 10.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
 								}
-
-								Spacer(modifier = Modifier.height(6.dp))
-								LinearProgressIndicator(
-									progress = { task.progress },
-									modifier = Modifier
-										.fillMaxWidth()
-										.height(5.dp)
-										.clip(RoundedCornerShape(3.dp)),
-									color = if (task.isUpload) Color(0xFF165DFF) else Color(0xFF2A72F6),
-									trackColor = Color(0xFFE5E6EB),
+								Text(statusText, style = MaterialTheme.typography.bodyMedium, color = if (task.status == TransferStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(top = 10.dp))
+								if (task.status == TransferStatus.FAILED && !task.error.isNullOrBlank()) {
+									Text(task.error.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
+								}
+								if (!terminal) {
+									if (task.status == TransferStatus.CONFIRMING || (task.status == TransferStatus.RUNNING && task.totalBytes <= 0)) {
+										LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+									} else {
+										LinearProgressIndicator(progress = { task.progress }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+									}
+								}
+								Text(
+									"${formatSize(task.sentBytes)} / ${if (task.totalBytes > 0) formatSize(task.totalBytes) else "大小未知"}${if (task.status == TransferStatus.RUNNING && task.speedStr.isNotBlank()) " · ${task.speedStr}" else ""}",
+									style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp),
 								)
-								Spacer(modifier = Modifier.height(6.dp))
-
-								Row(
-									modifier = Modifier.fillMaxWidth(),
-									verticalAlignment = Alignment.CenterVertically,
-									horizontalArrangement = Arrangement.SpaceBetween,
-								) {
-									Text(
-										text = "${formatSize(task.sentBytes)} / ${if (task.totalBytes > 0) formatSize(task.totalBytes) else "--"} · $statusText",
-										fontSize = 11.sp,
-										color = Color(0xFF86909C),
-										maxLines = 1,
-										overflow = TextOverflow.Ellipsis,
-										modifier = Modifier.weight(1f, fill = false),
-									)
-
-									Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-										if (task.status == TransferStatus.RUNNING && !task.isUpload) {
-											Text("暂停", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2A72F6), modifier = Modifier.clickable { onPauseTask(task.id) })
-										} else if (task.status == TransferStatus.PAUSED && !task.isUpload) {
-											Text("继续", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00B578), modifier = Modifier.clickable { onResumeTask(task.id) })
+								LazyRow {
+									if (!task.isUpload && task.status in setOf(TransferStatus.RUNNING, TransferStatus.QUEUED)) {
+										item { TextButton(onClick = { onPauseTask(task.id) }) { Text("暂停") } }
+									}
+									if (!task.isUpload && task.status == TransferStatus.PAUSED) {
+										item { TextButton(onClick = { onResumeTask(task.id) }) { Text("继续") } }
+									}
+									if (task.status in setOf(TransferStatus.FAILED, TransferStatus.CANCELLED)) {
+										item { TextButton(onClick = { onRetryTask(task.id) }) { Text("重试") } }
+									}
+									if (task.status == TransferStatus.COMPLETED) {
+										item { TextButton(onClick = { onOpenResult(task.id) }) { Text(if (task.isUpload) "查看位置" else "打开文件") } }
+									}
+									item {
+										TextButton(onClick = { onCancelTask(task.id) }) {
+											Text(if (terminal) "清除" else "取消", color = if (terminal) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
 										}
-										Text(
-											text = if (task.status == TransferStatus.COMPLETED) "清除" else "取消",
-											fontSize = 11.sp,
-											fontWeight = FontWeight.Bold,
-											color = Color(0xFFFF4D4F),
-											modifier = Modifier.clickable { onCancelTask(task.id) },
-										)
 									}
 								}
 							}
@@ -2343,7 +2172,6 @@ private fun TransferCenterSheet(
 					}
 				}
 			}
-			Spacer(modifier = Modifier.height(24.dp))
 		}
 	}
 }
@@ -2362,7 +2190,7 @@ private fun NetworkManagerSheet(
 	ModalBottomSheet(
 		onDismissRequest = onDismiss,
 		sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-		containerColor = Color.White,
+		containerColor = MaterialTheme.colorScheme.surface,
 		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
 	) {
 		Column(
@@ -2370,23 +2198,23 @@ private fun NetworkManagerSheet(
 				.fillMaxWidth()
 				.padding(horizontal = 20.dp, vertical = 10.dp),
 		) {
-			Text("网络连接与智能自愈", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+			Text("网络连接与智能自愈", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
 			Spacer(modifier = Modifier.height(14.dp))
 
 			// 网络质量大卡片
 			Surface(
 				shape = RoundedCornerShape(16.dp),
-				color = Color(0xFFF7F8FA),
+				color = MaterialTheme.colorScheme.surfaceVariant,
 				modifier = Modifier.fillMaxWidth(),
 			) {
 				Column(modifier = Modifier.padding(14.dp)) {
 					HumanNetworkPill(routeInfo = routeInfo, onClick = {})
 					Spacer(modifier = Modifier.height(8.dp))
 					Text(
-						text = if (routeInfo.isDirect) "当前处于高速直连通道，流量端到端加密直达，速度拉满。"
-						else "当前网络正通过安全中继转发。后台已启动 15 秒静默探测自愈，具备条件时将自动无缝升级为极速专线。",
+						text = if (routeInfo.isDirect) "当前通过直连访问 NAS。"
+						else "当前使用中继连接。可重新检测连接状态或检查服务配置。",
 						fontSize = 12.sp,
-						color = Color(0xFF4E5969),
+						color = MaterialTheme.colorScheme.onSurface,
 						lineHeight = 18.sp,
 					)
 				}
@@ -2396,29 +2224,29 @@ private fun NetworkManagerSheet(
 
 			Button(
 				onClick = onTriggerPunch,
-				colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
+				colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
 				shape = RoundedCornerShape(14.dp),
 				modifier = Modifier
 					.fillMaxWidth()
 					.height(48.dp),
 			) {
-				Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = Color.White)
+				Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
 				Spacer(modifier = Modifier.width(6.dp))
-				Text("⚡ 立即发起加速探测", fontWeight = FontWeight.Bold, color = Color.White)
+				Text("重新检测连接", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
 			}
 
 			Spacer(modifier = Modifier.height(10.dp))
 			Button(
 				onClick = onOpenSettings,
-				colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF2F3F5)),
+				colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
 				shape = RoundedCornerShape(14.dp),
 				modifier = Modifier
 					.fillMaxWidth()
 					.height(48.dp),
 			) {
-				Icon(Icons.Rounded.Settings, contentDescription = null, tint = Color(0xFF4E5969))
+				Icon(Icons.Rounded.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
 				Spacer(modifier = Modifier.width(6.dp))
-				Text("配置服务参数", fontWeight = FontWeight.Bold, color = Color(0xFF4E5969))
+				Text("配置服务参数", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
 			}
 
 			Spacer(modifier = Modifier.height(24.dp))
@@ -2445,7 +2273,7 @@ private fun ActionBottomSheet(
 	ModalBottomSheet(
 		onDismissRequest = onDismiss,
 		sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-		containerColor = Color.White,
+		containerColor = MaterialTheme.colorScheme.surface,
 		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
 	) {
 		Column(
@@ -2461,9 +2289,9 @@ private fun ActionBottomSheet(
 			) {
 				FileThumbnail(entry = entry, urlOf = urlOf, customIconKey = customIconKey, size = 44.dp)
 				Column(modifier = Modifier.weight(1f)) {
-					Text(entry.displayName, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129), maxLines = 1, overflow = TextOverflow.Ellipsis)
+					Text(entry.displayName, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
 					Spacer(modifier = Modifier.height(2.dp))
-					Text(formatMeta(entry), fontSize = 12.sp, color = Color(0xFF86909C), maxLines = 1, overflow = TextOverflow.Ellipsis)
+					Text(formatMeta(entry), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
 				}
 			}
 
@@ -2485,12 +2313,12 @@ private fun ActionBottomSheet(
 						icon = Icons.Rounded.Palette,
 						label = "更换图标",
 						onClick = onChangeIcon,
-						tint = Color(0xFF2A72F6),
+						tint = MaterialTheme.colorScheme.primary,
 					)
 				}
 				ActionSheetBtn(icon = Icons.Rounded.DriveFileMove, label = "移动文件", onClick = onMove)
 				ActionSheetBtn(icon = Icons.Rounded.DriveFileRenameOutline, label = "重命名", onClick = onRename)
-				ActionSheetBtn(icon = Icons.Rounded.Delete, label = "彻底删除", onClick = onDelete, tint = Color(0xFFFF4D4F))
+				ActionSheetBtn(icon = Icons.Rounded.Delete, label = "彻底删除", onClick = onDelete, tint = MaterialTheme.colorScheme.error)
 			}
 
 			Spacer(modifier = Modifier.height(24.dp))
@@ -2512,7 +2340,7 @@ private fun FolderIconPickerSheet(
 	ModalBottomSheet(
 		onDismissRequest = onDismiss,
 		sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-		containerColor = Color.White,
+		containerColor = MaterialTheme.colorScheme.surface,
 		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
 	) {
 		Column(
@@ -2526,12 +2354,12 @@ private fun FolderIconPickerSheet(
 				horizontalArrangement = Arrangement.SpaceBetween,
 			) {
 				Column {
-					Text("选择文件夹图标", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+					Text("选择文件夹图标", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
 					Spacer(modifier = Modifier.height(2.dp))
-					Text(folderName, fontSize = 12.sp, color = Color(0xFF86909C), maxLines = 1, overflow = TextOverflow.Ellipsis)
+					Text(folderName, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
 				}
 				IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-					Icon(Icons.Rounded.Close, contentDescription = "关闭", tint = Color(0xFF86909C), modifier = Modifier.size(20.dp))
+					Icon(Icons.Rounded.Close, contentDescription = "关闭", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
 				}
 			}
 
@@ -2580,7 +2408,7 @@ private fun FolderIconPickerSheet(
 						Text(
 							text = iconItem.label,
 							fontSize = 11.sp,
-							color = if (isSelected) iconItem.tintColor else Color(0xFF4E5969),
+							color = if (isSelected) iconItem.tintColor else MaterialTheme.colorScheme.onSurface,
 							fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
 							maxLines = 1,
 						)
@@ -2598,7 +2426,7 @@ private fun ActionSheetBtn(
 	icon: ImageVector,
 	label: String,
 	onClick: () -> Unit,
-	tint: Color = Color(0xFF1D2129),
+	tint: Color = MaterialTheme.colorScheme.onSurface,
 ) {
 	Column(
 		horizontalAlignment = Alignment.CenterHorizontally,
@@ -2607,14 +2435,14 @@ private fun ActionSheetBtn(
 	) {
 		Surface(
 			shape = CircleShape,
-			color = Color(0xFFF7F8FA),
+			color = MaterialTheme.colorScheme.surfaceVariant,
 			modifier = Modifier.size(48.dp),
 		) {
 			Box(contentAlignment = Alignment.Center) {
 				Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(22.dp))
 			}
 		}
-		Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF4E5969))
+		Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
 	}
 }
 
@@ -2632,7 +2460,7 @@ private fun MoveFolderSheet(
 	ModalBottomSheet(
 		onDismissRequest = onDismiss,
 		sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-		containerColor = Color.White,
+		containerColor = MaterialTheme.colorScheme.surface,
 		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
 	) {
 		Column(
@@ -2640,7 +2468,7 @@ private fun MoveFolderSheet(
 				.fillMaxWidth()
 				.padding(horizontal = 20.dp, vertical = 10.dp),
 		) {
-			Text("选择移动目标目录", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
+			Text("选择移动目标目录", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
 			Spacer(modifier = Modifier.height(14.dp))
 
 			LazyColumn(
@@ -2651,7 +2479,7 @@ private fun MoveFolderSheet(
 					val isCurrent = fPath == currentPath
 					Surface(
 						shape = RoundedCornerShape(10.dp),
-						color = if (isCurrent) Color(0xFFF2F3F5) else Color(0xFFF7F8FA),
+						color = if (isCurrent) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceVariant,
 						modifier = Modifier
 							.fillMaxWidth()
 							.clickable(enabled = !isCurrent) { onSelectTarget(fPath) },
@@ -2666,11 +2494,11 @@ private fun MoveFolderSheet(
 								text = if (fPath.isEmpty()) "根目录 (/)" else fPath,
 								fontSize = 13.sp,
 								fontWeight = FontWeight.SemiBold,
-								color = if (isCurrent) Color(0xFF86909C) else Color(0xFF1D2129),
+								color = if (isCurrent) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
 								modifier = Modifier.weight(1f),
 							)
 							if (isCurrent) {
-								Text("当前所在", fontSize = 11.sp, color = Color(0xFF86909C))
+								Text("当前所在", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 							}
 						}
 					}
@@ -2727,7 +2555,7 @@ private fun CreateFolderDialog(
 					val target = name.trim()
 					if (target.isNotBlank()) onConfirm(target)
 				},
-				colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
+				colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
 				shape = RoundedCornerShape(10.dp),
 			) { Text("确定创建") }
 		},
@@ -2737,9 +2565,7 @@ private fun CreateFolderDialog(
 	)
 }
 
-/**
- * 控制台与链路详情
- */
+/** 按实际链路状态展示连接信息，不使用固定延迟或速度承诺。 */
 @Composable
 private fun NetworkIntelligenceConsole(
 	routeInfo: RouteInfo,
@@ -2748,191 +2574,26 @@ private fun NetworkIntelligenceConsole(
 	onOpenSettings: () -> Unit,
 	logs: String,
 ) {
-	LazyColumn(
-		contentPadding = PaddingValues(16.dp),
-		verticalArrangement = Arrangement.spacedBy(14.dp),
-		modifier = Modifier.fillMaxSize(),
+	Column(
+		Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+		verticalArrangement = Arrangement.spacedBy(16.dp),
 	) {
-		// 1. 全息网络连接拓扑动效卡片
-		item {
-			Card(
-				shape = RoundedCornerShape(20.dp),
-				colors = CardDefaults.cardColors(containerColor = Color(0xFF101E38)),
-				elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-				modifier = Modifier.fillMaxWidth(),
-			) {
-				Column(modifier = Modifier.padding(18.dp)) {
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						horizontalArrangement = Arrangement.SpaceBetween,
-						verticalAlignment = Alignment.CenterVertically,
-					) {
-						Text(
-							text = "实时网络拓扑",
-							fontSize = 14.sp,
-							fontWeight = FontWeight.Bold,
-							color = Color.White,
-						)
-						Surface(
-							shape = RoundedCornerShape(8.dp),
-							color = if (routeInfo.isLan) Color(0x3300E599) else if (routeInfo.isDirect) Color(0x332A72F6) else Color(0x33FF7A00),
-							border = androidx.compose.foundation.BorderStroke(1.dp, if (routeInfo.isLan) Color(0x6600E599) else if (routeInfo.isDirect) Color(0x662A72F6) else Color(0x66FF7A00)),
-						) {
-							Text(
-								text = if (routeInfo.isLan) "⚡ 局域网" else if (routeInfo.isDirect) "🚀 专线直连" else "🐢 中继自愈",
-								fontSize = 11.sp,
-								fontWeight = FontWeight.Bold,
-								color = if (routeInfo.isLan) Color(0xFF00E599) else if (routeInfo.isDirect) Color(0xFF69A2FF) else Color(0xFFFF9A3E),
-								modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-							)
-						}
-					}
-
-					Spacer(modifier = Modifier.height(18.dp))
-
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.SpaceBetween,
-					) {
-						// 客户端节点
-						Column(
-							horizontalAlignment = Alignment.CenterHorizontally,
-							modifier = Modifier.width(76.dp),
-						) {
-							Box(
-								modifier = Modifier
-									.size(48.dp)
-									.clip(RoundedCornerShape(14.dp))
-									.background(Color(0xFF2A72F6)),
-								contentAlignment = Alignment.Center,
-							) {
-								Icon(Icons.Rounded.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
-							}
-							Spacer(modifier = Modifier.height(6.dp))
-							Text("我的手机", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
-							Text("客户端", fontSize = 10.sp, color = Color(0xFFA0AEC0))
-						}
-
-						// 动态光束
-						Column(
-							modifier = Modifier.weight(1f),
-							horizontalAlignment = Alignment.CenterHorizontally,
-						) {
-							Text(
-								text = if (routeInfo.isLan) "< 2ms 局域网" else if (routeInfo.isDirect) "24ms 直连" else "86ms 中继",
-								fontSize = 10.sp,
-								fontWeight = FontWeight.Bold,
-								color = if (routeInfo.isLan) Color(0xFF00E599) else Color(0xFF69A2FF),
-							)
-							Spacer(modifier = Modifier.height(4.dp))
-							Box(
-								modifier = Modifier
-									.fillMaxWidth()
-									.height(4.dp)
-									.clip(RoundedCornerShape(2.dp))
-									.background(
-										Brush.horizontalGradient(
-											colors = listOf(
-												Color(0xFF2A72F6),
-												if (routeInfo.isLan) Color(0xFF00E599) else Color(0xFF00B5A6),
-												Color(0xFF722ED1),
-											)
-										)
-									)
-							)
-						}
-
-						// NAS 节点
-						Column(
-							horizontalAlignment = Alignment.CenterHorizontally,
-							modifier = Modifier.width(76.dp),
-						) {
-							Box(
-								modifier = Modifier
-									.size(48.dp)
-									.clip(RoundedCornerShape(14.dp))
-									.background(Color(0xFF00B5A6)),
-								contentAlignment = Alignment.Center,
-							) {
-								Icon(Icons.Rounded.CloudDone, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
-							}
-							Spacer(modifier = Modifier.height(6.dp))
-							Text("私有 NAS", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
-							Text("数据中心", fontSize = 10.sp, color = Color(0xFFA0AEC0))
-						}
-					}
+		Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+			Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+				Text("NAS 连接", style = MaterialTheme.typography.titleMedium)
+				Text(
+					when {
+						routeInfo.isLan -> "当前使用局域网连接"
+						routeInfo.isDirect -> "当前使用直连"
+						routeInfo.isRelay -> "当前使用中继连接"
+						else -> "当前未连接"
+					},
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+				)
+				Button(onClick = onTriggerPunch, enabled = !isPunching, modifier = Modifier.fillMaxWidth()) {
+					Text(if (isPunching) "正在检测连接…" else "重新检测连接")
 				}
-			}
-		}
-
-		// 2. 智能专线自愈与加速控制卡片
-		item {
-			Card(
-				shape = RoundedCornerShape(18.dp),
-				colors = CardDefaults.cardColors(containerColor = Color.White),
-				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-				modifier = Modifier.fillMaxWidth(),
-			) {
-				Column(modifier = Modifier.padding(16.dp)) {
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						horizontalArrangement = Arrangement.SpaceBetween,
-						verticalAlignment = Alignment.CenterVertically,
-					) {
-						Text("智能专线加速", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-						Text("● 自动探测中", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00B578))
-					}
-
-					Spacer(modifier = Modifier.height(6.dp))
-					Text(
-						text = "周期探测网络环境，切换移动数据时自动平滑直连。",
-						fontSize = 11.sp,
-						color = Color(0xFF86909C),
-						lineHeight = 16.sp,
-					)
-
-					Spacer(modifier = Modifier.height(12.dp))
-
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						horizontalArrangement = Arrangement.spacedBy(8.dp),
-					) {
-						Button(
-							onClick = onTriggerPunch,
-							enabled = !isPunching,
-							colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
-							shape = RoundedCornerShape(12.dp),
-							contentPadding = PaddingValues(horizontal = 8.dp),
-							modifier = Modifier.weight(1f).height(40.dp),
-						) {
-							if (isPunching) {
-								CircularProgressIndicator(
-									modifier = Modifier.size(16.dp),
-									color = Color.White,
-									strokeWidth = 2.dp,
-								)
-								Spacer(modifier = Modifier.width(6.dp))
-								Text("正在打洞直连...", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-							} else {
-								Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-								Spacer(modifier = Modifier.width(4.dp))
-								Text("立即加速", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-							}
-						}
-
-						OutlinedButton(
-							onClick = onOpenSettings,
-							shape = RoundedCornerShape(12.dp),
-							contentPadding = PaddingValues(horizontal = 8.dp),
-							modifier = Modifier.weight(1f).height(40.dp),
-						) {
-							Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
-							Spacer(modifier = Modifier.width(4.dp))
-							Text("服务器设置", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-						}
-					}
-				}
+				OutlinedButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) { Text("检查连接设置") }
 			}
 		}
 	}
@@ -2944,14 +2605,14 @@ private fun CommercialNavigationBar(
 	onTabSelect: (MainTab) -> Unit,
 ) {
 	Surface(
-		color = Color.White,
+		color = MaterialTheme.colorScheme.surface,
 		shadowElevation = 8.dp,
 		modifier = Modifier
 			.fillMaxWidth()
 			.height(50.dp),
 	) {
 		Column {
-			HorizontalDivider(color = Color(0xFFF2F3F5), thickness = 0.5.dp)
+			HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 0.5.dp)
 			Row(
 				modifier = Modifier.fillMaxSize(),
 				verticalAlignment = Alignment.CenterVertically,
@@ -2990,7 +2651,7 @@ private fun CompactTabItem(
 	onClick: () -> Unit,
 	modifier: Modifier = Modifier,
 ) {
-	val color = if (selected) Color(0xFF2A72F6) else Color(0xFF86909C)
+	val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
 	Column(
 		modifier = modifier
 			.fillMaxHeight()
@@ -3077,9 +2738,9 @@ private fun DraggableUploadFab(
 		var isDragging by remember { mutableStateOf(false) }
 
 		val (bgColor, icon, label) = when (currentTab) {
-			MainTab.Files -> Triple(Color(0xFF2A72F6), Icons.Rounded.CloudUpload, "上传文件")
-			MainTab.Photos -> Triple(Color(0xFFFF3D71), Icons.Rounded.PhotoCamera, "上传照片")
-			MainTab.Media -> Triple(Color(0xFF722ED1), Icons.Rounded.Movie, "上传视频")
+			MainTab.Files -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.CloudUpload, "上传文件")
+			MainTab.Photos -> Triple(MaterialTheme.colorScheme.secondary, Icons.Rounded.PhotoCamera, "上传照片")
+			MainTab.Media -> Triple(MaterialTheme.colorScheme.secondary, Icons.Rounded.Movie, "上传视频")
 			MainTab.Me -> Triple(Color.Transparent, Icons.Rounded.Add, "")
 		}
 
@@ -3120,7 +2781,7 @@ private fun DraggableUploadFab(
 				},
 		) {
 			Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-				Icon(imageVector = icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(24.dp))
+					Icon(imageVector = icon, contentDescription = label, tint = if (currentTab == MainTab.Files) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondary, modifier = Modifier.size(24.dp))
 			}
 		}
 	}

@@ -37,7 +37,14 @@ object LocalThumbs {
 	var revision by mutableIntStateOf(0)
 		private set
 
-	fun get(path: String): File? = map[path.trim('/')]
+	/** 仅返回仍然存在的有效文件，系统或手动清缓存后移除失效映射，允许重新生成。 */
+	fun get(path: String): File? {
+		val key = path.trim('/')
+		val file = map[key] ?: return null
+		if (file.isFile && file.length() > 0L) return file
+		map.remove(key, file)
+		return null
+	}
 
 	private fun dir(context: Context) = File(context.cacheDir, "local_thumbs")
 
@@ -51,7 +58,7 @@ object LocalThumbs {
 	fun ensure(context: Context, uri: Uri, entryPath: String, isVideo: Boolean) {
 		val key = entryPath.trim('/')
 		if (key.isEmpty()) return
-		if (map.containsKey(key)) return
+		if (get(key) != null) return
 		if (!busy.add(key)) return
 		try {
 			val out = target(context, key)
@@ -88,6 +95,17 @@ object LocalThumbs {
 			changed = true
 		}
 		if (changed) revision++
+	}
+
+	/** 清理可再生成的本地缩略图；保留生成中标记，避免与上传流程重复解码。 */
+	fun clear(context: Context) {
+		map.clear()
+		val directory = dir(context)
+		if (directory.exists() && !directory.deleteRecursively()) {
+			revision++
+			throw java.io.IOException("部分本地缩略图无法清理，请稍后重试")
+		}
+		revision++
 	}
 
 	/** 清理过旧的本地缩略图，避免 cache 目录无限增长 */

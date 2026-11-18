@@ -12,6 +12,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -20,6 +21,7 @@ import com.nasdrop.ui.BrowserMode
 import com.nasdrop.ui.BrowserScreen
 import com.nasdrop.ui.NasDropTheme
 import com.nasdrop.ui.UploadProgressScreen
+import com.nasdrop.ui.SettingsScreen
 
 /**
  * 相册/微信/文件管理器里「分享 → 存入 NasDrop」的落地页。
@@ -58,33 +60,72 @@ class ShareActivity : ComponentActivity() {
 				factory = viewModelFactory { initializer { BrowserViewModel(app) } },
 			)
 			var lastDir by remember { mutableStateOf("") }
-			var started by remember { mutableStateOf(false) }
+			var batchId by rememberSaveable { mutableStateOf<String?>(null) }
+			var uploadDir by rememberSaveable { mutableStateOf("") }
+			var uploadSession by rememberSaveable { mutableStateOf(Uploads.sessionId) }
+			var showSettings by rememberSaveable { mutableStateOf(false) }
+			val interrupted = uploadSession != Uploads.sessionId
 
 			LaunchedEffect(Unit) {
 				val s = app.prefs.current()
 				lastDir = s.lastDir
 				if (s.lastDir.isNotEmpty()) vm.open(s.lastDir)
 			}
+			LaunchedEffect(vm.shareUploadBatchId) {
+				vm.shareUploadBatchId?.let { id ->
+					batchId = id
+					uploadDir = vm.shareUploadDirectory
+					uploadSession = Uploads.sessionId
+				}
+			}
 
 			// 拦截返回键：如果已进入子目录，按返回键优先返回上级目录；在根目录时再退出
 			BackHandler {
-				if (vm.path.isNotEmpty()) {
+				if (showSettings) {
+					showSettings = false
+				} else if (batchId != null) {
+					val batch = Uploads.tasks.value.filter { it.batchId == batchId }
+					// 服务尚未发布任务也不能退出，否则分享来源的临时读取授权会被提前释放。
+					if (!interrupted && (batch.isEmpty() || batch.any { !it.done })) {
+						android.widget.Toast.makeText(this@ShareActivity, "正在上传，请保留此窗口直到完成", android.widget.Toast.LENGTH_SHORT).show()
+					} else finish()
+				} else if (vm.path.isNotEmpty()) {
 					vm.up()
 				} else {
 					finish()
 				}
 			}
 
-			if (started) {
-				UploadProgressScreen(count = uris.size) { finish() }
+			if (showSettings) {
+				SettingsScreen(vm = vm, onBack = { showSettings = false })
+			} else if (batchId != null) {
+				UploadProgressScreen(
+					count = uris.size,
+					batchId = batchId!!,
+					interrupted = interrupted,
+					onDone = { finish() },
+					onBrowse = {
+						startActivity(Intent(this@ShareActivity, MainActivity::class.java).apply {
+							putExtra(MainActivity.EXTRA_UPLOAD_DIR, uploadDir)
+							addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+						})
+						finish()
+					},
+				)
 			} else {
 				BrowserScreen(
 					vm = vm,
 					mode = BrowserMode.Pick,
 					lastDir = lastDir,
+					onOpenSettings = { showSettings = true },
+					onLogin = {
+						val url = vm.loginUrl()
+						if (url.isBlank()) android.widget.Toast.makeText(this@ShareActivity, "节点尚未准备好，请稍后重试", android.widget.Toast.LENGTH_SHORT).show()
+						else runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+							.onFailure { android.widget.Toast.makeText(this@ShareActivity, "无法打开授权页面", android.widget.Toast.LENGTH_LONG).show() }
+					},
 					onConfirm = { dir ->
-						UploadService.start(this@ShareActivity, uris, dir)
-						started = true
+						vm.startShareUploads(uris, dir)
 					},
 				)
 			}
