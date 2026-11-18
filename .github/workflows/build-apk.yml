@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: JDK 17
         uses: actions/setup-java@v4
@@ -133,10 +135,11 @@ jobs:
 
       - name: 上传 artifact
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
-          name: NasDrop-apk
+          name: NasDrop-apk-${{ github.run_number }}
           path: out/*.apk
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 90
 
       - name: 生成实质性更新日志
