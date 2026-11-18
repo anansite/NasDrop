@@ -22,6 +22,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -162,8 +164,8 @@ class UploadService : Service() {
 								Log.i("UploadService", "发送结束，等待确认 batch=$batchId task=${task.id} elapsedMs=${System.currentTimeMillis() - startedAt}")
 								// 开启后台主动探活：若服务端响应挂起超过 3 秒，探活远端文件；存在即提前收敛为完成
 								probeJob = scope.launch {
-									kotlinx.coroutines.delay(3000)
-									while (kotlinx.coroutines.isActive) {
+									delay(3000)
+									while (isActive) {
 										val current = Uploads.tasks.value.firstOrNull { it.id == task.id }
 										if (current == null || current.done || current.cancelled) break
 										try {
@@ -173,7 +175,7 @@ class UploadService : Service() {
 												break
 											}
 										} catch (_: Exception) {}
-										kotlinx.coroutines.delay(2000)
+										delay(2000)
 									}
 								}
 							},
