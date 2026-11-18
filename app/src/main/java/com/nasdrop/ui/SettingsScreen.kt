@@ -1,6 +1,8 @@
 package com.nasdrop.ui
 
 import android.widget.Toast
+import android.util.Log
+import androidx.activity.compose.BackHandler
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -34,10 +36,10 @@ import com.nasdrop.ConnectionMode
 import com.nasdrop.Settings
 import com.nasdrop.app
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +47,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 	val context = LocalContext.current
 	val scope = rememberCoroutineScope()
 	val app = context.app
+	val colors = MaterialTheme.colorScheme
 	val routeInfo by vm.routeInfo.collectAsState()
 
 	// 用 Settings 默认值预填，避免首次进入或异步加载前输入框一片空白的"没默认值"观感。
@@ -54,8 +57,8 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 	var user by remember { mutableStateOf(Settings().user) }
 	var password by remember { mutableStateOf(Settings().password) }
 	var passwordVisible by remember { mutableStateOf(false) }
-	var useTs by remember { mutableStateOf(Settings().useTailscale) }
 	var connMode by remember { mutableStateOf(Settings().connectionMode) }
+	val useTs = connMode != ConnectionMode.Direct
 	var hostname by remember { mutableStateOf(Settings().hostname) }
 	var authKey by remember { mutableStateOf("") }
 	var trustAll by remember { mutableStateOf(Settings().trustAllCerts) }
@@ -64,11 +67,20 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 	var logs by remember { mutableStateOf<String?>(null) }
 	var checkingUpdate by remember { mutableStateOf(false) }
 	var cacheSizeStr by remember { mutableStateOf("计算中...") }
+	var saving by remember { mutableStateOf(false) }
+	var clearingCache by remember { mutableStateOf(false) }
+	var saveError by remember { mutableStateOf<String?>(null) }
+	// 防止保存期间离开页面导致组合协程被取消，从而展示虚假的保存成功。
+	BackHandler(enabled = saving) { }
 
 	fun calculateCacheSize() {
-		scope.launch(Dispatchers.IO) {
-			val cacheDir = context.cacheDir
-			val size = cacheDir.walkTopDown().filter { it.isFile }.map { it.length() }.sum()
+		scope.launch {
+			val size = withContext(Dispatchers.IO) {
+				// 此处只统计清理操作实际负责的缓存，不包含分享文件及安装包。
+				listOf("image_cache", "local_thumbs").sumOf { dir ->
+					context.cacheDir.resolve(dir).walkTopDown().filter { it.isFile }.sumOf { it.length() }
+				}
+			}
 			val mb = size / (1024.0 * 1024.0)
 			cacheSizeStr = if (mb >= 1.0) String.format("%.1f MB", mb) else String.format("%.0f KB", size / 1024.0)
 		}
@@ -79,7 +91,6 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 		baseUrl = s.baseUrl
 		user = s.user
 		password = s.password
-		useTs = s.useTailscale
 		connMode = s.connectionMode
 		hostname = s.hostname
 		authKey = s.authKey
@@ -89,19 +100,31 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 	}
 
 	fun save(s: Settings) {
+		if (saving) return
+		saving = true
+		saveError = null
 		scope.launch {
-			withContext(Dispatchers.IO) {
-				app.prefs.setServer(s.baseUrl, s.user, s.password)
-				app.prefs.setConnectionMode(s.connectionMode)
-				app.prefs.setTailscale(s.useTailscale, s.hostname, s.authKey)
-				app.prefs.setTrustAllCerts(s.trustAllCerts)
+			try {
+				withContext(Dispatchers.IO) {
+					// 保留其他流程最近更新的上传目录，所有连接字段通过一次事务提交。
+					app.prefs.save(s.copy(lastDir = app.prefs.current().lastDir))
+				}
+					// 所有存活页面观察同一配置流，由各自缓存失效流程重新加载。
+					Toast.makeText(context, "设置已保存", Toast.LENGTH_SHORT).show()
+				onBack()
+			} catch (e: CancellationException) {
+				throw e
+			} catch (e: Exception) {
+				saveError = e.message ?: "保存失败，请重试"
+				Log.e("SettingsScreen", "配置保存失败，reason=${e.javaClass.simpleName}", e)
+			} finally {
+				saving = false
 			}
-			vm.reloadSettings()
 		}
 	}
 
 	Scaffold(
-		containerColor = Color(0xFFF7F8FA),
+		containerColor = colors.background,
 		topBar = {
 			TopAppBar(
 				title = {
@@ -109,12 +132,12 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						text = "服务器与偏好设置",
 						fontSize = 17.sp,
 						fontWeight = FontWeight.Bold,
-						color = Color(0xFF1D2129),
+						color = colors.onSurface,
 					)
 				},
 				navigationIcon = {
-					IconButton(onClick = onBack) {
-						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = Color(0xFF1D2129))
+					IconButton(onClick = onBack, enabled = !saving) {
+						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = colors.onSurface)
 					}
 				},
 				actions = {
@@ -124,10 +147,10 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 							withContext(Dispatchers.Main) { logs = text }
 						}
 					}) {
-						Icon(Icons.Rounded.BugReport, contentDescription = "诊断日志", tint = Color(0xFF86909C))
+						Icon(Icons.Rounded.BugReport, contentDescription = "诊断日志", tint = colors.onSurfaceVariant)
 					}
 				},
-				colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFFF7F8FA)),
+				colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.background),
 			)
 		},
 	) { padding ->
@@ -143,7 +166,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 			Card(
 				shape = RoundedCornerShape(18.dp),
 				colors = CardDefaults.cardColors(
-					containerColor = if (vm.hasUpdate) Color(0xFFEAF2FF) else Color.White
+					containerColor = if (vm.hasUpdate) colors.primaryContainer else colors.surface
 				),
 				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
 				modifier = Modifier.fillMaxWidth(),
@@ -165,7 +188,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 								.clip(RoundedCornerShape(12.dp))
 								.background(
 									Brush.linearGradient(
-										colors = listOf(Color(0xFF2A72F6), Color(0xFF00B5A6))
+										colors = listOf(colors.primary, colors.tertiary)
 									)
 								),
 							contentAlignment = Alignment.Center,
@@ -173,7 +196,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 							Icon(
 								imageVector = Icons.Rounded.CloudDownload,
 								contentDescription = null,
-								tint = Color.White,
+								tint = colors.onPrimary,
 								modifier = Modifier.size(20.dp),
 							)
 						}
@@ -184,19 +207,19 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 									text = if (vm.hasUpdate) "发现新版本 v${vm.latestUpdateInfo?.versionName}" else "当前版本 v${vm.currentVersionName}",
 									fontSize = 14.sp,
 									fontWeight = FontWeight.Bold,
-									color = Color(0xFF1D2129),
+									color = colors.onSurface,
 								)
 								if (vm.hasUpdate) {
 									Spacer(modifier = Modifier.width(6.dp))
 									Surface(
 										shape = RoundedCornerShape(8.dp),
-										color = Color(0xFFFF4D4F),
+										color = colors.error,
 									) {
 										Text(
 											text = "NEW",
 											fontSize = 9.sp,
 											fontWeight = FontWeight.ExtraBold,
-											color = Color.White,
+											color = colors.onPrimary,
 											modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
 										)
 									}
@@ -204,14 +227,15 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 							}
 							Spacer(modifier = Modifier.height(2.dp))
 							Text(
-								text = if (vm.hasUpdate) "点击立即一键平滑自动更新" else "已是最新版本，无需更新",
+							text = if (vm.hasUpdate) "下载并安装新版本" else "可手动检查是否有新版本",
 								fontSize = 11.sp,
-								color = Color(0xFF86909C),
+								color = colors.onSurfaceVariant,
 							)
 						}
 					}
 
 					Button(
+						enabled = !checkingUpdate && !saving,
 						onClick = {
 							if (vm.hasUpdate) {
 								vm.openUpdateDialog()
@@ -226,14 +250,14 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 							}
 						},
 						colors = ButtonDefaults.buttonColors(
-							containerColor = if (vm.hasUpdate) Color(0xFF2A72F6) else Color(0xFFF0F2F5),
-							contentColor = if (vm.hasUpdate) Color.White else Color(0xFF4E5969),
+							containerColor = if (vm.hasUpdate) colors.primary else colors.outlineVariant,
+							contentColor = if (vm.hasUpdate) colors.onPrimary else colors.onSurfaceVariant,
 						),
 						shape = RoundedCornerShape(16.dp),
 						contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
 					) {
 						if (checkingUpdate) {
-							CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = Color(0xFF2A72F6))
+							CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = colors.primary)
 						} else {
 							Text(
 								text = if (vm.hasUpdate) "立即更新" else "检查更新",
@@ -248,7 +272,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 			// ==================== 卡片 2: NAS 主机与品牌预设 ====================
 			Card(
 				shape = RoundedCornerShape(18.dp),
-				colors = CardDefaults.cardColors(containerColor = Color.White),
+				colors = CardDefaults.cardColors(containerColor = colors.surface),
 				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
 				modifier = Modifier.fillMaxWidth(),
 			) {
@@ -257,23 +281,24 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						text = "WebDAV 服务配置",
 						fontSize = 14.sp,
 						fontWeight = FontWeight.ExtraBold,
-						color = Color(0xFF1D2129),
+						color = colors.onSurface,
 					)
 					Spacer(modifier = Modifier.height(12.dp))
 
 					// 服务器地址
 					OutlinedTextField(
 						value = baseUrl,
+						enabled = !saving,
 						onValueChange = { baseUrl = it },
 						label = { Text("WebDAV 服务接入地址", fontSize = 12.sp) },
 						placeholder = { Text("https://nas.205002.xyz/dav/") },
 						singleLine = true,
 						shape = RoundedCornerShape(12.dp),
 						colors = OutlinedTextFieldDefaults.colors(
-							focusedBorderColor = Color(0xFF2A72F6),
-							unfocusedBorderColor = Color(0xFFE5E6EB),
-							focusedContainerColor = Color.White,
-							unfocusedContainerColor = Color(0xFFF7F8FA),
+							focusedBorderColor = colors.primary,
+							unfocusedBorderColor = colors.outlineVariant,
+							focusedContainerColor = colors.surface,
+							unfocusedContainerColor = colors.background,
 						),
 						modifier = Modifier.fillMaxWidth(),
 					)
@@ -287,21 +312,23 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 					) {
 						OutlinedTextField(
 							value = user,
+							enabled = !saving,
 							onValueChange = { user = it },
 							label = { Text("账号", fontSize = 12.sp) },
 							singleLine = true,
 							shape = RoundedCornerShape(12.dp),
 							colors = OutlinedTextFieldDefaults.colors(
-								focusedBorderColor = Color(0xFF2A72F6),
-								unfocusedBorderColor = Color(0xFFE5E6EB),
-								focusedContainerColor = Color.White,
-								unfocusedContainerColor = Color(0xFFF7F8FA),
+								focusedBorderColor = colors.primary,
+								unfocusedBorderColor = colors.outlineVariant,
+								focusedContainerColor = colors.surface,
+								unfocusedContainerColor = colors.background,
 							),
 							modifier = Modifier.weight(1f),
 						)
 
 						OutlinedTextField(
 							value = password,
+							enabled = !saving,
 							onValueChange = { password = it },
 							label = { Text("访问密码", fontSize = 12.sp) },
 							singleLine = true,
@@ -311,17 +338,17 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 									Icon(
 										imageVector = if (passwordVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
 										contentDescription = "显隐",
-										tint = Color(0xFF86909C),
+										tint = colors.onSurfaceVariant,
 										modifier = Modifier.size(20.dp),
 									)
 								}
 							},
 							shape = RoundedCornerShape(12.dp),
 							colors = OutlinedTextFieldDefaults.colors(
-								focusedBorderColor = Color(0xFF2A72F6),
-								unfocusedBorderColor = Color(0xFFE5E6EB),
-								focusedContainerColor = Color.White,
-								unfocusedContainerColor = Color(0xFFF7F8FA),
+								focusedBorderColor = colors.primary,
+								unfocusedBorderColor = colors.outlineVariant,
+								focusedContainerColor = colors.surface,
+								unfocusedContainerColor = colors.background,
 							),
 							modifier = Modifier.weight(1f),
 						)
@@ -332,51 +359,46 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 			// ==================== 卡片 3: 安全通道与专线穿透 ====================
 			Card(
 				shape = RoundedCornerShape(18.dp),
-				colors = CardDefaults.cardColors(containerColor = Color.White),
+				colors = CardDefaults.cardColors(containerColor = colors.surface),
 				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
 				modifier = Modifier.fillMaxWidth(),
 			) {
 				Column(modifier = Modifier.padding(16.dp)) {
 					Text(
-						text = "安全通道与专线穿透",
+						text = "连接方式与证书",
 						fontSize = 14.sp,
 						fontWeight = FontWeight.ExtraBold,
-						color = Color(0xFF1D2129),
+						color = colors.onSurface,
 					)
 					Spacer(modifier = Modifier.height(12.dp))
 
-					// Tailscale 隧道开关
-					SettingItemRow(
-						icon = Icons.Rounded.VpnLock,
-						iconBg = Color(0xFF00B578),
-						title = "Tailscale 专属隧道打洞",
-						desc = "在移动网络下建立端到端加密直连",
-						trailing = {
-							Switch(
-								checked = useTs,
-								onCheckedChange = { useTs = it },
-								colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF00B578)),
-							)
-						},
-					)
+					// 模式选择直接对应存储及网络出口，强制组网不会静默改成自动模式。
+					Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+						ConnectionMode.entries.forEach { mode ->
+							FilterChip(selected = connMode == mode, onClick = { connMode = mode }, enabled = !saving,
+								label = { Text(mode.title) })
+						}
+					}
+					Text(connMode.desc, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
 
-					HorizontalDivider(color = Color(0xFFF0F2F5), thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
+					HorizontalDivider(color = colors.outlineVariant, thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
 
 					// 节点名称
 					AnimatedVisibility(visible = useTs) {
 						Column {
 							OutlinedTextField(
 								value = hostname,
+									enabled = !saving,
 								onValueChange = { hostname = it },
 								label = { Text("本设备节点名称", fontSize = 12.sp) },
 								placeholder = { Text("nasdrop-android") },
 								singleLine = true,
 								shape = RoundedCornerShape(12.dp),
 								colors = OutlinedTextFieldDefaults.colors(
-									focusedBorderColor = Color(0xFF2A72F6),
-									unfocusedBorderColor = Color(0xFFE5E6EB),
-									focusedContainerColor = Color.White,
-									unfocusedContainerColor = Color(0xFFF7F8FA),
+									focusedBorderColor = colors.primary,
+									unfocusedBorderColor = colors.outlineVariant,
+									focusedContainerColor = colors.surface,
+									unfocusedContainerColor = colors.background,
 								),
 								modifier = Modifier.fillMaxWidth(),
 							)
@@ -387,24 +409,25 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 					// 信任自签 SSL 证书
 					SettingItemRow(
 						icon = Icons.Rounded.Security,
-						iconBg = Color(0xFF2A72F6),
+						iconBg = colors.primary,
 						title = "放行自签 SSL 证书",
-						desc = "允许私有内网 HTTPS 证书通过",
+						desc = "开启后跳过证书与主机名校验，仅用于可信私有服务",
 						trailing = {
 							Switch(
 								checked = trustAll,
+								enabled = !saving,
 								onCheckedChange = { trustAll = it },
-								colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF2A72F6)),
+								colors = SwitchDefaults.colors(checkedThumbColor = colors.onPrimary, checkedTrackColor = colors.primary),
 							)
 						},
 					)
 
-					HorizontalDivider(color = Color(0xFFF0F2F5), thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
+					HorizontalDivider(color = colors.outlineVariant, thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
 
 					// 连接状态：只告诉用户"连没连上"，直连/中继/打洞等由 App 自动处理，不打扰用户。
 					val online = routeInfo.isDirect || routeInfo.isRelay || routeInfo.isLan
-					val statusText = if (online) "已连接，可正常使用" else "正在连接，请稍候"
-					val statusColor = if (online) Color(0xFF00B578) else Color(0xFF86909C)
+					val statusText = routeInfo.label
+					val statusColor = if (online) colors.tertiary else colors.onSurfaceVariant
 					Column(modifier = Modifier.fillMaxWidth()) {
 						Row(
 							modifier = Modifier.fillMaxWidth(),
@@ -425,11 +448,11 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 									text = "连接状态",
 									fontSize = 13.sp,
 									fontWeight = FontWeight.Bold,
-									color = Color(0xFF1D2129),
+									color = colors.onSurface,
 								)
 							}
 							Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-								TextButton(onClick = { vm.reloadSettings() }) {
+									TextButton(onClick = { vm.reloadSettings() }, enabled = !saving && !testing) {
 									Text("重新连接", fontSize = 12.sp, fontWeight = FontWeight.Bold)
 								}
 								if (vm.needsLogin) {
@@ -440,7 +463,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 												CustomTabsIntent.Builder().build().launchUrl(context, url.toUri())
 											}
 										},
-										colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
+										colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
 										shape = RoundedCornerShape(12.dp),
 										contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
 									) {
@@ -452,13 +475,13 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						Spacer(modifier = Modifier.height(8.dp))
 						Surface(
 							shape = RoundedCornerShape(10.dp),
-							color = Color(0xFFF7F8FA),
+							color = colors.background,
 							modifier = Modifier.fillMaxWidth(),
 						) {
 							Text(
 								text = statusText,
 								fontSize = 12.sp,
-								color = Color(0xFF4E5969),
+								color = colors.onSurfaceVariant,
 								modifier = Modifier.padding(12.dp),
 							)
 						}
@@ -469,7 +492,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 			// ==================== 卡片 4: 本地缓存管理 ====================
 			Card(
 				shape = RoundedCornerShape(18.dp),
-				colors = CardDefaults.cardColors(containerColor = Color.White),
+				colors = CardDefaults.cardColors(containerColor = colors.surface),
 				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
 				modifier = Modifier.fillMaxWidth(),
 			) {
@@ -478,26 +501,34 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						text = "本地离线与缩略图缓存",
 						fontSize = 14.sp,
 						fontWeight = FontWeight.ExtraBold,
-						color = Color(0xFF1D2129),
+						color = colors.onSurface,
 					)
 					Spacer(modifier = Modifier.height(12.dp))
 
 					SettingItemRow(
 						icon = Icons.Rounded.CleaningServices,
-						iconBg = Color(0xFFFF7A00),
-						title = "清理图片/视频本地缓存",
+						iconBg = colors.primary,
+							title = "清理缩略图缓存",
 						desc = "当前占用 $cacheSizeStr",
 						trailing = {
-							TextButton(onClick = {
-								scope.launch(Dispatchers.IO) {
-									app.repo.clearImageCache()
-									context.cacheDir.deleteRecursively()
-									context.cacheDir.mkdirs()
-									calculateCacheSize()
+							TextButton(enabled = !clearingCache && !saving, onClick = {
+								clearingCache = true
+								scope.launch {
+									try {
+										withContext(Dispatchers.IO) { app.repo.clearImageCache() }
+										calculateCacheSize()
+										Toast.makeText(context, "缩略图缓存已清理", Toast.LENGTH_SHORT).show()
+									} catch (e: CancellationException) {
+										throw e
+									} catch (e: Exception) {
+										Log.e("SettingsScreen", "缩略图缓存清理失败", e)
+										Toast.makeText(context, "清理失败，请稍后重试", Toast.LENGTH_SHORT).show()
+									} finally {
+										clearingCache = false
+									}
 								}
-								Toast.makeText(context, "缓存已成功清理", Toast.LENGTH_SHORT).show()
 							}) {
-								Text("立即清理", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF7A00))
+								Text(if (clearingCache) "正在清理…" else "立即清理", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = colors.primary)
 							}
 						},
 					)
@@ -505,6 +536,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 			}
 
 			Spacer(modifier = Modifier.height(6.dp))
+			saveError?.let { Text(it, color = colors.error, style = MaterialTheme.typography.bodySmall) }
 
 			// ==================== 底部主操作按钮 ====================
 			Button(
@@ -520,17 +552,19 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						trustAllCerts = trustAll,
 					)
 					save(s)
-					Toast.makeText(context, "设置已保存并立即生效", Toast.LENGTH_SHORT).show()
-					onBack()
 				},
-				enabled = loaded && baseUrl.isNotBlank() && user.isNotBlank(),
-				colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A72F6)),
+				enabled = loaded && !saving && !testing && baseUrl.isNotBlank() && user.isNotBlank(),
+				colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
 				shape = RoundedCornerShape(16.dp),
 				modifier = Modifier
 					.fillMaxWidth()
 					.height(48.dp),
 			) {
-				Text("保存并立即应用", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color.White)
+				if (saving) {
+					CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = colors.onPrimary)
+					Spacer(Modifier.width(8.dp))
+				}
+				Text(if (saving) "正在保存…" else "保存并应用", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = colors.onPrimary)
 			}
 
 			OutlinedButton(
@@ -563,14 +597,14 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						Toast.makeText(context, result, Toast.LENGTH_LONG).show()
 					}
 				},
-				enabled = !testing,
+				enabled = loaded && !testing && !saving,
 				shape = RoundedCornerShape(16.dp),
 				modifier = Modifier
 					.fillMaxWidth()
 					.height(48.dp),
 			) {
 				if (testing) {
-					CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFF2A72F6))
+					CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = colors.primary)
 					Spacer(modifier = Modifier.width(8.dp))
 				}
 				Text(if (testing) "正在测试…" else "测试连通性", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
@@ -609,6 +643,7 @@ private fun SettingItemRow(
 	desc: String,
 	trailing: @Composable () -> Unit,
 ) {
+	val colors = MaterialTheme.colorScheme
 	Row(
 		modifier = Modifier.fillMaxWidth(),
 		verticalAlignment = Alignment.CenterVertically,
@@ -626,11 +661,11 @@ private fun SettingItemRow(
 					.background(iconBg),
 				contentAlignment = Alignment.Center,
 			) {
-				Icon(imageVector = icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+				Icon(imageVector = icon, contentDescription = null, tint = colors.onPrimary, modifier = Modifier.size(18.dp))
 			}
 			Column {
-				Text(text = title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D2129))
-				Text(text = desc, fontSize = 11.sp, color = Color(0xFF86909C))
+				Text(text = title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = colors.onSurface)
+				Text(text = desc, fontSize = 11.sp, color = colors.onSurfaceVariant)
 			}
 		}
 		trailing()

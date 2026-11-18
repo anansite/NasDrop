@@ -1,9 +1,11 @@
 package com.nasdrop
 
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.util.UUID
+import okhttp3.Call
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 一队上传任务。分享流程和上传服务之间通过它传递进度，
@@ -16,6 +18,20 @@ data class UploadTask(
 	val total: Long = -1,
 	val done: Boolean = false,
 	val error: String? = null,
+	val id: String = UUID.randomUUID().toString(),
+	val batchId: String = "",
+	val dir: String = "",
+	val started: Boolean = false,
+	val bodySent: Boolean = false,
+	val createdAt: Long = System.currentTimeMillis(),
+	/** 已被某次远端列表确认；新的页面无需再把历史结果当作新增文件重放。 */
+	val listed: Boolean = false,
+	/** 后续删除/移动成功后关闭列表贡献，保留传输结果供查阅。 */
+	val listingActive: Boolean = true,
+	val dismissed: Boolean = false,
+	val cancelled: Boolean = false,
+	val writeOrder: Long = 0L,
+	val ownerKey: String = "",
 ) {
 	val progress: Float
 		get() = when {
@@ -25,63 +41,92 @@ data class UploadTask(
 		}
 }
 
+/** 进程内上传记录；稳定 ID 隔离批次，状态快照供页面重建后恢复进度与列表。 */
 object Uploads {
+	/** 用于识别分享页进程重建；旧进程的内存队列不能继续显示为上传中。 */
+	val sessionId: String = UUID.randomUUID().toString()
 
 	private val _tasks = MutableStateFlow<List<UploadTask>>(emptyList())
 	val tasks: StateFlow<List<UploadTask>> = _tasks
+	private val calls = ConcurrentHashMap<String, Call>()
+	private val writeSequence = AtomicLong()
 
-	// 上传全部结束通知流（通知前台页面自动刷新）。
-	// replay = 1：上传服务在后台完成时，前台 Activity/ViewModel 可能刚刚重建、
-	// 尚未订阅；replay=0 会把事件直接丢掉，表现为"传完了要等一会儿/手动刷新才出现"。
-	val uploadCompletedEvent = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 2)
-
-	/**
-	 * 单个文件的上传生命周期。
-	 *
-	 * 为什么要分三态，而不是只在 PUT 返回后广播一次：
-	 * 字节写完（SENT）≠ 服务端返回 201（CONFIRMED）。实测服务端在大文件收完后还要
-	 * 落盘/rename 一小段时间，这段时间旧实现只能干等，UI 上就是"已发送完成，等待服务端写入…"
-	 * 卡很久。现在 SENT 的那一刻就把文件乐观插进列表（本地缩略图已经就绪），
-	 * 201 到达后再做一次静默校正；真失败则回滚掉这条，不留幻影。
-	 *
-	 * 不用 replay —— 增量事件，重放会让 ViewModel 重复插入同一条。
-	 */
-	val fileLifecycle = MutableSharedFlow<FileEvent>(extraBufferCapacity = 64)
-
-	enum class FilePhase { SENT, CONFIRMED, FAILED }
-
-	data class FileEvent(
-		val dir: String,
-		val name: String,
-		val size: Long,
-		val phase: FilePhase,
-	)
-
-	fun notifyFile(dir: String, name: String, size: Long, phase: FilePhase) {
-		fileLifecycle.tryEmit(FileEvent(dir.trim('/'), name, size, phase))
+	/** 同路径串行写入时记录实际次序，合并进度快照不能把较早内容当成最终覆盖。 */
+	fun markStarted(id: String, total: Long) {
+		val order = writeSequence.incrementAndGet()
+		update(id) { it.copy(started = true, total = total, writeOrder = order) }
 	}
 
+	/** 追加一批任务并返回其稳定标识；新批次不会替换运行中或已完成的记录。 */
 	@Synchronized
-	fun begin(items: List<Pair<String, String>>) {
-		_tasks.value = items.map { UploadTask(uri = it.first, name = it.second) }
+	fun begin(
+		items: List<Pair<String, String>>,
+		dir: String = "",
+		batchId: String = UUID.randomUUID().toString(),
+	): List<UploadTask> {
+		val added = items.map { (uri, name) ->
+			UploadTask(uri = uri, name = name, batchId = batchId, dir = dir.trim('/'))
+		}
+		_tasks.value = _tasks.value + added
+		return added
 	}
 
+	/** 按任务 ID 更新进度，避免并行批次共享数组下标导致串写。 */
 	@Synchronized
-	fun update(index: Int, block: (UploadTask) -> UploadTask) {
-		val cur = _tasks.value
-		if (index !in cur.indices) return
-		val copy = cur.toMutableList()
-		copy[index] = block(copy[index])
-		_tasks.value = copy
+	fun update(id: String, block: (UploadTask) -> UploadTask) {
+		_tasks.value = _tasks.value.map { if (it.id == id && !it.cancelled) block(it) else it }
 	}
 
-	fun notifyFinished() {
-		uploadCompletedEvent.tryEmit(Unit)
-	}
-
+	/** 注册当前预检/PUT 请求；取消发生在注册前时同样立即终止新请求。 */
 	@Synchronized
-	fun clear() {
-		_tasks.value = emptyList()
+	fun registerCall(id: String, call: Call) {
+		calls[id] = call
+		if (_tasks.value.firstOrNull { it.id == id }?.cancelled == true) call.cancel()
+	}
+
+	/** 批次工作结束后释放请求引用，不保留已完成网络对象。 */
+	fun clearCall(id: String, cancel: Boolean = false) {
+		val call = calls.remove(id)
+		if (cancel) call?.cancel()
+	}
+
+	/** 用户取消既终止实际请求，也将状态固定为已取消；其他批次不受影响。 */
+	@Synchronized
+	fun cancel(id: String) {
+		if (_tasks.value.none { it.id == id && !it.done }) return
+		_tasks.value = _tasks.value.map {
+			if (it.id == id) it.copy(done = true, cancelled = true, error = "已取消", listingActive = false) else it
+		}
+		calls[id]?.cancel()
+	}
+
+	/** 仅隐藏已结束结果，运行中任务与目录同步元数据保留。 */
+	@Synchronized
+	fun clearFinished() {
+		_tasks.value = _tasks.value.map { if (it.done) it.copy(dismissed = true) else it }
+	}
+
+	/** 仅清除已结束的指定记录，运行中的网络请求不受影响。 */
+	@Synchronized
+	fun remove(id: String) {
+		// ponytail: 清除仅隐藏结果，进程期保留少量同步元数据；海量历史再迁移独立持久化队列。
+		_tasks.value = _tasks.value.map { if (it.id == id && it.done) it.copy(dismissed = true) else it }
+	}
+
+	/** 跨页面共享目录确认状态，避免重建 ViewModel 时重放已经同步的成功历史。 */
+	@Synchronized
+	fun markListed(ids: Set<String>) {
+		if (ids.isEmpty()) return
+		_tasks.value = _tasks.value.map { if (it.id in ids && it.done && it.error == null) it.copy(listed = true) else it }
+	}
+
+	/** 删除或移动成功才使旧上传项失效；新上传使用新 ID，仍能正常显示同名文件。 */
+	@Synchronized
+	fun forgetPaths(paths: Collection<String>) {
+		_tasks.value = _tasks.value.map { task ->
+			val path = listOf(task.dir, task.name).filter { it.isNotEmpty() }.joinToString("/")
+			if (paths.any { path == it || path.startsWith("$it/") }) task.copy(listingActive = false) else task
+		}
 	}
 
 	fun running(): Boolean = _tasks.value.any { !it.done }

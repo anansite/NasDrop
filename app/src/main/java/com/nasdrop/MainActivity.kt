@@ -3,6 +3,7 @@ package com.nasdrop
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
+import android.content.Intent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -15,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -38,12 +40,31 @@ private sealed interface Route {
 	data class Video(val entry: DavEntry) : Route
 }
 
+/** 主浏览入口；处理分享完成后的目录跳转，以及通知栏进入传输中心的请求。 */
 class MainActivity : ComponentActivity() {
+	private var uploadDirectory by mutableStateOf<String?>(null)
+	private var transferRequest by mutableIntStateOf(0)
 
 	override fun onCreate(savedInstanceState: Bundle?) {
 		super.onCreate(savedInstanceState)
+		handleUploadIntent(intent)
 		enableEdgeToEdge()
 		setContent { App() }
+	}
+
+	/** 分享结果打开目标目录，上传通知打开传输中心；复用已有 Activity 时也响应。 */
+	override fun onNewIntent(intent: Intent) {
+		super.onNewIntent(intent)
+		setIntent(intent)
+		handleUploadIntent(intent)
+	}
+
+	/** 提取一次性上传导航参数，不改变服务器配置或上传任务本身。 */
+	private fun handleUploadIntent(intent: Intent) {
+		uploadDirectory = intent.getStringExtra(EXTRA_UPLOAD_DIR)
+		if (intent.getBooleanExtra(EXTRA_SHOW_TRANSFERS, false)) transferRequest++
+		intent.removeExtra(EXTRA_UPLOAD_DIR)
+		intent.removeExtra(EXTRA_SHOW_TRANSFERS)
 	}
 
 	@Composable
@@ -55,6 +76,17 @@ class MainActivity : ComponentActivity() {
 				factory = viewModelFactory { initializer { BrowserViewModel(app) } },
 			)
 			var route by remember { mutableStateOf<Route>(Route.Browser) }
+			LaunchedEffect(uploadDirectory) {
+				uploadDirectory?.let { dir ->
+					vm.currentTab = MainTab.Files
+					vm.open(dir)
+					route = Route.Browser
+					uploadDirectory = null
+				}
+			}
+			LaunchedEffect(transferRequest) {
+				if (transferRequest > 0) route = Route.Browser
+			}
 
 			// 上传进度通知需要这个权限；拒绝也不影响功能，只是看不到通知栏进度
 			val askNotifications = rememberLauncherForActivityResult(
@@ -104,6 +136,10 @@ class MainActivity : ComponentActivity() {
 					BackHandler(enabled = vm.isMultiSelectMode || vm.currentTab != MainTab.Files || !vm.isRoot) {
 						if (vm.isMultiSelectMode) {
 							vm.exitMultiSelect()
+						} else if (vm.currentTab == MainTab.Photos && vm.selectedAlbumPath.isNotBlank()) {
+							vm.upAlbum()
+						} else if (vm.currentTab == MainTab.Media && vm.selectedMediaPath.isNotBlank()) {
+							vm.upMedia()
 						} else if (vm.currentTab != MainTab.Files) {
 							vm.currentTab = MainTab.Files
 						} else {
@@ -120,6 +156,7 @@ class MainActivity : ComponentActivity() {
 						onOpenVideo = { entry -> route = Route.Video(entry) },
 						onOpenSettings = { route = Route.Settings },
 						onLogin = login,
+						transferRequest = transferRequest,
 					)
 				}
 
@@ -166,5 +203,10 @@ class MainActivity : ComponentActivity() {
 				}
 			}
 		}
+	}
+
+	companion object {
+		const val EXTRA_UPLOAD_DIR = "upload_dir"
+		const val EXTRA_SHOW_TRANSFERS = "show_transfers"
 	}
 }

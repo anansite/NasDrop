@@ -1,5 +1,6 @@
 *.iml
 .gradle/
+.kotlin/
 local.properties
 .idea/
 app/libs/*.aar
@@ -12,3 +13,4 @@ out/
 .ci/*.xml
 .ci/*.json
 .ci/davroot/
+.ci/__pycache__/

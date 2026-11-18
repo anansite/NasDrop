@@ -18,48 +18,55 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+// 看图与播放采用固定暗色画布，避免系统主题改变媒体内容周围的对比度。
+internal val MediaBackdrop = Color(0xFF080A0E)
+internal val OnMediaBackdrop = Color(0xFFF7F8FC)
+internal val MediaOverlay = Color(0xFF1E293B)
+internal val MediaAccent = Color(0xFFAEC9FF)
+internal val MediaDanger = Color(0xFFFFB4AB)
+
 private val LightColors = lightColorScheme(
-	primary = Color(0xFF2A72F6), // 阿里云盘标志性极光蓝
+	primary = Color(0xFF2864D8), // NasDrop 主操作蓝，浅深色保持同一色相。
 	onPrimary = Color.White,
 	primaryContainer = Color(0xFFE8F1FF),
 	onPrimaryContainer = Color(0xFF003FA4),
-	secondary = Color(0xFFFF7A00), // 阿里云盘活力橙
+	secondary = Color(0xFF7652AA),
 	onSecondary = Color.White,
-	secondaryContainer = Color(0xFFFFF0E5),
-	onSecondaryContainer = Color(0xFF8A3B00),
-	tertiary = Color(0xFF00B578), // 阿里云盘翡翠绿
+	secondaryContainer = Color(0xFFF0E5FF),
+	onSecondaryContainer = Color(0xFF321353),
+	tertiary = Color(0xFF137B61),
 	onTertiary = Color.White,
 	tertiaryContainer = Color(0xFFE6F8F1),
 	onTertiaryContainer = Color(0xFF006642),
-	background = Color(0xFFF7F8FA), // 阿里云盘质感浅灰底色
+	background = Color(0xFFF7F8FA),
 	onBackground = Color(0xFF1D2129),
 	surface = Color(0xFFFFFFFF), // 纯白卡片
 	onSurface = Color(0xFF1D2129),
 	surfaceVariant = Color(0xFFF2F3F5),
-	onSurfaceVariant = Color(0xFF86909C),
+	onSurfaceVariant = Color(0xFF5C6572),
 	outline = Color(0xFFC9CDD4),
 	outlineVariant = Color(0xFFE5E6EB),
 	error = Color(0xFFF53F3F),
 )
 
 private val DarkColors = darkColorScheme(
-	primary = Color(0xFFB9C3FF),
-	onPrimary = Color(0xFF00208B),
-	primaryContainer = Color(0xFF1B3AA8),
-	onPrimaryContainer = Color(0xFFDDE1FF),
-	secondary = Color(0xFFC4C5DD),
-	onSecondary = Color(0xFF2D2F42),
-	secondaryContainer = Color(0xFF434559),
-	onSecondaryContainer = Color(0xFFE0E1F9),
+	primary = Color(0xFFACC7FF),
+	onPrimary = Color(0xFF00316E),
+	primaryContainer = Color(0xFF164987),
+	onPrimaryContainer = Color(0xFFD8E6FF),
+	secondary = Color(0xFFD9B8FF),
+	onSecondary = Color(0xFF42235F),
+	secondaryContainer = Color(0xFF593A77),
+	onSecondaryContainer = Color(0xFFF0DEFF),
 	tertiary = Color(0xFF80D4DA),
 	onTertiary = Color(0xFF003739),
 	tertiaryContainer = Color(0xFF004F53),
 	onTertiaryContainer = Color(0xFF9CF1F6),
 	background = Color(0xFF131316),
 	onBackground = Color(0xFFE4E1E6),
-	surface = Color(0xFF131316),
+	surface = Color(0xFF191B20),
 	onSurface = Color(0xFFE4E1E6),
-	surfaceVariant = Color(0xFF46464F),
+	surfaceVariant = Color(0xFF292D35),
 	onSurfaceVariant = Color(0xFFC7C5D0),
 	outline = Color(0xFF91909A),
 	outlineVariant = Color(0xFF46464F),
@@ -88,7 +95,7 @@ private val NasDropShapes = Shapes(
 @Composable
 fun NasDropTheme(
 	darkTheme: Boolean = isSystemInDarkTheme(),
-	dynamicColor: Boolean = true,
+	dynamicColor: Boolean = false,
 	content: @Composable () -> Unit,
 ) {
 	val context = LocalContext.current

@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
@@ -143,7 +144,7 @@ fun ImageViewer(
 	BoxWithConstraints(
 		Modifier
 			.fillMaxSize()
-			.background(Color.Black)
+			.background(MediaBackdrop)
 			.pointerInput(Unit) {
 				detectTapGestures(onTap = { controlsVisible = !controlsVisible })
 			},
@@ -216,9 +217,9 @@ fun ImageViewer(
 					}
 				},
 				colors = TopAppBarDefaults.topAppBarColors(
-					containerColor = Color.Black.copy(alpha = 0.55f),
-					titleContentColor = Color.White,
-					navigationIconContentColor = Color.White,
+					containerColor = MediaBackdrop.copy(alpha = 0.55f),
+					titleContentColor = OnMediaBackdrop,
+					navigationIconContentColor = OnMediaBackdrop,
 				),
 			)
 		}
@@ -231,8 +232,8 @@ fun ImageViewer(
 			modifier = Modifier.align(Alignment.BottomCenter),
 		) {
 			Surface(
-				color = Color.Black.copy(alpha = 0.65f),
-				contentColor = Color.White,
+				color = MediaBackdrop.copy(alpha = 0.65f),
+				contentColor = OnMediaBackdrop,
 				modifier = Modifier.fillMaxWidth(),
 			) {
 				Row(
@@ -263,11 +264,12 @@ fun ImageViewer(
 									}
 								}
 							}
+							.sizeIn(minWidth = 56.dp, minHeight = 56.dp)
 							.padding(horizontal = 8.dp, vertical = 4.dp),
 					) {
-						Icon(Icons.Rounded.Download, contentDescription = "存相册", tint = Color.White)
+						Icon(Icons.Rounded.Download, contentDescription = "存相册", tint = OnMediaBackdrop)
 						Spacer(Modifier.height(4.dp))
-						Text("存相册", style = MaterialTheme.typography.labelSmall, color = Color.White)
+						Text("存相册", style = MaterialTheme.typography.labelSmall, color = OnMediaBackdrop)
 					}
 
 					// 2. 一键系统微信/QQ分享
@@ -308,11 +310,12 @@ fun ImageViewer(
 									}
 								}
 							}
+							.sizeIn(minWidth = 56.dp, minHeight = 56.dp)
 							.padding(horizontal = 8.dp, vertical = 4.dp),
 					) {
-						Icon(Icons.Rounded.Share, contentDescription = "分享", tint = Color.White)
+						Icon(Icons.Rounded.Share, contentDescription = "分享", tint = OnMediaBackdrop)
 						Spacer(Modifier.height(4.dp))
-						Text("分享", style = MaterialTheme.typography.labelSmall, color = Color.White)
+						Text("分享", style = MaterialTheme.typography.labelSmall, color = OnMediaBackdrop)
 					}
 
 					// 3. 原图详情信息
@@ -323,11 +326,12 @@ fun ImageViewer(
 							.pointerInput(Unit) {
 								detectTapGestures { showInfoDialog = true }
 							}
+							.sizeIn(minWidth = 56.dp, minHeight = 56.dp)
 							.padding(horizontal = 8.dp, vertical = 4.dp),
 					) {
-						Icon(Icons.Rounded.Info, contentDescription = "详情", tint = Color.White)
+						Icon(Icons.Rounded.Info, contentDescription = "详情", tint = OnMediaBackdrop)
 						Spacer(Modifier.height(4.dp))
-						Text("详情", style = MaterialTheme.typography.labelSmall, color = Color.White)
+						Text("详情", style = MaterialTheme.typography.labelSmall, color = OnMediaBackdrop)
 					}
 
 					// 4. 删除当前图片
@@ -338,11 +342,12 @@ fun ImageViewer(
 							.pointerInput(Unit) {
 								detectTapGestures { showDeleteDialog = true }
 							}
+							.sizeIn(minWidth = 56.dp, minHeight = 56.dp)
 							.padding(horizontal = 8.dp, vertical = 4.dp),
 					) {
-						Icon(Icons.Rounded.Delete, contentDescription = "删除", tint = Color(0xFFFF5252))
+						Icon(Icons.Rounded.Delete, contentDescription = "删除", tint = MediaDanger)
 						Spacer(Modifier.height(4.dp))
-						Text("删除", style = MaterialTheme.typography.labelSmall, color = Color(0xFFFF5252))
+						Text("删除", style = MaterialTheme.typography.labelSmall, color = MediaDanger)
 					}
 				}
 			}
@@ -359,7 +364,7 @@ fun ImageViewer(
 						Spacer(Modifier.height(8.dp))
 						Text("大小: ${current.sizeHuman}", style = MaterialTheme.typography.bodyMedium)
 						Spacer(Modifier.height(8.dp))
-						Text("路径: ${current.path}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
+						Text("路径: ${current.path}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 					}
 				},
 				confirmButton = {
@@ -387,7 +392,7 @@ fun ImageViewer(
 								imageList = remaining
 							}
 						},
-						colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252)),
+							colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
 					) { Text("彻底删除") }
 				},
 				dismissButton = {
@@ -451,7 +456,7 @@ private fun ZoomableImage(url: String?, thumbUrl: String?, name: String, targetS
 			Box(
 				Modifier
 					.fillMaxSize()
-					.background(Color.Black.copy(alpha = if (canBlur) 0.18f else 0.35f)),
+					.background(MediaBackdrop.copy(alpha = if (canBlur) 0.18f else 0.35f)),
 			)
 		}
 
@@ -501,7 +506,7 @@ private fun ZoomableImage(url: String?, thumbUrl: String?, name: String, targetS
 		// 原图仍在加载且没有缩略图垫底时，给个明确的菊花，避免"点了没反应"
 		if (isLoading && !loadFailed && thumbUrl.isNullOrBlank()) {
 			androidx.compose.material3.CircularProgressIndicator(
-				color = Color.White,
+				color = OnMediaBackdrop,
 				modifier = Modifier.size(36.dp),
 			)
 		}
@@ -513,7 +518,7 @@ private fun ZoomableImage(url: String?, thumbUrl: String?, name: String, targetS
 				verticalArrangement = Arrangement.spacedBy(12.dp),
 				modifier = Modifier
 					.clip(RoundedCornerShape(12.dp))
-					.background(Color(0xCC1E293B))
+					.background(MediaOverlay.copy(alpha = 0.9f))
 					.pointerInput(Unit) {
 						detectTapGestures(onTap = {
 							loadFailed = false
@@ -523,8 +528,8 @@ private fun ZoomableImage(url: String?, thumbUrl: String?, name: String, targetS
 					}
 					.padding(horizontal = 24.dp, vertical = 18.dp),
 			) {
-				Text("图片加载失败", color = Color.White, fontWeight = FontWeight.Bold)
-				Text("点击重试", color = Color(0xFF9DB4D0), fontSize = 13.sp)
+				Text("图片加载失败", color = OnMediaBackdrop, fontWeight = FontWeight.Bold)
+				Text("点击重试", color = MediaAccent, fontSize = 13.sp)
 			}
 		}
 	}
@@ -537,8 +542,10 @@ private fun ZoomableImage(url: String?, thumbUrl: String?, name: String, targetS
  * - 倍速切换：0.75x、1.0x、1.25x、1.5x、2.0x
  * - 画面比例切换：适应屏幕 (FIT) vs 铺满 (FILL) vs 居中缩放 (ZOOM)
  * - 悬浮手势 HUD 实时反馈
+	 * 播放器配置沿用 Media3 的 UnstableApi，在此入口显式确认以满足 Android Lint。
  */
 @Composable
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 	val context = LocalContext.current
 	val activity = context as? Activity
@@ -669,7 +676,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 	Box(
 		modifier = Modifier
 			.fillMaxSize()
-			.background(Color.Black)
+			.background(MediaBackdrop)
 			// 手势交互层：点击切换控制栏、双击暂停、长按2.0x、拖拽调节
 			.pointerInput(Unit) {
 				detectTapGestures(
@@ -779,7 +786,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 		) {
 			Surface(
 				shape = RoundedCornerShape(16.dp),
-				color = Color.Black.copy(alpha = 0.75f),
+				color = MediaBackdrop.copy(alpha = 0.75f),
 				shadowElevation = 8.dp,
 			) {
 				Row(
@@ -792,12 +799,12 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						else if (hudText.contains("亮度")) Icons.Rounded.BrightnessMedium
 						else Icons.Rounded.FastForward,
 						contentDescription = null,
-						tint = Color.White,
+						tint = OnMediaBackdrop,
 						modifier = Modifier.size(24.dp),
 					)
 					Text(
 						text = hudText,
-						color = Color.White,
+						color = OnMediaBackdrop,
 						fontSize = 14.sp,
 						fontWeight = FontWeight.Bold,
 					)
@@ -817,7 +824,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 					.fillMaxWidth()
 					.background(
 						Brush.verticalGradient(
-							colors = listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent),
+							colors = listOf(MediaBackdrop.copy(alpha = 0.85f), Color.Transparent),
 						),
 					)
 					// 沉浸式全屏下给状态栏/刘海留白，避免返回键和标题被"眉毛"遮挡
@@ -834,11 +841,12 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						modifier = Modifier.weight(1f),
 					) {
 						IconButton(onClick = onBack) {
-							Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = Color.White)
+							Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = OnMediaBackdrop)
 						}
 						Text(
 							text = entry.displayName,
-							color = Color.White,
+								modifier = Modifier.weight(1f),
+							color = OnMediaBackdrop,
 							fontSize = 15.sp,
 							fontWeight = FontWeight.Bold,
 							maxLines = 1,
@@ -853,7 +861,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						// 画面比例切换按钮
 						Surface(
 							shape = RoundedCornerShape(14.dp),
-							color = Color.White.copy(alpha = 0.2f),
+							color = OnMediaBackdrop.copy(alpha = 0.2f),
 							onClick = {
 								resizeMode = when (resizeMode) {
 									AspectRatioFrameLayout.RESIZE_MODE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_FILL
@@ -863,32 +871,33 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 							},
 						) {
 							Row(
-								modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+								modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+									.padding(horizontal = 8.dp, vertical = 4.dp),
 								verticalAlignment = Alignment.CenterVertically,
 								horizontalArrangement = Arrangement.spacedBy(4.dp),
 							) {
-								Icon(Icons.Rounded.AspectRatio, contentDescription = "画幅", tint = Color.White, modifier = Modifier.size(14.dp))
+								Icon(Icons.Rounded.AspectRatio, contentDescription = "画幅", tint = OnMediaBackdrop, modifier = Modifier.size(14.dp))
 								Text(
 									text = when (resizeMode) {
 										AspectRatioFrameLayout.RESIZE_MODE_FIT -> "适应"
 										AspectRatioFrameLayout.RESIZE_MODE_FILL -> "铺满"
 										else -> "居中"
 									},
-									color = Color.White,
+									color = OnMediaBackdrop,
 									fontSize = 11.sp,
 									fontWeight = FontWeight.Bold,
 								)
 							}
 						}
 
-						// 超高清原画标签
+						// 直接播放原文件，不根据容器格式宣称实际分辨率。
 						Surface(
 							shape = RoundedCornerShape(14.dp),
-							color = Color(0xFF2A72F6).copy(alpha = 0.85f),
+							color = MediaAccent.copy(alpha = 0.85f),
 						) {
 							Text(
-								text = "原画 4K",
-								color = Color.White,
+								text = "原始文件",
+								color = MediaBackdrop,
 								fontSize = 11.sp,
 								fontWeight = FontWeight.Bold,
 								modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -911,7 +920,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 					.fillMaxWidth()
 					.background(
 						Brush.verticalGradient(
-							colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.9f)),
+							colors = listOf(Color.Transparent, MediaBackdrop.copy(alpha = 0.9f)),
 						),
 					)
 					.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -924,7 +933,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 					) {
 						Text(
 							text = formatTime(currentPosition),
-							color = Color.White,
+							color = OnMediaBackdrop,
 							fontSize = 12.sp,
 							fontWeight = FontWeight.SemiBold,
 						)
@@ -939,9 +948,9 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 								}
 							},
 							colors = SliderDefaults.colors(
-								thumbColor = Color.White,
-								activeTrackColor = Color(0xFF2A72F6),
-								inactiveTrackColor = Color.White.copy(alpha = 0.3f),
+								thumbColor = OnMediaBackdrop,
+								activeTrackColor = MediaAccent,
+								inactiveTrackColor = OnMediaBackdrop.copy(alpha = 0.3f),
 							),
 							modifier = Modifier
 								.weight(1f)
@@ -950,7 +959,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 
 						Text(
 							text = formatTime(duration),
-							color = Color.White.copy(alpha = 0.7f),
+							color = OnMediaBackdrop.copy(alpha = 0.7f),
 							fontSize = 12.sp,
 							fontWeight = FontWeight.SemiBold,
 						)
@@ -969,7 +978,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 							// 播放 / 暂停大按钮
 							Surface(
 								shape = CircleShape,
-								color = Color.White,
+								color = OnMediaBackdrop,
 								onClick = {
 									if (player.isPlaying) player.pause() else player.play()
 								},
@@ -979,7 +988,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 									Icon(
 										imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
 										contentDescription = if (isPlaying) "暂停" else "播放",
-										tint = Color.Black,
+										tint = MediaBackdrop,
 										modifier = Modifier.size(24.dp),
 									)
 								}
@@ -990,7 +999,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 								val target = (player.currentPosition - 10_000L).coerceAtLeast(0L)
 								player.seekTo(target)
 							}) {
-								Icon(Icons.Rounded.Replay10, contentDescription = "快退10秒", tint = Color.White)
+								Icon(Icons.Rounded.Replay10, contentDescription = "快退10秒", tint = OnMediaBackdrop)
 							}
 
 							// 快进 10 秒
@@ -998,7 +1007,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 								val target = (player.currentPosition + 10_000L).coerceAtMost(duration)
 								player.seekTo(target)
 							}) {
-								Icon(Icons.Rounded.Forward10, contentDescription = "快进10秒", tint = Color.White)
+								Icon(Icons.Rounded.Forward10, contentDescription = "快进10秒", tint = OnMediaBackdrop)
 							}
 						}
 
@@ -1006,7 +1015,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 						Surface(
 							shape = RoundedCornerShape(16.dp),
-							color = Color.White.copy(alpha = 0.2f),
+							color = OnMediaBackdrop.copy(alpha = 0.2f),
 							onClick = {
 								val nextIdx = (speeds.indexOf(playbackSpeed) + 1) % speeds.size
 								val nextSpeed = speeds[nextIdx]
@@ -1016,7 +1025,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						) {
 							Text(
 								text = if (playbackSpeed == 1.0f) "1.0x" else "${playbackSpeed}x",
-								color = Color.White,
+								color = OnMediaBackdrop,
 								fontSize = 12.sp,
 								fontWeight = FontWeight.Bold,
 								modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -1037,7 +1046,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 				.padding(start = 20.dp, bottom = 90.dp),
 		) {
 			Surface(
-				color = Color(0xCC1E293B),
+				color = MediaOverlay.copy(alpha = 0.9f),
 				shape = RoundedCornerShape(20.dp),
 				shadowElevation = 4.dp,
 			) {
@@ -1047,7 +1056,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 				) {
 					Text(
 						text = "⏱️ 已自动恢复至上次播放进度 ${formatTime(savedProgress)}",
-						color = Color.White,
+						color = OnMediaBackdrop,
 						fontSize = 12.sp,
 						fontWeight = FontWeight.Medium,
 					)

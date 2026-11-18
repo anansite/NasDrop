@@ -7,9 +7,7 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import okhttp3.Call
 import okhttp3.ConnectionPool
 import okhttp3.Credentials
 import okhttp3.Dispatcher
@@ -17,12 +15,7 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.security.SecureRandom
-import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
 
 data class RouteInfo(
 	val isDirect: Boolean,     // 是否为 P2P 直连打洞或局域网直连
@@ -65,25 +58,16 @@ class Repository(private val context: Context) {
 	private var bridgeToken: String = ""
 
 	@Volatile
-	private var cachedKey: String = ""
+	private var cachedKey: Settings? = null
 
 	@Volatile
 	private var cached: WebDavClient? = null
 
 	@Volatile
-	private var lanConfirmedIp: String? = null
+	private var authOrigin: HttpUrl? = null
 
-	private val trustAllCertsManager = object : X509TrustManager {
-		override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-		override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-		override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-	}
-
-	private val sslContext = SSLContext.getInstance("TLS").apply {
-		init(null, arrayOf<TrustManager>(trustAllCertsManager), SecureRandom())
-	}
-
-	private val okHttp: OkHttpClient = OkHttpClient.Builder()
+	/** 验证与放行证书的连接池隔离，关闭放行后不复用之前未校验证书的连接。 */
+	private val verifiedHttp: OkHttpClient = OkHttpClient.Builder()
 		.dispatcher(Dispatcher().apply {
 			maxRequests = 128
 			maxRequestsPerHost = 64
@@ -91,27 +75,31 @@ class Repository(private val context: Context) {
 		.connectionPool(ConnectionPool(32, 5, TimeUnit.MINUTES))
 		.addInterceptor { chain ->
 			val b = chain.request().newBuilder()
-			// WebDAV 请求统一注入 Basic；OpenList 私有 API 自带 token 时不覆盖。
-			if (chain.request().header("Authorization").isNullOrBlank()) {
+			val url = chain.request().url
+			val origin = authOrigin
+			val isBridge = url.isBridgeOrigin(TsBridge.port)
+			val isServer = url.matchesOrigin(origin)
+			// 仅向已配置服务或本地桥注入凭据，避免外部图片/签名下载地址收到账号信息。
+			if ((isServer || isBridge) && chain.request().header("Authorization").isNullOrBlank()) {
 				authHeader?.let { b.header("Authorization", it) }
 			}
-			if (bridgeToken.isNotEmpty()) b.header("X-Bridge-Token", bridgeToken)
+			if (isBridge && bridgeToken.isNotEmpty()) b.header("X-Bridge-Token", bridgeToken)
 			chain.proceed(b.build())
 		}
-		.sslSocketFactory(sslContext.socketFactory, trustAllCertsManager)
-		.hostnameVerifier { _, _ -> true }
 		.connectTimeout(15, TimeUnit.SECONDS)
 		.readTimeout(5, TimeUnit.MINUTES)
 		.writeTimeout(5, TimeUnit.MINUTES)
 		.build()
 
-	private val probeHttp: OkHttpClient = okHttp.newBuilder()
-		.connectTimeout(1500, TimeUnit.MILLISECONDS)
-		.readTimeout(1500, TimeUnit.MILLISECONDS)
-		.build()
+	private val permissiveHttp by lazy { verifiedHttp.newBuilder().withCertificatePolicy(true).build() }
 
-	private val imageOkHttp: OkHttpClient by lazy {
-		okHttp.newBuilder()
+	@Volatile private var trustAllCerts = false
+	private val okHttp: OkHttpClient get() = if (trustAllCerts) permissiveHttp else verifiedHttp
+	private val verifiedProbe = verifiedHttp.newBuilder().connectTimeout(1500, TimeUnit.MILLISECONDS).readTimeout(1500, TimeUnit.MILLISECONDS).build()
+	private val permissiveProbe by lazy { permissiveHttp.newBuilder().connectTimeout(1500, TimeUnit.MILLISECONDS).readTimeout(1500, TimeUnit.MILLISECONDS).build() }
+	private val probeHttp: OkHttpClient get() = if (trustAllCerts) permissiveProbe else verifiedProbe
+
+	private fun imageClient(client: OkHttpClient): OkHttpClient = client.newBuilder()
 			.dispatcher(Dispatcher().apply {
 				maxRequests = 24
 				maxRequestsPerHost = 16
@@ -119,7 +107,8 @@ class Repository(private val context: Context) {
 			.connectTimeout(10, TimeUnit.SECONDS)
 			.readTimeout(30, TimeUnit.SECONDS)
 			.build()
-	}
+	private val verifiedImage by lazy { imageClient(verifiedHttp) }
+	private val permissiveImage by lazy { imageClient(permissiveHttp) }
 
 	val imageLoader: ImageLoader by lazy {
 		ImageLoader.Builder(context)
@@ -136,14 +125,19 @@ class Repository(private val context: Context) {
 					.maxSizeBytes(300L * 1024 * 1024) // 扩大至 300MB，避免频繁逐出重下
 					.build()
 			}
-			.okHttpClient { imageOkHttp }
+			// Loader 和两个网络客户端只建一次；每个图片请求读取当前证书策略与认证信息。
+			.callFactory(Call.Factory { request ->
+				(if (trustAllCerts) permissiveImage else verifiedImage).newCall(request)
+			})
 			.crossfade(true)
 			.build()
 	}
 
+	/** 仅清理可再生成的缩略图，保留进行中的分享文件和更新安装包。调用方须在 IO 等待完成。 */
 	fun clearImageCache() {
 		imageLoader.memoryCache?.clear()
 		imageLoader.diskCache?.clear()
+		LocalThumbs.clear(context)
 	}
 
 	fun http(): OkHttpClient = okHttp
@@ -155,7 +149,7 @@ class Repository(private val context: Context) {
 	 * 必须在 IO 线程调用。s 仅在当前还没有 client 时用于一次性建连。
 	 */
 	fun probeConnection(s: Settings) {
-		val c = cached ?: client(s)
+		val c = client(s)
 		c.probe()
 	}
 
@@ -167,109 +161,69 @@ class Repository(private val context: Context) {
 	/** 按当前配置准备 WebDavClient */
 	@Synchronized
 	fun client(settings: Settings): WebDavClient {
-		val key = listOf(
-			settings.baseUrl, settings.user, settings.password,
-			settings.hostname, settings.authKey, settings.trustAllCerts,
-			settings.useTailscale,
-		).joinToString("|")
+		val normalized = settings.normalized()
+		val key = normalized.copy(lastDir = "")
 		cached?.let { if (key == cachedKey) return it }
+		check(android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+			"网络连接初始化须在后台线程执行"
+		}
+		// 配置切换时旧桥的目标地址、凭据及 TLS 策略都已失效，不能复用它的本地端口。
+		if (cachedKey != null && cachedKey != key) {
+			TsBridge.stop()
+			cached = null
+			cachedKey = null
+		}
 
-		val root = settings.baseUrl.toHttpUrlOrNull()
-			?: throw IllegalStateException("服务器地址不合法：${settings.baseUrl}")
+		val root = normalized.baseUrl.toHttpUrlOrNull() ?: error("服务器地址不合法")
 
-		authHeader = Credentials.basic(settings.user, settings.password)
+		authHeader = Credentials.basic(normalized.user, normalized.password)
+		authOrigin = root
+		trustAllCerts = normalized.trustAllCerts
 		bridgeToken = ""
+		directConfirmed = null
+		_routeInfo.value = RouteInfo(false, false, "", "", "正在连接…", isProbing = true)
 
 		var base: HttpUrl = root
-		val direct = probeDirect(root, settings.user, settings.password)
+		// 强制组网绝不探测或退回系统直连；直连模式直接访问，自动模式才进行可达性探测。
+		val direct = if (normalized.connectionMode == ConnectionMode.Auto) doDirectProbe(root, normalized.user, normalized.password) else null
 		if (direct != null) {
-			base = root
+			directConfirmed = direct
 			_routeInfo.value = RouteInfo(
 				isDirect = true,
 				isRelay = false,
 				endpoint = direct.ip,
 				peerName = if (direct.isLan) "LAN" else "Direct",
-				label = if (direct.isLan) "🏡 局域网直连 · ${direct.latencyMs}ms (千兆原速)" else "⚡ 系统专线直连 · ${direct.latencyMs}ms",
+				label = if (direct.isLan) "局域网直连 · ${direct.latencyMs}ms" else "系统直连 · ${direct.latencyMs}ms",
 				latencyMs = direct.latencyMs,
 				isProbing = false,
-				isLanDirect = true,
+				isLanDirect = direct.isLan,
 			)
-		} else {
-			// 若当前未知是否为直连，触发后台异步极速探测，不阻塞主线程
-			triggerDirectProbeAsync(settings)
-
-			if (settings.useTailscale && TsBridge.available) {
+		} else if (normalized.connectionMode != ConnectionMode.Direct) {
+			if (TsBridge.available) {
 				val origin = root.newBuilder().encodedPath("/").query(null).fragment(null).build().toString()
-				// 避免在 Android UI 主线程阻塞 JNI / libhoudini 导致 ANR
-				if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
-					TsBridge.setInsecureTls(settings.trustAllCerts)
-					val p = TsBridge.start(context, settings.hostname, settings.authKey, origin)
-					if (p > 0) {
-						bridgeToken = TsBridge.token
-						base = "http://127.0.0.1:$p${root.encodedPath}".toHttpUrlOrNull() ?: root
-						updateRouteInfo()
-					}
-				} else {
-					CoroutineScope(Dispatchers.IO).launch {
-						TsBridge.setInsecureTls(settings.trustAllCerts)
-						val p = TsBridge.start(context, settings.hostname, settings.authKey, origin)
-						if (p > 0) {
-							bridgeToken = TsBridge.token
-							updateRouteInfo()
-						}
-					}
+				TsBridge.setInsecureTls(normalized.trustAllCerts)
+				val p = TsBridge.start(context, normalized.hostname, normalized.authKey, origin)
+				if (p <= 0) {
+					_routeInfo.value = RouteInfo(false, false, "", "", "Tailscale 尚未就绪")
+					Log.w("Repository", "隧道初始化失败，mode=${normalized.connectionMode}，host=${root.host}")
+					throw IllegalStateException("Tailscale 隧道未就绪，请检查组网授权后重新连接")
 				}
+				bridgeToken = TsBridge.token
+				base = "http://127.0.0.1:$p${root.encodedPath}".toHttpUrlOrNull() ?: error("本地隧道地址不合法")
+				updateRouteInfo()
 			} else {
-				_routeInfo.value = RouteInfo(
-					isDirect = false,
-					isRelay = false,
-					endpoint = "",
-					peerName = "",
-					label = if (!settings.useTailscale) "🌐 直连模式" else "🔴 离线未连接",
-					latencyMs = -1L,
-					isProbing = false,
-					isLanDirect = false,
-				)
+				_routeInfo.value = RouteInfo(false, false, "", "", "当前安装包未包含 Tailscale")
+				Log.w("Repository", "缺少内嵌 Tailscale，mode=${normalized.connectionMode}，host=${root.host}")
+				throw IllegalStateException("当前安装包未包含内嵌 Tailscale，请安装完整版或在可直连网络下选择直连模式")
 			}
+		} else {
+			_routeInfo.value = RouteInfo(true, false, root.host, "Direct", "系统直连")
 		}
 
 		val apiOrigin = base.newBuilder().encodedPath("/").query(null).fragment(null).build()
-		return WebDavClient(base, okHttp, apiOrigin, settings.user, settings.password).also {
+		return WebDavClient(base, okHttp, apiOrigin, normalized.user, normalized.password).also {
 			cached = it
 			cachedKey = key
-		}
-	}
-
-	private fun probeDirect(root: HttpUrl, user: String, pass: String): DirectProbeResult? {
-		directConfirmed?.let { return it }
-		// 主线程绝不执行同步网络请求，避免 NetworkOnMainThreadException 与卡顿
-		if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-			return null
-		}
-		return doDirectProbe(root, user, pass)
-	}
-
-	private fun triggerDirectProbeAsync(settings: Settings) {
-		val root = settings.baseUrl.toHttpUrlOrNull() ?: return
-		CoroutineScope(Dispatchers.IO).launch {
-			val res = doDirectProbe(root, settings.user, settings.password)
-			if (res != null) {
-				directConfirmed = res
-				synchronized(this@Repository) {
-					val apiOrigin = root.newBuilder().encodedPath("/").query(null).fragment(null).build()
-					cached = WebDavClient(root, okHttp, apiOrigin, settings.user, settings.password)
-				}
-				_routeInfo.value = RouteInfo(
-					isDirect = true,
-					isRelay = false,
-					endpoint = res.ip,
-					peerName = if (res.isLan) "LAN" else "Direct",
-					label = if (res.isLan) "🏡 局域网直连 · ${res.latencyMs}ms (千兆原速)" else "⚡ 系统专线直连 · ${res.latencyMs}ms",
-					latencyMs = res.latencyMs,
-					isProbing = false,
-					isLanDirect = true,
-				)
-			}
 		}
 	}
 
@@ -318,13 +272,14 @@ class Repository(private val context: Context) {
 			probeHttp.newCall(testReq).execute().use { resp ->
 				val dt = (System.currentTimeMillis() - t0).coerceAtLeast(1L)
 				if (resp.isSuccessful || resp.code in 200..499) {
-					Log.i("Repository", "Direct confirmed via $anyIp (${dt}ms), status=${resp.code}")
+					// 4xx 只说明链路可达；账号与 WebDAV 权限由正式 probe() 检查。
+					Log.i("Repository", "直连链路可达，host=$host，latencyMs=$dt，status=${resp.code}")
 					return DirectProbeResult(anyIp, dt, isLan)
 				}
 			}
 			null
 		} catch (e: Exception) {
-			Log.d("Repository", "Direct probe skipped: ${e.message}")
+			Log.d("Repository", "直连探测失败，host=${root.host}，reason=${e.javaClass.simpleName}", e)
 			null
 		}
 	}
@@ -336,9 +291,9 @@ class Repository(private val context: Context) {
 	 * 本地端口可能变化，调用方必须丢弃旧 client 并重建。
 	 */
 	fun reconnectTunnelIfNeeded(settings: Settings): Boolean {
-		if (!settings.useTailscale || !TsBridge.available) return false
+		if (settings.connectionMode == ConnectionMode.Direct || !TsBridge.available) return false
 		// 已确认局域网/公网原生直连，本就没走隧道，无需重连
-		if (directConfirmed != null || lanConfirmedIp != null) return false
+		if (settings.connectionMode == ConnectionMode.Auto && directConfirmed != null) return false
 
 		val st = TsBridge.status()
 		if (st.startsWith("running") && TsBridge.port > 0) {
@@ -361,7 +316,7 @@ class Repository(private val context: Context) {
 			// 端口可能变了：丢弃缓存 client，下次 client() 用新端口重建 base（见 cachedKey 逻辑）
 			synchronized(this) {
 				cached = null
-				cachedKey = ""
+				cachedKey = null
 			}
 			updateRouteInfo()
 			Log.i("Repository", "隧道自愈重连成功，新端口 $p")
@@ -372,8 +327,8 @@ class Repository(private val context: Context) {
 
 	/** 主动触发 NAT 打洞，促使链路从 DERP 中继切换为 P2P 直连 */
 	fun triggerHolePunch(): String {
-		if (_routeInfo.value.isLanDirect) {
-			return "当前已处于千兆局域网原生直连状态"
+		if (directConfirmed != null || cachedKey?.connectionMode == ConnectionMode.Direct) {
+			return "当前使用系统直连，无需 Tailscale 打洞"
 		}
 		val result = TsBridge.punchHole()
 		updateRouteInfo()
@@ -382,7 +337,7 @@ class Repository(private val context: Context) {
 
 	/** 刷新链路状态（判断是 P2P 直连打洞还是 DERP 中继代理） */
 	fun updateRouteInfo() {
-		if (_routeInfo.value.isLanDirect) {
+		if (directConfirmed != null || cachedKey?.connectionMode == ConnectionMode.Direct) {
 			return // 局域网直连模式保持原样，不被 Tailscale 状态覆盖
 		}
 		val info = TsBridge.peerLinkInfo()
@@ -434,9 +389,11 @@ class Repository(private val context: Context) {
 	@Synchronized
 	fun invalidate() {
 		cached = null
-		cachedKey = ""
-		lanConfirmedIp = null
+		cachedKey = null
 		directConfirmed = null
+		authHeader = null
+		authOrigin = null
+		bridgeToken = ""
 		TsBridge.stop()
 		_routeInfo.value = RouteInfo(false, false, "", "", "已断开", -1, false)
 	}
