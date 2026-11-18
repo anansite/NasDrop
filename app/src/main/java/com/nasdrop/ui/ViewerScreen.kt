@@ -13,6 +13,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -858,90 +860,86 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 		Box(
 			modifier = Modifier
 				.fillMaxSize()
-				.pointerInput(Unit) {
-					detectTapGestures(
-						onTap = {
-							showControls = !showControls
-							lastInteractionTime = System.currentTimeMillis()
-						},
-						onDoubleTap = {
-							if (player.isPlaying) player.pause() else player.play()
-							lastInteractionTime = System.currentTimeMillis()
-						},
-						onLongPress = {
-							player.playbackParameters = PlaybackParameters(2.0f)
-							hudText = "2.0x 极速快进中"
-							hudVisible = true
-						},
-						onPress = {
-							tryAwaitRelease()
-							player.playbackParameters = PlaybackParameters(playbackSpeed)
-							hudVisible = false
-						},
-					)
-				}
-				.pointerInput(Unit) {
-					var totalDx = 0f
-					var totalDy = 0f
-					var isRightSide = false
-					var isSeeking = false
+				.pointerInput(duration) {
+					awaitEachGesture {
+						val down = awaitFirstDown(requireUnconsumed = false)
+						val startTime = System.currentTimeMillis()
+						val startPos = down.position
+						var isDrag = false
+						var totalDx = 0f
+						var totalDy = 0f
+						val isRightSide = startPos.x > size.width / 2f
+						var isSeeking = false
 
-					detectDragGestures(
-						onDragStart = { offset ->
-							totalDx = 0f
-							totalDy = 0f
-							isRightSide = offset.x > size.width / 2f
-							isSeeking = false
-							lastInteractionTime = System.currentTimeMillis()
-						},
-						onDrag = { change, dragAmount ->
-							change.consume()
-							totalDx += dragAmount.x
-							totalDy += dragAmount.y
-							lastInteractionTime = System.currentTimeMillis()
-
-							if (kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy) * 1.5f || isSeeking) {
-								// 水平滑动：快进 / 快退
-								isSeeking = true
-								val seekDelta = (totalDx * 150).toLong()
-								val target = (player.currentPosition + seekDelta).coerceIn(0L, duration.coerceAtLeast(1L))
-								hudText = "${formatTime(target)} / ${formatTime(duration)}"
-								hudVisible = true
+						while (true) {
+							val event = awaitPointerEvent()
+							val change = event.changes.firstOrNull { it.id == down.id } ?: break
+							if (!change.pressed) {
+								// 松手（UP）
+								val elapsed = System.currentTimeMillis() - startTime
+								val distSq = (change.position.x - startPos.x) * (change.position.x - startPos.x) +
+									(change.position.y - startPos.y) * (change.position.y - startPos.y)
+								if (!isDrag && distSq < 900 && elapsed < 400) {
+									// 确认无大幅滑动、短时抬手：100% 触发控制栏显隐切换
+									showControls = !showControls
+									lastInteractionTime = System.currentTimeMillis()
+								}
+								if (isSeeking) {
+									val seekDelta = (totalDx * 150).toLong()
+									val target = (player.currentPosition + seekDelta).coerceIn(0L, duration.coerceAtLeast(1L))
+									player.seekTo(target)
+									currentPosition = target
+									lastInteractionTime = System.currentTimeMillis()
+								}
+								hudVisible = false
+								break
 							} else {
-								// 垂直滑动：左侧调节屏幕亮度，右侧调节媒体音量
-								val deltaFraction = -dragAmount.y / size.height.toFloat()
-								if (isRightSide) {
-									val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-									val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-									val newVol = (curVol + (deltaFraction * maxVol * 1.5f).toInt()).coerceIn(0, maxVol)
-									audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
-									val percent = (newVol * 100) / maxVol
-									hudText = "音量: $percent%"
-									hudVisible = true
-								} else {
-									activity?.window?.let { win ->
-										val lp = win.attributes
-										val curB = if (lp.screenBrightness < 0f) 0.5f else lp.screenBrightness
-										val newB = (curB + deltaFraction * 1.2f).coerceIn(0.05f, 1f)
-										lp.screenBrightness = newB
-										win.attributes = lp
-										hudText = "亮度: ${(newB * 100).toInt()}%"
+								val dx = change.position.x - startPos.x
+								val dy = change.position.y - startPos.y
+								val distSq = dx * dx + dy * dy
+								// 移动超过 30 像素才判定为拖拽，彻底避免单击产生微抖误触快进
+								if (!isDrag && distSq > 900) {
+									isDrag = true
+								}
+								if (isDrag) {
+									change.consume()
+									totalDx = dx
+									totalDy = dy
+									lastInteractionTime = System.currentTimeMillis()
+									if (kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy) * 1.5f || isSeeking) {
+										// 水平滑动：快进 / 快退
+										isSeeking = true
+										val seekDelta = (totalDx * 150).toLong()
+										val target = (player.currentPosition + seekDelta).coerceIn(0L, duration.coerceAtLeast(1L))
+										hudText = "${formatTime(target)} / ${formatTime(duration)}"
 										hudVisible = true
+									} else {
+										// 垂直滑动：左侧调节屏幕亮度，右侧调节媒体音量
+										val deltaFraction = -dy / size.height.toFloat()
+										if (isRightSide) {
+											val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+											val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+											val newVol = (curVol + (deltaFraction * maxVol * 1.5f).toInt()).coerceIn(0, maxVol)
+											audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
+											val percent = (newVol * 100) / maxVol
+											hudText = "音量: $percent%"
+											hudVisible = true
+										} else {
+											activity?.window?.let { win ->
+												val lp = win.attributes
+												val curB = if (lp.screenBrightness < 0f) 0.5f else lp.screenBrightness
+												val newB = (curB + deltaFraction * 1.2f).coerceIn(0.05f, 1f)
+												lp.screenBrightness = newB
+												win.attributes = lp
+												hudText = "亮度: ${(newB * 100).toInt()}%"
+												hudVisible = true
+											}
+										}
 									}
 								}
 							}
-						},
-						onDragEnd = {
-							if (isSeeking) {
-								val seekDelta = (totalDx * 150).toLong()
-								val target = (player.currentPosition + seekDelta).coerceIn(0L, duration.coerceAtLeast(1L))
-								player.seekTo(target)
-								currentPosition = target
-							}
-							hudVisible = false
-						},
-						onDragCancel = { hudVisible = false },
-					)
+						}
+					}
 				},
 		)
 
