@@ -561,24 +561,26 @@ class WebDavClient(
 				val input = openInput()
 				var sent = 0L
 				input.use { ins ->
-					val buf = ByteArray(64 * 1024)
-					var lastReport = 0L
+					val buf = ByteArray(32 * 1024)
+					var lastReportTime = 0L
 					while (true) {
 						checkCanceled()
 						val n = ins.read(buf)
 						if (n <= 0) break
 						sink.write(buf, 0, n)
+						// 强制 flush 到底层 Socket，利用阻塞 I/O 形成背压：
+						// 当网络较慢时阻塞等待网络 ACK 腾出窗口，确保进度与物理网速 100% 同步
+						sink.flush()
 						sent += n
 						written.addAndGet(n.toLong())
-						// 进度节流：每 1MB 或结束时才回调，避免每 64KB 一次
-						// Uploads.update（Compose 状态写入）拖慢上传、卡顿界面。
-						if (sent - lastReport >= 1024 * 1024 || (total > 0 && sent >= total)) {
-							lastReport = sent
+						val now = System.currentTimeMillis()
+						if (now - lastReportTime >= 100L || (total > 0 && sent >= total)) {
+							lastReportTime = now
 							onProgress(sent, total)
 						}
 					}
 				}
-				// 未知大小的小文件也必须发布最终进度，并在冲出本地缓冲后标记已发送。
+				// 冲出末尾缓冲并向外汇报已完成物理发送
 				sink.flush()
 				checkCanceled()
 				onProgress(sent, total)

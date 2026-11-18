@@ -321,6 +321,7 @@ fun BrowserScreen(
 						onUp = { vm.up() },
 						routeInfo = routeInfo,
 						onOpenSettings = onOpenSettings,
+						onShowNetworkSheet = { showNetSheet = true },
 					)
 				}
 
@@ -339,6 +340,7 @@ fun BrowserScreen(
 						onOpenTransferSheet = { showTransferSheet = true },
 						routeInfo = routeInfo,
 						onOpenSettings = onOpenSettings,
+						onShowNetworkSheet = { showNetSheet = true },
 					)
 				}
 
@@ -357,6 +359,7 @@ fun BrowserScreen(
 						onOpenTransferSheet = { showTransferSheet = true },
 						routeInfo = routeInfo,
 						onOpenSettings = onOpenSettings,
+						onShowNetworkSheet = { showNetSheet = true },
 					)
 				}
 
@@ -375,6 +378,7 @@ fun BrowserScreen(
 						onUp = { vm.up() },
 						routeInfo = routeInfo,
 						onOpenSettings = onOpenSettings,
+						onShowNetworkSheet = { showNetSheet = true },
 					)
 				}
 			}
@@ -585,6 +589,8 @@ fun BrowserScreen(
 		TransferCenterSheet(
 			tasks = vm.transferTasks,
 			totalSpeedBps = vm.totalSpeedBps,
+			routeInfo = routeInfo,
+			onShowNetworkSheet = { showNetSheet = true },
 			onDismiss = { showTransferSheet = false },
 			onPauseTask = { vm.pauseTask(it) },
 			onResumeTask = { vm.resumeTask(it) },
@@ -819,17 +825,120 @@ fun BrowserScreen(
 private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
 @Composable
-private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
-	// 只表达"连没连上"，不暴露直连/中继/打洞等细节——这些由 App 自动处理，用户无需关心。
+private fun CompactNetworkBadge(routeInfo: RouteInfo, onClick: () -> Unit) {
 	val (bgColor, textColor, dotColor, label) = when {
-		routeInfo.isDirect || routeInfo.isLan -> {
-				Quadruple(MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer, MaterialTheme.colorScheme.tertiary, "已连接")
+		routeInfo.isProbing -> {
+			Quadruple(
+				MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+				MaterialTheme.colorScheme.secondary,
+				MaterialTheme.colorScheme.secondary,
+				"检测中",
+			)
+		}
+		routeInfo.isLan -> {
+			Quadruple(
+				Color(0xFFE8F5E9),
+				Color(0xFF2E7D32),
+				Color(0xFF43A047),
+				"局域网",
+			)
+		}
+		routeInfo.isDirect -> {
+			val text = if (routeInfo.latencyMs > 0) "直连 ${routeInfo.latencyMs}ms" else "直连"
+			Quadruple(
+				Color(0xFFE0F2F1),
+				Color(0xFF00695C),
+				Color(0xFF00897B),
+				text,
+			)
 		}
 		routeInfo.isRelay -> {
-			Quadruple(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary, "已连接")
+			Quadruple(
+				Color(0xFFFFF3E0),
+				Color(0xFFE65100),
+				Color(0xFFFB8C00),
+				"中继",
+			)
 		}
 		else -> {
-				Quadruple(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant, MaterialTheme.colorScheme.outline, "未连接")
+			Quadruple(
+				MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+				MaterialTheme.colorScheme.onSurfaceVariant,
+				MaterialTheme.colorScheme.outline,
+				"未连接",
+			)
+		}
+	}
+
+	Surface(
+		shape = RoundedCornerShape(8.dp),
+		color = bgColor,
+		onClick = onClick,
+	) {
+		Row(
+			modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.spacedBy(4.dp),
+		) {
+			Box(
+				modifier = Modifier
+					.size(5.dp)
+					.clip(CircleShape)
+					.background(dotColor),
+			)
+			Text(
+				text = label,
+				fontSize = 11.sp,
+				fontWeight = FontWeight.SemiBold,
+				color = textColor,
+			)
+		}
+	}
+}
+
+@Composable
+private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
+	val (bgColor, textColor, dotColor, label) = when {
+		routeInfo.isProbing -> {
+			Quadruple(
+				MaterialTheme.colorScheme.secondaryContainer,
+				MaterialTheme.colorScheme.secondary,
+				MaterialTheme.colorScheme.secondary,
+				"正在检测…",
+			)
+		}
+		routeInfo.isLan -> {
+			Quadruple(
+				Color(0xFFE8F5E9),
+				Color(0xFF2E7D32),
+				Color(0xFF43A047),
+				"局域网直连",
+			)
+		}
+		routeInfo.isDirect -> {
+			val text = if (routeInfo.latencyMs > 0) "P2P直连 (${routeInfo.latencyMs}ms)" else "P2P直连"
+			Quadruple(
+				Color(0xFFE0F2F1),
+				Color(0xFF00695C),
+				Color(0xFF00897B),
+				text,
+			)
+		}
+		routeInfo.isRelay -> {
+			Quadruple(
+				Color(0xFFFFF3E0),
+				Color(0xFFE65100),
+				Color(0xFFFB8C00),
+				"中继代理",
+			)
+		}
+		else -> {
+			Quadruple(
+				MaterialTheme.colorScheme.surfaceVariant,
+				MaterialTheme.colorScheme.onSurfaceVariant,
+				MaterialTheme.colorScheme.outline,
+				"未连接",
+			)
 		}
 	}
 
@@ -975,6 +1084,8 @@ private fun CollectionTopBar(
 	onDelete: (() -> Unit)?,
 	onTransfer: () -> Unit,
 	onSettings: () -> Unit,
+	routeInfo: RouteInfo? = null,
+	onShowNetworkSheet: () -> Unit = {},
 ) {
 	var menuOpen by remember { mutableStateOf(false) }
 	Surface(color = MaterialTheme.colorScheme.surface) {
@@ -988,7 +1099,12 @@ private fun CollectionTopBar(
 				}
 			}
 			Column(Modifier.weight(1f).padding(start = if (isInside) 0.dp else 8.dp)) {
-				Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+				Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+					Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+					if (routeInfo != null) {
+						CompactNetworkBadge(routeInfo = routeInfo, onClick = onShowNetworkSheet)
+					}
+				}
 				Text(subtitle, style = MaterialTheme.typography.bodySmall, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
 			}
 			TransferButton(activeTransferCount, onTransfer)
@@ -1034,6 +1150,7 @@ private fun PhotosTopBar(
 	onOpenTransferSheet: () -> Unit,
 	routeInfo: RouteInfo,
 	onOpenSettings: () -> Unit,
+	onShowNetworkSheet: () -> Unit = {},
 ) {
 	CollectionTopBar(
 		title = selectedAlbumName.ifBlank { "云端相册" },
@@ -1042,6 +1159,7 @@ private fun PhotosTopBar(
 		activeTransferCount = activeTransferCount,
 		onUp = onUpAlbum, onUpload = onUploadPhoto, onCreate = onCreateAlbum,
 		onDelete = onDeleteCurrentAlbum, onTransfer = onOpenTransferSheet, onSettings = onOpenSettings,
+		routeInfo = routeInfo, onShowNetworkSheet = onShowNetworkSheet,
 	)
 }
 
@@ -1057,6 +1175,7 @@ private fun MediaTopBar(
 	onOpenTransferSheet: () -> Unit,
 	routeInfo: RouteInfo,
 	onOpenSettings: () -> Unit,
+	onShowNetworkSheet: () -> Unit = {},
 ) {
 	CollectionTopBar(
 		title = selectedMediaName.ifBlank { "影音视界" },
@@ -1065,6 +1184,7 @@ private fun MediaTopBar(
 		activeTransferCount = activeTransferCount,
 		onUp = onUpMedia, onUpload = onUploadVideo, onCreate = onCreateMediaFolder,
 		onDelete = onDeleteCurrentMedia, onTransfer = onOpenTransferSheet, onSettings = onOpenSettings,
+		routeInfo = routeInfo, onShowNetworkSheet = onShowNetworkSheet,
 	)
 }
 
@@ -1127,6 +1247,7 @@ private fun FilesTopBar(
 	onUp: () -> Unit,
 	routeInfo: RouteInfo,
 	onOpenSettings: () -> Unit,
+	onShowNetworkSheet: () -> Unit = {},
 ) {
 	var isSearchActive by remember { mutableStateOf(false) }
 	var menuOpen by remember { mutableStateOf(false) }
@@ -1150,13 +1271,19 @@ private fun FilesTopBar(
 						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回上一级")
 					}
 				}
-				Text(
-					parts.lastOrNull() ?: "我的文件",
+				Row(
 					modifier = Modifier.weight(1f).padding(start = if (parts.isEmpty()) 8.dp else 0.dp),
-					style = MaterialTheme.typography.titleMedium,
-					fontWeight = FontWeight.Bold,
-					maxLines = 1, overflow = TextOverflow.Ellipsis,
-				)
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
+				) {
+					Text(
+						parts.lastOrNull() ?: "我的文件",
+						style = MaterialTheme.typography.titleMedium,
+						fontWeight = FontWeight.Bold,
+						maxLines = 1, overflow = TextOverflow.Ellipsis,
+					)
+					CompactNetworkBadge(routeInfo = routeInfo, onClick = onShowNetworkSheet)
+				}
 				IconButton(onClick = { isSearchActive = true }, modifier = Modifier.size(40.dp)) {
 					Icon(Icons.Rounded.Search, contentDescription = "搜索")
 				}
@@ -2146,6 +2273,8 @@ private fun TransferCenterSheet(
 	onRetryTask: (String) -> Unit,
 	onClearFinished: () -> Unit,
 	onOpenResult: (String) -> Unit,
+	routeInfo: RouteInfo? = null,
+	onShowNetworkSheet: () -> Unit = {},
 ) {
 	var filter by rememberSaveable { mutableIntStateOf(0) }
 	val finishedStates = setOf(TransferStatus.COMPLETED, TransferStatus.FAILED, TransferStatus.CANCELLED)
@@ -2164,7 +2293,16 @@ private fun TransferCenterSheet(
 	) {
 		Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).fillMaxHeight(0.88f)) {
 			Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-				Text("传输中心", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+				Row(
+					modifier = Modifier.weight(1f),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(8.dp),
+				) {
+					Text("传输中心", style = MaterialTheme.typography.titleLarge)
+					if (routeInfo != null) {
+						CompactNetworkBadge(routeInfo = routeInfo, onClick = onShowNetworkSheet)
+					}
+				}
 				IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, contentDescription = "关闭传输中心") }
 			}
 			Text(
