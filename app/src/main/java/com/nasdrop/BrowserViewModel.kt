@@ -869,11 +869,17 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val targets = selectedEntries.toList()
 		if (targets.isEmpty()) return
 		val targetPaths = targets.map { it.path }.toSet()
+		fun hit(p: String) = targetPaths.any { p == it || p.startsWith("$it/") }
 
 		// 乐观即时移除，秒级清爽
-		entries = entries.filterNot { it.path in targetPaths }
-		allPhotos = allPhotos.filterNot { it.path in targetPaths }
-		allVideos = allVideos.filterNot { it.path in targetPaths }
+		entries = entries.filterNot { hit(it.path) }
+		allPhotos = allPhotos.filterNot { hit(it.path) }
+		allVideos = allVideos.filterNot { hit(it.path) }
+		allAlbumFolders = allAlbumFolders.filterNot { hit(it.path) }
+		allMediaFolders = allMediaFolders.filterNot { hit(it.path) }
+		allFolderPaths = allFolderPaths.filterNot { hit(it) }
+		if (hit(selectedAlbumPath)) selectedAlbumPath = ""
+		if (hit(selectedMediaPath)) selectedMediaPath = ""
 		exitMultiSelect()
 
 		viewModelScope.launch {
@@ -910,8 +916,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		if (targets.isEmpty()) return
 		val paths = targets.map { it.path }
 		val pathSet = paths.toSet()
+		fun hit(p: String) = pathSet.any { p == it || p.startsWith("$it/") }
 		// 乐观：先从列表移除，避免"批量移动完还挂在原地"
-		entries = entries.filterNot { it.path in pathSet }
+		entries = entries.filterNot { hit(it.path) }
+		allPhotos = allPhotos.filterNot { hit(it.path) }
+		allVideos = allVideos.filterNot { hit(it.path) }
+		allAlbumFolders = allAlbumFolders.filterNot { hit(it.path) }
+		allMediaFolders = allMediaFolders.filterNot { hit(it.path) }
+		allFolderPaths = allFolderPaths.filterNot { hit(it) }
+		if (hit(selectedAlbumPath)) selectedAlbumPath = ""
+		if (hit(selectedMediaPath)) selectedMediaPath = ""
 		exitMultiSelect()
 		viewModelScope.launch {
 			var okCount = 0
@@ -1141,7 +1155,28 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/** 新建普通子文件夹 */
 	fun mkdir(name: String, isAlbum: Boolean = false) {
 		val finalName = if (isAlbum && !name.contains("相册")) "$name 相册" else name
-		mutate { it.mkcol(join(path, finalName)) }
+		val newPath = join(path, finalName)
+		val newEntry = DavEntry(name = finalName, path = newPath, isDir = true)
+		entries = (entries + newEntry).sortedWith(compareBy({ !it.isDir }, { it.name.lowercase() }))
+		if (newPath !in allFolderPaths) {
+			allFolderPaths = (allFolderPaths + newPath).sorted()
+		}
+		if (path.equals("Photos", true) || path == "相册" || isAlbum) {
+			if (allAlbumFolders.none { it.path == newPath }) {
+				allAlbumFolders = (allAlbumFolders + newEntry).sortedBy { it.name }
+			}
+		}
+		if (path.equals("movies", true) || path == "影视" || path == "影音") {
+			if (allMediaFolders.none { it.path == newPath }) {
+				allMediaFolders = (allMediaFolders + newEntry).sortedBy { it.name }
+			}
+		}
+		mutate(onFailure = {
+			entries = entries.filterNot { it.path == newPath }
+			allAlbumFolders = allAlbumFolders.filterNot { it.path == newPath }
+			allMediaFolders = allMediaFolders.filterNot { it.path == newPath }
+			allFolderPaths = allFolderPaths.filterNot { it == newPath }
+		}) { it.mkcol(newPath) }
 	}
 
 	fun openAlbum(albumPath: String) {
@@ -1164,25 +1199,55 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		selectedMediaPath = if (parent.equals("movies", true) || parent == "影视" || parent == "影音") "" else parent
 	}
 
-	/** 在相册专属目录下新建相册文件夹 */
+	/** 在相册专属目录下新建相册文件夹：立即乐观呈现于相册胶囊栏与选择列表，创建失败平滑回滚 */
 	fun createAlbum(name: String) {
 		val targetDir = if (selectedAlbumPath.isNotBlank()) selectedAlbumPath else "Photos"
-		mutate { client ->
+		val newPath = join(targetDir, name)
+		val newEntry = DavEntry(name = name, path = newPath, isDir = true)
+		if (allAlbumFolders.none { it.path == newPath }) {
+			allAlbumFolders = (allAlbumFolders + newEntry).sortedBy { it.name }
+		}
+		if (newPath !in allFolderPaths) {
+			allFolderPaths = (allFolderPaths + newPath).sorted()
+		}
+		if (path == targetDir && entries.none { it.path == newPath }) {
+			entries = (entries + newEntry).sortedWith(compareBy({ !it.isDir }, { it.name.lowercase() }))
+		}
+		mutate(onFailure = {
+			allAlbumFolders = allAlbumFolders.filterNot { it.path == newPath }
+			allFolderPaths = allFolderPaths.filterNot { it == newPath }
+			entries = entries.filterNot { it.path == newPath }
+		}) { client ->
 			if (targetDir == "Photos") {
 				runCatching { client.mkcol("Photos") }
 			}
-			client.mkcol(join(targetDir, name))
+			client.mkcol(newPath)
 		}
 	}
 
-	/** 在影音专属目录下新建影集/分类文件夹 */
+	/** 在影音专属目录下新建影集/分类文件夹：立即乐观呈现于影音胶囊栏与选择列表，创建失败平滑回滚 */
 	fun createMediaFolder(name: String) {
 		val targetDir = if (selectedMediaPath.isNotBlank()) selectedMediaPath else "movies"
-		mutate { client ->
+		val newPath = join(targetDir, name)
+		val newEntry = DavEntry(name = name, path = newPath, isDir = true)
+		if (allMediaFolders.none { it.path == newPath }) {
+			allMediaFolders = (allMediaFolders + newEntry).sortedBy { it.name }
+		}
+		if (newPath !in allFolderPaths) {
+			allFolderPaths = (allFolderPaths + newPath).sorted()
+		}
+		if (path == targetDir && entries.none { it.path == newPath }) {
+			entries = (entries + newEntry).sortedWith(compareBy({ !it.isDir }, { it.name.lowercase() }))
+		}
+		mutate(onFailure = {
+			allMediaFolders = allMediaFolders.filterNot { it.path == newPath }
+			allFolderPaths = allFolderPaths.filterNot { it == newPath }
+			entries = entries.filterNot { it.path == newPath }
+		}) { client ->
 			if (targetDir == "movies") {
 				runCatching { client.mkcol("movies") }
 			}
-			client.mkcol(join(targetDir, name))
+			client.mkcol(newPath)
 		}
 	}
 
@@ -1206,11 +1271,18 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** 删除成功后同步撤销跨页面的上传覆盖；删除失败不使原文件的上传记录失效。 */
 	fun delete(entry: DavEntry, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
-		// 乐观 UI 立即清除，告别删除迟钝/不生效的错觉
-		entries = entries.filterNot { it.path == entry.path }
-		allPhotos = allPhotos.filterNot { it.path == entry.path }
-		allVideos = allVideos.filterNot { it.path == entry.path }
-		selectedEntries = selectedEntries.filterNot { it.path == entry.path }.toSet()
+		val p = entry.path
+		fun hit(target: String) = target == p || target.startsWith("$p/")
+		// 乐观 UI 立即清除，包括文件列表、相册/影音胶囊栏和全部媒体池，告别删除迟钝/需要手动刷新的问题
+		entries = entries.filterNot { hit(it.path) }
+		allPhotos = allPhotos.filterNot { hit(it.path) }
+		allVideos = allVideos.filterNot { hit(it.path) }
+		allAlbumFolders = allAlbumFolders.filterNot { hit(it.path) }
+		allMediaFolders = allMediaFolders.filterNot { hit(it.path) }
+		allFolderPaths = allFolderPaths.filterNot { hit(it) }
+		selectedEntries = selectedEntries.filterNot { hit(it.path) }.toSet()
+		if (hit(selectedAlbumPath)) selectedAlbumPath = ""
+		if (hit(selectedMediaPath)) selectedMediaPath = ""
 
 		viewModelScope.launch {
 			val err = runRemote { it.delete(entry.path, entry.isDir) }
@@ -1229,14 +1301,26 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	fun rename(entry: DavEntry, newName: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
 		val dest = join(entry.path.substringBeforeLast('/', ""), newName)
-		entries = entries.filterNot { it.path == entry.path }
+		val oldPath = entry.path
+		fun hit(target: String) = target == oldPath || target.startsWith("$oldPath/")
+		fun replacePath(p: String) = if (p == oldPath) dest else dest + p.removePrefix(oldPath)
+
+		val renamedEntry = entry.copy(name = newName, path = dest)
+		entries = entries.map { if (it.path == oldPath) renamedEntry else it }
+		allPhotos = allPhotos.map { if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
+		allVideos = allVideos.map { if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
+		allAlbumFolders = allAlbumFolders.map { if (it.path == oldPath) renamedEntry else if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
+		allMediaFolders = allMediaFolders.map { if (it.path == oldPath) renamedEntry else if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
+		allFolderPaths = allFolderPaths.map { if (hit(it)) replacePath(it) else it }.distinct().sorted()
+		if (hit(selectedAlbumPath)) selectedAlbumPath = replacePath(selectedAlbumPath)
+		if (hit(selectedMediaPath)) selectedMediaPath = replacePath(selectedMediaPath)
+
 		viewModelScope.launch {
 			val err = runRemote { it.move(entry.path, dest) }
 			dirCache.clear()
 			refreshSilent()
 			if (err == null) {
 				LocalThumbs.forget(entry.path)
-				pruneMediaPools(listOf(entry.path))
 				mediaDirty = true
 				onResult(true, "已重命名为 $newName")
 			} else {
@@ -1342,6 +1426,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		fun hit(p: String) = paths.any { p == it || p.startsWith("$it/") }
 		allPhotos = allPhotos.filterNot { hit(it.path) }
 		allVideos = allVideos.filterNot { hit(it.path) }
+		allAlbumFolders = allAlbumFolders.filterNot { hit(it.path) }
+		allMediaFolders = allMediaFolders.filterNot { hit(it.path) }
+		allFolderPaths = allFolderPaths.filterNot { hit(it) }
+		if (hit(selectedAlbumPath)) selectedAlbumPath = ""
+		if (hit(selectedMediaPath)) selectedMediaPath = ""
 	}
 
 	/**
@@ -1353,12 +1442,15 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	 *  2) 成功后只刷新当前目录，不再 scanGlobalMedia() 全量重扫（根目录 + 每个子目录
 	 *     串行列一遍，隧道下几十秒，期间列表还可能被更旧的数据覆盖）。
 	 */
-	private fun mutate(action: suspend (WebDavClient) -> Unit) {
+	private fun mutate(onFailure: () -> Unit = {}, action: suspend (WebDavClient) -> Unit) {
 		viewModelScope.launch {
 			val err = runRemote(action)
 			dirCache.clear()
 			refreshSilent()
-			if (err != null) uiMessage = "操作失败：$err"
+			if (err != null) {
+				onFailure()
+				uiMessage = "操作失败：$err"
+			}
 		}
 	}
 
