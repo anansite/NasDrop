@@ -36,8 +36,8 @@ data class DavEntry(
 	/** 相对 WebDAV 根的路径，不带首尾斜杠，例如 "Photos/2026" */
 	val path: String,
 	val isDir: Boolean,
-	val size: Long,
-	val modified: Long,
+	val size: Long = 0L,
+	val modified: Long = System.currentTimeMillis(),
 ) {
 	val ext: String get() = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
 	val sizeHuman: String get() {

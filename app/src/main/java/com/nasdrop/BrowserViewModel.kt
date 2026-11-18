@@ -1156,7 +1156,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	fun mkdir(name: String, isAlbum: Boolean = false) {
 		val finalName = if (isAlbum && !name.contains("相册")) "$name 相册" else name
 		val newPath = join(path, finalName)
-		val newEntry = DavEntry(name = finalName, path = newPath, isDir = true)
+		val newEntry = DavEntry(name = finalName, path = newPath, isDir = true, size = 0L, modified = System.currentTimeMillis())
 		entries = (entries + newEntry).sortedWith(compareBy({ !it.isDir }, { it.name.lowercase() }))
 		if (newPath !in allFolderPaths) {
 			allFolderPaths = (allFolderPaths + newPath).sorted()
@@ -1203,7 +1203,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	fun createAlbum(name: String) {
 		val targetDir = if (selectedAlbumPath.isNotBlank()) selectedAlbumPath else "Photos"
 		val newPath = join(targetDir, name)
-		val newEntry = DavEntry(name = name, path = newPath, isDir = true)
+		val newEntry = DavEntry(name = name, path = newPath, isDir = true, size = 0L, modified = System.currentTimeMillis())
 		if (allAlbumFolders.none { it.path == newPath }) {
 			allAlbumFolders = (allAlbumFolders + newEntry).sortedBy { it.name }
 		}
@@ -1229,7 +1229,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	fun createMediaFolder(name: String) {
 		val targetDir = if (selectedMediaPath.isNotBlank()) selectedMediaPath else "movies"
 		val newPath = join(targetDir, name)
-		val newEntry = DavEntry(name = name, path = newPath, isDir = true)
+		val newEntry = DavEntry(name = name, path = newPath, isDir = true, size = 0L, modified = System.currentTimeMillis())
 		if (allMediaFolders.none { it.path == newPath }) {
 			allMediaFolders = (allMediaFolders + newEntry).sortedBy { it.name }
 		}
