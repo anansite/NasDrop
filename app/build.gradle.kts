@@ -23,6 +23,15 @@ android {
 		}
 	}
 
+	splits {
+		abi {
+			isEnable = true
+			reset()
+			include("arm64-v8a", "x86_64")
+			isUniversalApk = true
+		}
+	}
+
 	// 仓库里放了一张固定的自签名证书，这样每次 CI 打出来的包签名一致，
 	// 手机上可以直接覆盖安装升级。私有仓库自用；要上架请换成自己的正式证书。
 	val personalStore = rootProject.file("signing/nasdrop.jks")

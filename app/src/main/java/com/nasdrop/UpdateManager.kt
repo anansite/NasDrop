@@ -18,6 +18,13 @@ data class UpdateInfo(
 	val releaseNotes: String,
 	val apkUrl: String,
 	val apkSize: Long,
+	val apkName: String = "",
+)
+
+data class ApkAsset(
+	val name: String,
+	val url: String,
+	val size: Long,
 )
 
 object UpdateManager {
@@ -75,29 +82,31 @@ object UpdateManager {
 			val tagName = obj.optString("tag_name", "").trim().removePrefix("v").removePrefix("V")
 			val releaseNotes = obj.optString("body", "优化与常规 Bug 修复")
 
-			// 查找 .apk 资源
+			// 查找 .apk 资源并按架构智能选择
 			val assets = obj.optJSONArray("assets") ?: return@withContext null
-			var apkUrl = ""
-			var apkSize = 0L
+			val apkList = mutableListOf<ApkAsset>()
 			for (i in 0 until assets.length()) {
 				val asset = assets.getJSONObject(i)
 				val name = asset.optString("name", "")
 				if (name.endsWith(".apk", ignoreCase = true)) {
-					apkUrl = asset.optString("browser_download_url", "")
-					apkSize = asset.optLong("size", 0L)
-					break
+					val url = asset.optString("browser_download_url", "")
+					val size = asset.optLong("size", 0L)
+					if (url.isNotBlank()) {
+						apkList.add(ApkAsset(name, url, size))
+					}
 				}
 			}
 
-			if (apkUrl.isBlank()) return@withContext null
+			val bestApk = selectBestApk(apkList) ?: return@withContext null
 
 			// 简单版本比较
 			if (isNewer(tagName, currentVersion)) {
 				UpdateInfo(
 					versionName = tagName,
 					releaseNotes = releaseNotes,
-					apkUrl = apkUrl,
-					apkSize = apkSize,
+					apkUrl = bestApk.url,
+					apkSize = bestApk.size,
+					apkName = bestApk.name,
 				)
 			} else {
 				null
@@ -184,7 +193,40 @@ object UpdateManager {
 		context.startActivity(intent)
 	}
 
-	private fun isNewer(latest: String, current: String): Boolean {
+	fun selectBestApk(
+		assets: List<ApkAsset>,
+		supportedAbis: Array<String> = android.os.Build.SUPPORTED_ABIS ?: emptyArray(),
+	): ApkAsset? {
+		if (assets.isEmpty()) return null
+		if (assets.size == 1) return assets.first()
+
+		// 1. 优先按设备支持的 ABI 顺序匹配（如 arm64-v8a, x86_64 等）
+		for (abi in supportedAbis) {
+			val clean = abi.lowercase()
+			val match = assets.firstOrNull { it.name.lowercase().contains(clean) }
+			if (match != null) return match
+		}
+
+		// 2. 匹配 universal 全架构包
+		val universal = assets.firstOrNull { it.name.lowercase().contains("universal") }
+		if (universal != null) return universal
+
+		// 3. 过滤掉明显与设备不兼容架构的包
+		val isDeviceArm = supportedAbis.any { it.lowercase().contains("arm") }
+		val isDeviceX86 = supportedAbis.any { it.lowercase().contains("x86") }
+		val compatible = assets.filter { asset ->
+			val n = asset.name.lowercase()
+			if (isDeviceArm && !isDeviceX86 && (n.contains("x86") || n.contains("amd64"))) return@filter false
+			if (isDeviceX86 && !isDeviceArm && n.contains("arm")) return@filter false
+			true
+		}
+		if (compatible.isNotEmpty()) return compatible.first()
+
+		// 4. 兜底返回第一个
+		return assets.first()
+	}
+
+	fun isNewer(latest: String, current: String): Boolean {
 		val vLatest = latest.split(".").mapNotNull { it.toIntOrNull() }
 		val vCurrent = current.split(".").mapNotNull { it.toIntOrNull() }
 		val len = maxOf(vLatest.size, vCurrent.size)
