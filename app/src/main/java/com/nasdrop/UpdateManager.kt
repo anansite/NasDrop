@@ -5,13 +5,18 @@ import android.util.Log
 import android.content.Intent
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 data class UpdateInfo(
 	val versionName: String,
@@ -31,12 +36,12 @@ object UpdateManager {
 
 	private const val RELEASES_API = "https://api.github.com/repos/anansite/private_filemanager/releases/latest"
 
-	// 国内直连 api.github.com 常超时，按序尝试镜像；全部失败才放弃。
-	// 镜像只做公开 releases API 的反代，不涉及任何隐私数据。
+	// 国内直连 api.github.com 常超时，按序尝试高质量镜像；全部失败才放弃。
 	private val API_CANDIDATES = listOf(
-		"https://api.github.com/repos/anansite/private_filemanager/releases/latest",
 		"https://gh-proxy.com/https://api.github.com/repos/anansite/private_filemanager/releases/latest",
+		"https://ghfast.top/https://api.github.com/repos/anansite/private_filemanager/releases/latest",
 		"https://ghproxy.net/https://api.github.com/repos/anansite/private_filemanager/releases/latest",
+		"https://api.github.com/repos/anansite/private_filemanager/releases/latest",
 	)
 
 	private val http = OkHttpClient.Builder()
@@ -127,11 +132,10 @@ object UpdateManager {
 
 		val candidateUrls = if (apkUrl.contains("github.com")) {
 			listOf(
-				"https://ghproxy.net/$apkUrl",
 				"https://gh-proxy.com/$apkUrl",
-				"https://ghps.cc/$apkUrl",
-				"https://mirror.ghproxy.com/$apkUrl",
-				"https://ghp.ci/$apkUrl",
+				"https://ghfast.top/$apkUrl",
+				"https://ghfile.com/$apkUrl",
+				"https://ghproxy.net/$apkUrl",
 				apkUrl,
 			)
 		} else listOf(apkUrl)
@@ -140,23 +144,90 @@ object UpdateManager {
 		for (url in candidateUrls) {
 			try {
 				Log.i("UpdateManager", "Attempting download from mirror: $url")
-				val request = Request.Builder()
+				val headReq = Request.Builder()
 					.url(url)
 					.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
 					.build()
-				val response = downloadHttp.newCall(request).execute()
-				if (!response.isSuccessful) continue
-				val body = response.body ?: continue
+				val headResp = downloadHttp.newCall(headReq).execute()
+				if (!headResp.isSuccessful) continue
+				val body = headResp.body ?: continue
 				val total = body.contentLength()
 
-				body.byteStream().use { input ->
+				// 如果文件大于 4MB 且有明确长度，开启 3 线程并发分块下载加速（可跑满 4~10 MB/s）
+				if (total > 4L * 1024 * 1024) {
+					try {
+						val numChunks = 3
+						val chunkSize = (total + numChunks - 1) / numChunks
+						val downloadedAtomic = AtomicLong(0L)
+						var lastReportTime = System.currentTimeMillis()
+						var lastReportBytes = 0L
+
+						RandomAccessFile(destFile, "rw").use { raf ->
+							raf.setLength(total)
+						}
+
+						coroutineScope {
+							(0 until numChunks).map { index ->
+								val start = index * chunkSize
+								val end = minOf(total - 1L, (index + 1) * chunkSize - 1L)
+								async(Dispatchers.IO) {
+									val chunkReq = Request.Builder()
+										.url(url)
+										.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
+										.header("Range", "bytes=$start-$end")
+										.build()
+									val chunkResp = downloadHttp.newCall(chunkReq).execute()
+									if (chunkResp.code != 206 && chunkResp.code != 200) {
+										throw IllegalStateException("Chunk $index HTTP ${chunkResp.code}")
+									}
+									val chunkBody = chunkResp.body ?: throw IllegalStateException("Chunk $index body empty")
+									chunkBody.byteStream().use { stream ->
+										RandomAccessFile(destFile, "rw").use { raf ->
+											raf.seek(start)
+											val buffer = ByteArray(64 * 1024)
+											var read: Int
+											while (stream.read(buffer).also { read = it } != -1) {
+												raf.write(buffer, 0, read)
+												val cur = downloadedAtomic.addAndGet(read.toLong())
+												val now = System.currentTimeMillis()
+												val dt = now - lastReportTime
+												if (dt >= 200) {
+													val speed = ((cur - lastReportBytes) * 1000) / dt
+													lastReportTime = now
+													lastReportBytes = cur
+													onProgress(cur, total, speed)
+												}
+											}
+										}
+									}
+								}
+							}.awaitAll()
+						}
+						onProgress(total, total, 0L)
+						return@withContext destFile
+					} catch (e: Exception) {
+						Log.w("UpdateManager", "Chunked download failed, falling back to single stream: ${e.message}")
+						if (destFile.exists()) destFile.delete()
+					}
+				}
+
+				// 单流常规下载（小文件或分块不支持时的兜底）
+				val singleReq = Request.Builder()
+					.url(url)
+					.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
+					.build()
+				val singleResp = downloadHttp.newCall(singleReq).execute()
+				if (!singleResp.isSuccessful) continue
+				val singleBody = singleResp.body ?: continue
+				val singleTotal = singleBody.contentLength()
+
+				singleBody.byteStream().use { input ->
 					FileOutputStream(destFile).use { output ->
 						val buffer = ByteArray(64 * 1024)
 						var read: Int
 						var downloaded = 0L
 						var lastTime = System.currentTimeMillis()
 						var lastDownloaded = 0L
-						var speed = 0L
 
 						while (input.read(buffer).also { read = it } != -1) {
 							output.write(buffer, 0, read)
@@ -164,14 +235,14 @@ object UpdateManager {
 
 							val now = System.currentTimeMillis()
 							val dt = now - lastTime
-							if (dt >= 300) {
-								speed = ((downloaded - lastDownloaded) * 1000) / dt
+							if (dt >= 250) {
+								val speed = ((downloaded - lastDownloaded) * 1000) / dt
 								lastTime = now
 								lastDownloaded = downloaded
-								onProgress(downloaded, total, speed)
+								onProgress(downloaded, singleTotal, speed)
 							}
 						}
-						onProgress(downloaded, total, 0L)
+						onProgress(downloaded, singleTotal, 0L)
 					}
 				}
 				return@withContext destFile
