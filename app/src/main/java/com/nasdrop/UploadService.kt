@@ -162,9 +162,9 @@ class UploadService : Service() {
 								// 已发送与服务端成功分别记录；列表立即可见，任务继续等待 PUT 响应。
 								Uploads.update(task.id) { it.copy(bodySent = true, total = if (it.total >= 0) it.total else it.sent) }
 								Log.i("UploadService", "发送结束，等待确认 batch=$batchId task=${task.id} elapsedMs=${System.currentTimeMillis() - startedAt}")
-								// 开启后台主动探活：若服务端响应挂起超过 3 秒，探活远端文件；存在即提前收敛为完成
+								// 开启后台主动极速探活：若服务端响应超过 500ms，高频探活远端文件；存在即提前完成并释放挂起的连接
 								probeJob = scope.launch {
-									delay(3000)
+									delay(500)
 									while (isActive) {
 										val current = Uploads.tasks.value.firstOrNull { it.id == task.id }
 										if (current == null || current.done || current.cancelled) break
@@ -172,10 +172,12 @@ class UploadService : Service() {
 											if (client.exists(entryPath)) {
 												Log.i("UploadService", "主动探活确认远端文件已就绪，提前收敛完成 batch=$batchId task=${task.id}")
 												Uploads.update(task.id) { it.copy(done = true, bodySent = true) }
+												// 远端存储已写入完毕，主动中断挂起的 PUT 响应，立即释放通道给下一任务
+												Uploads.clearCall(task.id, cancel = true)
 												break
 											}
 										} catch (_: Exception) {}
-										delay(2000)
+										delay(800)
 									}
 								}
 							},

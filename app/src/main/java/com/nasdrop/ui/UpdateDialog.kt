@@ -30,9 +30,12 @@ fun UpdateDialog(
 	isDownloading: Boolean,
 	downloadProgress: Float,
 	speedText: String,
+	currentVersionName: String = "",
 	onStartUpdate: () -> Unit,
 	onDismiss: () -> Unit,
 ) {
+	val cleanedNotes = formatReleaseHighlights(info.releaseNotes)
+
 	Dialog(onDismissRequest = { if (!isDownloading) onDismiss() }) {
 		Surface(
 			shape = RoundedCornerShape(24.dp),
@@ -79,8 +82,14 @@ fun UpdateDialog(
 
 				Spacer(modifier = Modifier.height(4.dp))
 
+				val versionTransition = if (currentVersionName.isNotBlank()) {
+					"当前 v$currentVersionName  →  新版本 v${info.versionName}"
+				} else {
+					"NasDrop v${info.versionName} 正式版"
+				}
+
 				Text(
-					text = "NasDrop v${info.versionName} 正式版 (${formatSize(info.apkSize)})",
+					text = "$versionTransition (${formatSize(info.apkSize)})",
 					fontSize = 12.sp,
 					fontWeight = FontWeight.Bold,
 					color = Color(0xFF2A72F6),
@@ -94,7 +103,7 @@ fun UpdateDialog(
 					color = Color(0xFFF7F8FA),
 					modifier = Modifier
 						.fillMaxWidth()
-						.heightIn(max = 160.dp),
+						.heightIn(max = 170.dp),
 				) {
 					Column(
 						modifier = Modifier
@@ -107,13 +116,27 @@ fun UpdateDialog(
 							fontWeight = FontWeight.Bold,
 							color = Color(0xFF1D2129),
 						)
-						Spacer(modifier = Modifier.height(4.dp))
-						Text(
-							text = info.releaseNotes.ifBlank { "包含性能提升与细节体验优化。" },
-							fontSize = 12.sp,
-							color = Color(0xFF4E5969),
-							lineHeight = 18.sp,
-						)
+						Spacer(modifier = Modifier.height(6.dp))
+						cleanedNotes.forEach { note ->
+							Row(
+								modifier = Modifier.padding(vertical = 2.dp),
+								verticalAlignment = Alignment.Top,
+							) {
+								Box(
+									modifier = Modifier
+										.padding(top = 6.dp, end = 6.dp)
+										.size(4.dp)
+										.clip(CircleShape)
+										.background(Color(0xFF2A72F6))
+								)
+								Text(
+									text = note,
+									fontSize = 12.sp,
+									color = Color(0xFF4E5969),
+									lineHeight = 18.sp,
+								)
+							}
+						}
 					}
 				}
 
@@ -199,4 +222,37 @@ fun UpdateDialog(
 			}
 		}
 	}
+}
+
+/**
+ * 清洗并格式化 GitHub Release 更新说明，剔除无实质内容的链接与英文模板
+ */
+private fun formatReleaseHighlights(raw: String): List<String> {
+	val defaultHighlights = listOf(
+		"支持照片左右滑动连续切换预览与顺滑手势",
+		"深度优化上传流程与即时写入确认，消除等待感",
+		"多处常驻显示当前版本号与即时连接状态",
+		"去除弹窗闪烁与视觉感知卡滞，体验更加细腻",
+	)
+	if (raw.isBlank()) return defaultHighlights
+
+	val lines = raw.lines()
+		.map { it.trim() }
+		.filter { line ->
+			line.isNotBlank() &&
+			!line.contains("Full Changelog", ignoreCase = true) &&
+			!line.startsWith("http://") &&
+			!line.startsWith("https://") &&
+			!line.startsWith("## ") &&
+			!line.startsWith("# ")
+		}
+		.map { line ->
+			line.removePrefix("•")
+				.removePrefix("-")
+				.removePrefix("*")
+				.trim()
+		}
+		.filter { it.isNotBlank() && !it.startsWith("http") }
+
+	return if (lines.isEmpty()) defaultHighlights else lines
 }

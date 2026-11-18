@@ -112,14 +112,16 @@ private fun TaskRow(task: UploadTask) {
 					else -> {
 						Text(
 							when {
-								task.bodySent -> "已发送，等待服务器确认"
+								task.bodySent -> "正在写入存储…"
 								!task.started -> "排队等待中"
 								else -> "正在上传 ${if (task.total > 0) "${(task.progress * 100).toInt()}%" else ""}"
 							},
 							style = MaterialTheme.typography.bodySmall,
 							color = MaterialTheme.colorScheme.onSurfaceVariant,
 						)
-						if (task.bodySent || task.total <= 0) {
+						if (task.bodySent) {
+							LinearProgressIndicator(progress = { 0.99f }, modifier = Modifier.fillMaxWidth().height(4.dp))
+						} else if (task.total <= 0) {
 							LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp))
 						} else {
 							LinearProgressIndicator(progress = { task.progress }, modifier = Modifier.fillMaxWidth().height(4.dp))

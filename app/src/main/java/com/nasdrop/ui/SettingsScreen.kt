@@ -204,7 +204,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						Column {
 							Row(verticalAlignment = Alignment.CenterVertically) {
 								Text(
-									text = if (vm.hasUpdate) "发现新版本 v${vm.latestUpdateInfo?.versionName}" else "当前版本 v${vm.currentVersionName}",
+									text = "当前版本 v${vm.currentVersionName}",
 									fontSize = 14.sp,
 									fontWeight = FontWeight.Bold,
 									color = colors.onSurface,
@@ -216,18 +216,18 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 										color = colors.error,
 									) {
 										Text(
-											text = "NEW",
+											text = "可升级至 v${vm.latestUpdateInfo?.versionName}",
 											fontSize = 9.sp,
 											fontWeight = FontWeight.ExtraBold,
 											color = colors.onPrimary,
-											modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+											modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
 										)
 									}
 								}
 							}
 							Spacer(modifier = Modifier.height(2.dp))
 							Text(
-							text = if (vm.hasUpdate) "下载并安装新版本" else "可手动检查是否有新版本",
+								text = if (vm.hasUpdate) "发现新版本，点击立即自动更新" else "当前已是最新版本，可随时检查更新",
 								fontSize = 11.sp,
 								color = colors.onSurfaceVariant,
 							)
@@ -610,7 +610,28 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 				Text(if (testing) "正在测试…" else "测试连通性", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
 			}
 
-			Spacer(modifier = Modifier.height(30.dp))
+			// 底部品牌与版本常驻标识
+			Column(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(top = 18.dp, bottom = 12.dp),
+				horizontalAlignment = Alignment.CenterHorizontally,
+			) {
+				Text(
+					text = "NasDrop v${vm.currentVersionName}",
+					fontSize = 13.sp,
+					fontWeight = FontWeight.Bold,
+					color = colors.onSurfaceVariant.copy(alpha = 0.85f),
+				)
+				Spacer(modifier = Modifier.height(3.dp))
+				Text(
+					text = "极速私有云与局域网文件流转",
+					fontSize = 11.sp,
+					color = colors.outline,
+				)
+			}
+
+			Spacer(modifier = Modifier.height(20.dp))
 		}
 	}
 

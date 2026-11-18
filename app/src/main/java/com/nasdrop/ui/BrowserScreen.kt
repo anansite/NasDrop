@@ -364,22 +364,19 @@ fun BrowserScreen(
 				}
 
 				MainTab.Me -> {
-					FilesTopBar(
-						vm = vm,
-						onUpload = { filePicker.launch(arrayOf("*/*")) },
-						onOpenTransferSheet = { showTransferSheet = true },
-						onToggleViewMode = { vm.cycleViewMode() },
-						onToggleMultiSelect = {
-							if (vm.isMultiSelectMode) vm.exitMultiSelect()
-							else vm.enterMultiSelect()
-						},
-						onCreateFolder = { activeCreateType = CreateDialogType.Folder },
-						onNavigate = { vm.open(it) },
-						onUp = { vm.up() },
+					NetworkTopBar(
 						routeInfo = routeInfo,
+						versionName = vm.currentVersionName,
+						hasUpdate = vm.hasUpdate,
+						onOpenUpdateDialog = { vm.showUpdateDialog = true },
 						onOpenSettings = onOpenSettings,
-						onShowNetworkSheet = { showNetSheet = true },
 					)
+				}
+			}
+
+			LaunchedEffect(vm.currentTab) {
+				if (vm.currentTab == MainTab.Photos || vm.currentTab == MainTab.Media) {
+					vm.ensureMediaScanned()
 				}
 			}
 
@@ -510,15 +507,7 @@ fun BrowserScreen(
 	}
 
 	// ==================== 抽屉与对话框组件 ====================
-	// 检查同名文件完成后才允许开始上传；确认窗口只预览有限文件名，避免大批次撑满屏幕。
-	if (vm.checkingUploadDestination) {
-		AlertDialog(
-			onDismissRequest = { vm.cancelUploadPreparation() },
-			title = { Text("正在检查上传位置…") },
-			text = { LinearProgressIndicator(Modifier.fillMaxWidth()) },
-			confirmButton = { TextButton(onClick = { vm.cancelUploadPreparation() }) { Text("取消") } },
-		)
-	}
+	// 确认窗口只在发现同名冲突时预览有限文件名，无冲突时后台平滑起传，彻底消除弹窗闪烁
 	val overwriteNames = vm.pendingUploadOverwriteNames
 	if (overwriteNames.isNotEmpty()) {
 		AlertDialog(
@@ -829,10 +818,10 @@ private fun CompactNetworkBadge(routeInfo: RouteInfo, onClick: () -> Unit) {
 	val (bgColor, textColor, dotColor, label) = when {
 		routeInfo.isProbing -> {
 			Quadruple(
-				MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
-				MaterialTheme.colorScheme.secondary,
-				MaterialTheme.colorScheme.secondary,
-				"检测中",
+				Color(0xFFE3F2FD),
+				Color(0xFF1565C0),
+				Color(0xFF1E88E5),
+				"连接中",
 			)
 		}
 		routeInfo.isLan -> {
@@ -862,10 +851,10 @@ private fun CompactNetworkBadge(routeInfo: RouteInfo, onClick: () -> Unit) {
 		}
 		else -> {
 			Quadruple(
-				MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
-				MaterialTheme.colorScheme.onSurfaceVariant,
-				MaterialTheme.colorScheme.outline,
-				"未连接",
+				Color(0xFFE3F2FD),
+				Color(0xFF1565C0),
+				Color(0xFF1E88E5),
+				"连接中",
 			)
 		}
 	}
@@ -901,10 +890,10 @@ private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
 	val (bgColor, textColor, dotColor, label) = when {
 		routeInfo.isProbing -> {
 			Quadruple(
-				MaterialTheme.colorScheme.secondaryContainer,
-				MaterialTheme.colorScheme.secondary,
-				MaterialTheme.colorScheme.secondary,
-				"正在检测…",
+				Color(0xFFE3F2FD),
+				Color(0xFF1565C0),
+				Color(0xFF1E88E5),
+				"正在连接…",
 			)
 		}
 		routeInfo.isLan -> {
@@ -934,10 +923,10 @@ private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
 		}
 		else -> {
 			Quadruple(
-				MaterialTheme.colorScheme.surfaceVariant,
-				MaterialTheme.colorScheme.onSurfaceVariant,
-				MaterialTheme.colorScheme.outline,
-				"未连接",
+				Color(0xFFE3F2FD),
+				Color(0xFF1565C0),
+				Color(0xFF1E88E5),
+				"正在连接…",
 			)
 		}
 	}
@@ -1042,7 +1031,7 @@ private fun SettingsWithStatusButton(
 	val indicatorColor = if (routeInfo.isDirect || routeInfo.isRelay || routeInfo.isLan) {
 		MaterialTheme.colorScheme.tertiary
 	} else {
-		MaterialTheme.colorScheme.outlineVariant // 未连接（中性灰，不用刺眼的红）
+		Color(0xFF1E88E5) // 连接中（柔和蓝，不用灰色未连接）
 	}
 
 	IconButton(
@@ -1090,7 +1079,10 @@ private fun CollectionTopBar(
 	var menuOpen by remember { mutableStateOf(false) }
 	Surface(color = MaterialTheme.colorScheme.surface) {
 		Row(
-			Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp),
+			Modifier
+				.fillMaxWidth()
+				.heightIn(min = 54.dp)
+				.padding(horizontal = 8.dp, vertical = 6.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
 			if (isInside) {
@@ -1098,14 +1090,22 @@ private fun CollectionTopBar(
 					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部")
 				}
 			}
-			Column(Modifier.weight(1f).padding(start = if (isInside) 0.dp else 8.dp)) {
+			Column(
+				modifier = Modifier
+					.weight(1f)
+					.padding(start = if (isInside) 2.dp else 8.dp),
+				verticalArrangement = Arrangement.Center,
+			) {
 				Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
 					Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
 					if (routeInfo != null) {
 						CompactNetworkBadge(routeInfo = routeInfo, onClick = onShowNetworkSheet)
 					}
 				}
-				Text(subtitle, style = MaterialTheme.typography.bodySmall, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+				if (subtitle.isNotBlank()) {
+					Spacer(Modifier.height(1.dp))
+					Text(subtitle, style = MaterialTheme.typography.bodySmall, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+				}
 			}
 			TransferButton(activeTransferCount, onTransfer)
 			Box {
@@ -1191,6 +1191,7 @@ private fun MediaTopBar(
 @Composable
 private fun NetworkTopBar(
 	routeInfo: RouteInfo,
+	versionName: String = "",
 	hasUpdate: Boolean,
 	onOpenUpdateDialog: () -> Unit,
 	onOpenSettings: () -> Unit,
@@ -1198,12 +1199,28 @@ private fun NetworkTopBar(
 	Row(
 		modifier = Modifier
 			.fillMaxWidth()
-			.background(MaterialTheme.colorScheme.surfaceVariant)
+			.background(MaterialTheme.colorScheme.surface)
 			.padding(horizontal = 16.dp, vertical = 10.dp),
 		verticalAlignment = Alignment.CenterVertically,
 		horizontalArrangement = Arrangement.SpaceBetween,
 	) {
-		Text("服务与设置", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+			Text("服务与设置", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+			if (versionName.isNotBlank()) {
+				Surface(
+					shape = RoundedCornerShape(10.dp),
+					color = MaterialTheme.colorScheme.primaryContainer,
+				) {
+					Text(
+						text = "v$versionName",
+						modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+						fontSize = 11.sp,
+						fontWeight = FontWeight.Bold,
+						color = MaterialTheme.colorScheme.onPrimaryContainer,
+					)
+				}
+			}
+		}
 
 		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
 			HumanNetworkPill(routeInfo = routeInfo, onClick = {})
@@ -1253,7 +1270,7 @@ private fun FilesTopBar(
 	var menuOpen by remember { mutableStateOf(false) }
 	val parts = remember(vm.path) { vm.path.trim('/').split('/').filter { it.isNotBlank() } }
 	Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
-		Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+		Row(Modifier.fillMaxWidth().heightIn(min = 54.dp).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
 			if (isSearchActive) {
 				OutlinedTextField(
 					value = vm.searchQuery,
@@ -1271,18 +1288,30 @@ private fun FilesTopBar(
 						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回上一级")
 					}
 				}
-				Row(
-					modifier = Modifier.weight(1f).padding(start = if (parts.isEmpty()) 8.dp else 0.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(6.dp),
+				Column(
+					modifier = Modifier.weight(1f).padding(start = if (parts.isEmpty()) 8.dp else 2.dp),
+					verticalArrangement = Arrangement.Center,
 				) {
+					Row(
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(6.dp),
+					) {
+						Text(
+							parts.lastOrNull() ?: "我的文件",
+							style = MaterialTheme.typography.titleMedium,
+							fontWeight = FontWeight.Bold,
+							maxLines = 1, overflow = TextOverflow.Ellipsis,
+						)
+						CompactNetworkBadge(routeInfo = routeInfo, onClick = onShowNetworkSheet)
+					}
 					Text(
-						parts.lastOrNull() ?: "我的文件",
-						style = MaterialTheme.typography.titleMedium,
-						fontWeight = FontWeight.Bold,
+						"${vm.entries.size} 项文件与目录",
+						style = MaterialTheme.typography.bodySmall,
+						fontSize = 11.sp,
+						fontWeight = FontWeight.Medium,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
 						maxLines = 1, overflow = TextOverflow.Ellipsis,
 					)
-					CompactNetworkBadge(routeInfo = routeInfo, onClick = onShowNetworkSheet)
 				}
 				IconButton(onClick = { isSearchActive = true }, modifier = Modifier.size(40.dp)) {
 					Icon(Icons.Rounded.Search, contentDescription = "搜索")
@@ -2338,7 +2367,7 @@ private fun TransferCenterSheet(
 						val terminal = task.status in finishedStates
 						val statusText = when (task.status) {
 							TransferStatus.RUNNING -> if (task.isUpload) "正在上传" else "正在下载"
-							TransferStatus.CONFIRMING -> "已发送，等待服务器确认"
+							TransferStatus.CONFIRMING -> "正在写入存储…"
 							TransferStatus.QUEUED -> "排队等待中"
 							TransferStatus.PAUSED -> "已暂停"
 							TransferStatus.COMPLETED -> if (task.isUpload) "上传完成" else "下载完成"
@@ -2356,7 +2385,9 @@ private fun TransferCenterSheet(
 									Text(task.error.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
 								}
 								if (!terminal) {
-									if (task.status == TransferStatus.CONFIRMING || (task.status == TransferStatus.RUNNING && task.totalBytes <= 0)) {
+									if (task.status == TransferStatus.CONFIRMING) {
+										LinearProgressIndicator(progress = { 0.99f }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+									} else if (task.status == TransferStatus.RUNNING && task.totalBytes <= 0) {
 										LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
 									} else {
 										LinearProgressIndicator(progress = { task.progress }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
@@ -2804,7 +2835,7 @@ private fun NetworkIntelligenceConsole(
 						routeInfo.isLan -> "当前使用局域网连接"
 						routeInfo.isDirect -> "当前使用直连"
 						routeInfo.isRelay -> "当前使用中继连接"
-						else -> "当前未连接"
+						else -> "当前正在连接…"
 					},
 					color = MaterialTheme.colorScheme.onSurfaceVariant,
 				)

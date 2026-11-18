@@ -15,9 +15,12 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size as GeometrySize
@@ -142,6 +145,11 @@ fun ImageViewer(
 	}
 	val current = imageList.getOrNull(pager.currentPage.coerceIn(0, imageList.lastIndex)) ?: return
 
+	var isCurrentZoomed by remember { mutableStateOf(false) }
+	LaunchedEffect(pager.currentPage) {
+		isCurrentZoomed = false
+	}
+
 	var controlsVisible by remember { mutableStateOf(true) }
 	var showInfoDialog by remember { mutableStateOf(false) }
 	var showDeleteDialog by remember { mutableStateOf(false) }
@@ -185,7 +193,7 @@ fun ImageViewer(
 		HorizontalPager(
 			state = pager,
 			modifier = Modifier.fillMaxSize(),
-			userScrollEnabled = true,
+			userScrollEnabled = !isCurrentZoomed,
 		) { page ->
 			val entry = imageList.getOrNull(page) ?: return@HorizontalPager
 			ZoomableImage(
@@ -194,6 +202,11 @@ fun ImageViewer(
 				name = entry.name,
 				targetSize = targetSize,
 				onToggleControls = { controlsVisible = !controlsVisible },
+				onZoomChanged = { zoomed ->
+					if (page == pager.currentPage) {
+						isCurrentZoomed = zoomed
+					}
+				},
 			)
 		}
 
@@ -418,11 +431,16 @@ private fun ZoomableImage(
 	name: String,
 	targetSize: Size,
 	onToggleControls: () -> Unit,
+	onZoomChanged: (Boolean) -> Unit = {},
 ) {
 	var scale by remember { mutableFloatStateOf(1f) }
 	var dx by remember { mutableFloatStateOf(0f) }
 	var dy by remember { mutableFloatStateOf(0f) }
 	val context = LocalContext.current
+
+	LaunchedEffect(scale) {
+		onZoomChanged(scale > 1.05f)
+	}
 
 	// 原图加载态：loading / 失败重试。切图（url 变化）时全部复位。
 	var loadFailed by remember(url) { mutableStateOf(false) }
@@ -433,13 +451,7 @@ private fun ZoomableImage(
 	val fullRequest = remember(url, retryKey, targetSize) {
 		ImageRequest.Builder(context)
 			.data(url)
-			// 明确按屏幕像素解码：Coil 默认会拿原始尺寸（手机上动辄 4000px 宽的大图），
-			// 解码时间和内存都翻几倍，这正是"点开后要等一会儿才清晰"的开销。
-			// 不设 Precision.EXACT：目标尺寸已接近原图，默认的 inSampleSize 路径最快，
-			// 只有降采样到小于目标尺寸才会发虚，而 Coil 不会那样做。
 			.size(targetSize)
-			// 关闭交叉淡入：全局 imageLoader 默认 crossfade(true)，
-			// 淡入的 100~300ms 在用户感知里就是"慢慢变清晰"，去掉后原图一到瞬间就锐利。
 			.crossfade(false)
 			.memoryCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
 			.diskCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
@@ -454,34 +466,25 @@ private fun ZoomableImage(
 			},
 		contentAlignment = Alignment.Center,
 	) {
-		// 第 1 层：列表已缓存的服务端缩略图（144px）放大铺底。
-		// 加高斯模糊 + 压暗后，它看起来是"有意的磨砂预览"而不是"糊掉的原图"，
-		// 原图瞬间切入时观感是从模糊背景干净地变清晰，不会有一段刺眼的低清过渡。
-		// 模糊依赖 RenderEffect，仅 API 31+ 生效；低版本直接不模糊，靠压暗遮罩过渡。
-		if (!thumbUrl.isNullOrBlank() && thumbUrl != url) {
-			val canBlur = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+		// 第 1 层：先完整展示已缓存的缩略图（ContentScale.Fit，原比例无裁剪、不加重度磨砂暗罩）
+		// 让用户第一时间看清画面主体，高清原图到货后自然淡入取代
+		if (!thumbUrl.isNullOrBlank() && (isLoading || loadFailed)) {
 			AsyncImage(
 				model = thumbUrl,
 				contentDescription = null,
-				contentScale = ContentScale.Crop,
+				contentScale = ContentScale.Fit,
 				modifier = Modifier
 					.fillMaxSize()
-					.then(
-						if (canBlur) {
-							Modifier.blur(28.dp, androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded)
-						} else {
-							Modifier
-						}
-					),
-			)
-			Box(
-				Modifier
-					.fillMaxSize()
-					.background(MediaBackdrop.copy(alpha = if (canBlur) 0.18f else 0.35f)),
+					.graphicsLayer {
+						scaleX = scale
+						scaleY = scale
+						translationX = dx
+						translationY = dy
+					},
 			)
 		}
 
-		// 第 2 层：原图（可缩放）。缩略图垫底时即使原图还没到也有画面。
+		// 第 2 层：原图（可自由缩放与多指手势）
 		if (!url.isNullOrBlank() && !loadFailed) {
 			AsyncImage(
 				model = fullRequest,
@@ -498,15 +501,24 @@ private fun ZoomableImage(
 						translationX = dx
 						translationY = dy
 					}
-					.pointerInput(Unit) {
-						detectTransformGestures { _, pan, zoom, _ ->
-							scale = (scale * zoom).coerceIn(1f, 6f)
-							if (scale > 1f) {
-								dx += pan.x
-								dy += pan.y
-							} else {
-								dx = 0f
-								dy = 0f
+					.pointerInput(scale > 1.05f) {
+						if (scale > 1.05f) {
+							// 放大状态：支持单指平移漫游与自由捏合缩放
+							detectTransformGestures { _, pan, zoom, _ ->
+								val newScale = (scale * zoom).coerceIn(1f, 6f)
+								scale = newScale
+								if (newScale > 1f) {
+									dx += pan.x
+									dy += pan.y
+								} else {
+									dx = 0f
+									dy = 0f
+								}
+							}
+						} else {
+							// 1x 原始尺寸：仅双指捏合缩放，单指划动不被拦截，透传给 HorizontalPager 左右翻页
+							detectMultiTouchZoomOnly { zoom ->
+								scale = (scale * zoom).coerceIn(1f, 6f)
 							}
 						}
 					}
@@ -514,7 +526,7 @@ private fun ZoomableImage(
 						detectTapGestures(
 							onTap = { onToggleControls() },
 							onDoubleTap = {
-								if (scale > 1f) {
+								if (scale > 1.05f) {
 									scale = 1f; dx = 0f; dy = 0f
 								} else {
 									scale = 2.5f
@@ -525,15 +537,36 @@ private fun ZoomableImage(
 			)
 		}
 
-		// 原图仍在加载且没有缩略图垫底时，给个明确的菊花，避免"点了没反应"
-		if (isLoading && !loadFailed && thumbUrl.isNullOrBlank()) {
-			androidx.compose.material3.CircularProgressIndicator(
-				color = OnMediaBackdrop,
-				modifier = Modifier.size(36.dp),
-			)
+		// 动态加载动画指示器：不加全屏遮罩，底部胶囊优雅提示高清加载进度
+		if (isLoading && !loadFailed) {
+			Surface(
+				shape = RoundedCornerShape(16.dp),
+				color = Color.Black.copy(alpha = 0.65f),
+				modifier = Modifier
+					.align(Alignment.BottomCenter)
+					.padding(bottom = 88.dp),
+			) {
+				Row(
+					modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(8.dp),
+				) {
+					CircularProgressIndicator(
+						strokeWidth = 2.dp,
+						color = Color.White,
+						modifier = Modifier.size(13.dp),
+					)
+					Text(
+						text = if (!thumbUrl.isNullOrBlank()) "正在载入高清细节…" else "正在加载图片…",
+						fontSize = 11.sp,
+						fontWeight = FontWeight.Medium,
+						color = Color.White,
+					)
+				}
+			}
 		}
 
-		// 加载失败（且无缩略图兜底）：明确提示 + 点击重试，绝不静默黑屏
+		// 加载失败：明确提示 + 点击重试，绝不静默黑屏
 		if (loadFailed && thumbUrl.isNullOrBlank()) {
 			Column(
 				horizontalAlignment = Alignment.CenterHorizontally,
@@ -1238,4 +1271,27 @@ private fun formatTime(millis: Long): String {
 	val mins = totalSecs / 60
 	val secs = totalSecs % 60
 	return String.format(Locale.ROOT, "%02d:%02d", mins, secs)
+}
+
+/**
+ * 仅在多指（双指捏合）缩放手势时消费手势事件；
+ * 单指滑动不被消费，从而直接透传给上层 HorizontalPager，实现丝滑左右滑动手势翻页。
+ */
+private suspend fun PointerInputScope.detectMultiTouchZoomOnly(
+	onZoom: (Float) -> Unit,
+) {
+	awaitEachGesture {
+		awaitFirstDown(requireUnconsumed = false)
+		do {
+			val event = awaitPointerEvent()
+			val canceled = event.changes.any { it.isConsumed }
+			if (!canceled && event.changes.size > 1) {
+				val zoom = event.calculateZoom()
+				if (zoom != 1f) {
+					onZoom(zoom)
+					event.changes.forEach { it.consume() }
+				}
+			}
+		} while (!canceled && event.changes.any { it.pressed })
+	}
 }

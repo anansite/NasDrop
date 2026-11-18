@@ -5,8 +5,14 @@ import android.util.Log
 import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import okhttp3.Call
 import okhttp3.ConnectionPool
 import okhttp3.Credentials
@@ -383,6 +389,8 @@ class Repository(private val context: Context) {
 					isProbing = false,
 					isLanDirect = false,
 				)
+				// 积极直连巡检：在中继状态下立即触发后台积极穿透与局域网探活
+				startAggressiveDirectAttemptIfNeeded()
 			}
 			else -> {
 				val st = TsBridge.status()
@@ -391,7 +399,7 @@ class Repository(private val context: Context) {
 					isRelay = false,
 					endpoint = "",
 					peerName = "",
-					label = if (st.startsWith("running")) "🛡️ Tailscale 已连接" else "🛡️ Tailscale 准备中",
+					label = if (st.startsWith("running")) "🛡️ Tailscale 正在优化连接…" else "🛡️ 正在建立连接…",
 					isProbing = false,
 					isLanDirect = false,
 				)
@@ -399,9 +407,81 @@ class Repository(private val context: Context) {
 		}
 	}
 
+	@Volatile
+	private var aggressiveHolePunchJob: Job? = null
+
+	/**
+	 * 积极的直连尝试机制：
+	 * 当网络处于中转 (DERP relay) 模式时，高频向对端发送 Disco Ping 并在自动模式下复测局域网直连，
+	 * 促使连接尽快由慢速中继升级为高速 P2P 直连或原生局域网直连。
+	 */
+	fun startAggressiveDirectAttemptIfNeeded() {
+		if (directConfirmed != null || cachedKey?.connectionMode == ConnectionMode.Direct) return
+		if (aggressiveHolePunchJob?.isActive == true) return
+
+		aggressiveHolePunchJob = CoroutineScope(Dispatchers.IO).launch {
+			var attempts = 0
+			while (isActive && attempts < 20) {
+				val current = _routeInfo.value
+				if (current.isDirect || current.isLan) {
+					Log.i("Repository", "已成功建立直连，积极打洞收敛完成")
+					break
+				}
+
+				// 1. 若为 Auto 模式，探测是否已接入同一局域网（Wi-Fi 直连最快）
+				val settings = cachedKey
+				if (settings != null && settings.connectionMode == ConnectionMode.Auto) {
+					val root = settings.baseUrl.toHttpUrlOrNull()
+					if (root != null) {
+						val direct = doDirectProbe(root, settings.user, settings.password)
+						if (direct != null) {
+							directConfirmed = direct
+							_routeInfo.value = RouteInfo(
+								isDirect = true,
+								isRelay = false,
+								endpoint = direct.ip,
+								peerName = if (direct.isLan) "LAN" else "Direct",
+								label = if (direct.isLan) "局域网直连 · ${direct.latencyMs}ms" else "系统直连 · ${direct.latencyMs}ms",
+								latencyMs = direct.latencyMs,
+								isProbing = false,
+								isLanDirect = direct.isLan,
+							)
+							Log.i("Repository", "后台探测成功发现局域网直连，直接切入原生高速通道！")
+							break
+						}
+					}
+				}
+
+				// 2. 积极触发 Tailscale NAT 打洞
+				TsBridge.punchHole()
+				val info = TsBridge.peerLinkInfo()
+				val parts = info.split('|')
+				if (parts.firstOrNull() == "direct") {
+					val ep = parts.getOrNull(1).orEmpty()
+					val name = parts.getOrNull(2).orEmpty()
+					_routeInfo.value = RouteInfo(
+						isDirect = true,
+						isRelay = false,
+						endpoint = ep,
+						peerName = name,
+						label = "⚡ P2P 直连 · $ep",
+						isProbing = false,
+						isLanDirect = false,
+					)
+					Log.i("Repository", "积极打洞成功，链路已升级为 P2P 直连: $ep")
+					break
+				}
+
+				attempts++
+				delay(if (attempts <= 5) 2000L else 4000L)
+			}
+		}
+	}
+
 	/** 配置变了要丢弃旧的 client，让 bridge 用新参数重启 */
 	@Synchronized
 	fun invalidate() {
+		aggressiveHolePunchJob?.cancel()
 		cached = null
 		cachedKey = null
 		directConfirmed = null
@@ -409,6 +489,6 @@ class Repository(private val context: Context) {
 		authOrigin = null
 		bridgeToken = ""
 		TsBridge.stop()
-		_routeInfo.value = RouteInfo(false, false, "", "", "已断开", -1, false)
+		_routeInfo.value = RouteInfo(false, false, "", "", "正在连接…", -1, true)
 	}
 }

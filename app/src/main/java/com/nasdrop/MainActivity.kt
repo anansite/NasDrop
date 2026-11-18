@@ -197,6 +197,7 @@ class MainActivity : ComponentActivity() {
 						isDownloading = vm.isDownloadingUpdate,
 						downloadProgress = vm.updateProgress,
 						speedText = vm.updateSpeedText,
+						currentVersionName = vm.currentVersionName,
 						onStartUpdate = { vm.startDownloadUpdate(context) },
 						onDismiss = { vm.dismissUpdateDialog() },
 					)
