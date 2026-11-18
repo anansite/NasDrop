@@ -106,6 +106,20 @@ class Repository(private val context: Context) {
 			})
 			.connectTimeout(10, TimeUnit.SECONDS)
 			.readTimeout(30, TimeUnit.SECONDS)
+			.addNetworkInterceptor { chain ->
+				val response = chain.proceed(chain.request())
+				if (response.isSuccessful) {
+					// 突破带 Authorization 导致 RFC 强制禁止磁盘缓存的限制：
+					// 将响应头改写为允许客户端本地磁盘缓存 7 天，确保打开过的图片与缩略图真正落盘，避免重复网络下载
+					response.newBuilder()
+						.removeHeader("Pragma")
+						.removeHeader("Cache-Control")
+						.header("Cache-Control", "public, max-age=604800")
+						.build()
+				} else {
+					response
+				}
+			}
 			.build()
 	private val verifiedImage by lazy { imageClient(verifiedHttp) }
 	private val permissiveImage by lazy { imageClient(permissiveHttp) }

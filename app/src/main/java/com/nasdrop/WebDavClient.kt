@@ -287,14 +287,41 @@ class WebDavClient(
 					val name = item.optString("name")
 					val thumb = item.optString("thumb")
 					val key = prefix + name
-					// 顺带缓存原生直链签名：查看器原图/视频用它走 /p/?sign=，无 auth、缓存友好
-					item.optString("sign").takeIf { it.isNotBlank() }?.let { signUrls[key] = it }
-					if (name.isNotEmpty() && thumb.startsWith("http")) {
-						// thumb 直链是服务端返回的公网绝对地址。统一把 origin 换成本客户端的
-						// base origin：直连模式=原域名；bridge 模式=127.0.0.1:port。
-						// 否则 bridge 模式下 Coil 会拿公网域名直连 100.x 而失败。
-						val key = prefix + name
-						thumbUrls[key] = rewriteThumbOrigin(thumb)
+					val sign = item.optString("sign").takeIf { it.isNotBlank() }
+					if (sign != null) {
+						signUrls[key] = sign
+					}
+					var resolvedThumb: String? = null
+					if (thumb.isNotBlank()) {
+						resolvedThumb = if (thumb.startsWith("http")) {
+							rewriteThumbOrigin(thumb)
+						} else if (thumb.startsWith("/")) {
+							try {
+								val cleanPath = thumb.substringBefore('?')
+								val query = thumb.substringAfter('?', "")
+								val b = base.newBuilder().encodedPath(cleanPath)
+								if (query.isNotEmpty()) {
+									query.split('&').forEach { param ->
+										val kv = param.split('=', limit = 2)
+										if (kv.size == 2) b.addQueryParameter(kv[0], kv[1])
+									}
+								}
+								b.build().toString()
+							} catch (_: Exception) { null }
+						} else null
+					}
+					// 若服务端未直接返回 thumb，但有原生直链 sign，OpenList 原生支持 /d/<path>?sign=...&type=thumb 服务端秒级裁切微缩图
+					if (resolvedThumb == null && sign != null && (name.endsWith(".jpg", true) || name.endsWith(".png", true) || name.endsWith(".jpeg", true) || name.endsWith(".webp", true))) {
+						try {
+							val b = base.newBuilder().addPathSegment("d")
+							key.split('/').forEach { if (it.isNotEmpty()) b.addPathSegment(it) }
+							b.addQueryParameter("sign", sign)
+							b.addQueryParameter("type", "thumb")
+							resolvedThumb = b.build().toString()
+						} catch (_: Exception) {}
+					}
+					if (name.isNotEmpty() && !resolvedThumb.isNullOrBlank()) {
+						thumbUrls[key] = resolvedThumb
 						added += key
 					}
 				}

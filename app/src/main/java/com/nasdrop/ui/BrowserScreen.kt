@@ -979,21 +979,21 @@ private fun CollectionTopBar(
 	var menuOpen by remember { mutableStateOf(false) }
 	Surface(color = MaterialTheme.colorScheme.surface) {
 		Row(
-			Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 8.dp),
+			Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
 			if (isInside) {
-				IconButton(onClick = onUp, modifier = Modifier.size(48.dp)) {
+				IconButton(onClick = onUp, modifier = Modifier.size(40.dp)) {
 					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部")
 				}
 			}
-			Column(Modifier.weight(1f).padding(start = if (isInside) 0.dp else 12.dp)) {
-				Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-				Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+			Column(Modifier.weight(1f).padding(start = if (isInside) 0.dp else 8.dp)) {
+				Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+				Text(subtitle, style = MaterialTheme.typography.bodySmall, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
 			}
 			TransferButton(activeTransferCount, onTransfer)
 			Box {
-				IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(48.dp)) {
+				IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
 					Icon(Icons.Rounded.MoreVert, contentDescription = "更多操作")
 				}
 				DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -1132,7 +1132,7 @@ private fun FilesTopBar(
 	var menuOpen by remember { mutableStateOf(false) }
 	val parts = remember(vm.path) { vm.path.trim('/').split('/').filter { it.isNotBlank() } }
 	Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
-		Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+		Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
 			if (isSearchActive) {
 				OutlinedTextField(
 					value = vm.searchQuery,
@@ -1141,27 +1141,28 @@ private fun FilesTopBar(
 					placeholder = { Text("搜索文件名") },
 					modifier = Modifier.weight(1f),
 				)
-				IconButton(onClick = { vm.searchQuery = ""; isSearchActive = false }, modifier = Modifier.size(48.dp)) {
+				IconButton(onClick = { vm.searchQuery = ""; isSearchActive = false }, modifier = Modifier.size(40.dp)) {
 					Icon(Icons.Rounded.Close, contentDescription = "关闭搜索")
 				}
 			} else {
 				if (parts.isNotEmpty()) {
-					IconButton(onClick = onUp, modifier = Modifier.size(48.dp)) {
+					IconButton(onClick = onUp, modifier = Modifier.size(40.dp)) {
 						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回上一级")
 					}
 				}
 				Text(
 					parts.lastOrNull() ?: "我的文件",
-					modifier = Modifier.weight(1f).padding(start = if (parts.isEmpty()) 12.dp else 0.dp),
+					modifier = Modifier.weight(1f).padding(start = if (parts.isEmpty()) 8.dp else 0.dp),
 					style = MaterialTheme.typography.titleMedium,
+					fontWeight = FontWeight.Bold,
 					maxLines = 1, overflow = TextOverflow.Ellipsis,
 				)
-				IconButton(onClick = { isSearchActive = true }, modifier = Modifier.size(48.dp)) {
+				IconButton(onClick = { isSearchActive = true }, modifier = Modifier.size(40.dp)) {
 					Icon(Icons.Rounded.Search, contentDescription = "搜索")
 				}
 				TransferButton(vm.activeTransferCount, onOpenTransferSheet)
 				Box {
-					IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(48.dp)) {
+					IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
 						Icon(Icons.Rounded.MoreVert, contentDescription = "更多操作")
 					}
 					DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -1174,22 +1175,94 @@ private fun FilesTopBar(
 				}
 			}
 		}
-		LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-			item {
-				TextButton(onClick = { onNavigate("") }) { Text("NAS") }
-			}
-			items(parts.indices.toList()) { i ->
-				Icon(Icons.Rounded.ChevronRight, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-				TextButton(onClick = { onNavigate(parts.take(i + 1).joinToString("/")) }) {
-					Text(parts[i], maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+
+		// 面包屑导航：仅在进入子目录时紧凑呈现，根目录无需多余占位整行
+		if (parts.isNotEmpty()) {
+			LazyRow(
+				contentPadding = PaddingValues(horizontal = 14.dp, vertical = 2.dp),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
+				modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
+			) {
+				item {
+					Surface(
+						shape = RoundedCornerShape(6.dp),
+						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+						onClick = { onNavigate("") },
+					) {
+						Text(
+							"NAS",
+							fontSize = 12.sp,
+							color = MaterialTheme.colorScheme.primary,
+							fontWeight = FontWeight.Medium,
+							modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+						)
+					}
+				}
+				items(parts.indices.toList()) { i ->
+					Icon(
+						Icons.Rounded.ChevronRight,
+						contentDescription = null,
+						modifier = Modifier.size(13.dp),
+						tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+					)
+					val isLast = i == parts.lastIndex
+					Surface(
+						shape = RoundedCornerShape(6.dp),
+						color = if (isLast) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+						onClick = { onNavigate(parts.take(i + 1).joinToString("/")) },
+					) {
+						Text(
+							parts[i],
+							fontSize = 12.sp,
+							color = if (isLast) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+							fontWeight = if (isLast) FontWeight.Bold else FontWeight.Normal,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+							modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp).widthIn(max = 140.dp),
+						)
+					}
 				}
 			}
 		}
-		Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-			TextButton(onClick = { vm.cycleSortOrder() }) { Text(vm.sortOrder.label, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+
+		// 排序与视图切换紧凑行：消除多余上下留白
+		Row(
+			Modifier
+				.fillMaxWidth()
+				.height(36.dp)
+				.padding(horizontal = 14.dp),
+			verticalAlignment = Alignment.CenterVertically,
+		) {
+			Surface(
+				shape = RoundedCornerShape(6.dp),
+				color = Color.Transparent,
+				onClick = { vm.cycleSortOrder() },
+			) {
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(4.dp),
+					modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+				) {
+					Text(
+						vm.sortOrder.label,
+						fontSize = 12.sp,
+						fontWeight = FontWeight.Medium,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+					)
+				}
+			}
 			Spacer(Modifier.weight(1f))
-			IconButton(onClick = onToggleViewMode, modifier = Modifier.size(48.dp)) {
-				Icon(if (vm.viewMode == ViewMode.Cards) Icons.Rounded.GridView else Icons.Rounded.ViewHeadline, contentDescription = "切换视图")
+			IconButton(
+				onClick = onToggleViewMode,
+				modifier = Modifier.size(32.dp),
+			) {
+				Icon(
+					if (vm.viewMode == ViewMode.Cards) Icons.Rounded.GridView else Icons.Rounded.ViewHeadline,
+					contentDescription = "切换视图",
+					modifier = Modifier.size(18.dp),
+					tint = MaterialTheme.colorScheme.onSurfaceVariant,
+				)
 			}
 		}
 	}
@@ -1654,9 +1727,9 @@ private fun PhotoTimelineContent(
 	onOpenImage: (DavEntry) -> Unit,
 ) {
 	Column(modifier = Modifier.fillMaxSize()) {
-		// 1. 顶部子相册分类横滑条（让相册中创建的子相册/文件夹一目了然）
+		// 1. 顶部子相册分类横滑条（紧凑轻盈胶囊）
 		LazyRow(
-			contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+			contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
 			horizontalArrangement = Arrangement.spacedBy(8.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
@@ -1664,17 +1737,17 @@ private fun PhotoTimelineContent(
 			item {
 				val isAll = selectedAlbumPath.isBlank()
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					shape = RoundedCornerShape(17.dp),
 					color = if (isAll) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surface,
-					shadowElevation = if (isAll) 3.dp else 1.dp,
+					shadowElevation = if (isAll) 2.dp else 1.dp,
 					onClick = { onSelectAlbum("") },
 				) {
 					Row(
-						modifier = Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 6.dp),
+						modifier = Modifier.height(34.dp).padding(horizontal = 10.dp, vertical = 4.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(6.dp),
+						horizontalArrangement = Arrangement.spacedBy(5.dp),
 					) {
-						Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, tint = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.secondary, modifier = Modifier.size(15.dp))
+						Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, tint = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.secondary, modifier = Modifier.size(14.dp))
 						Text("全部照片", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface)
 					}
 				}
@@ -1684,7 +1757,7 @@ private fun PhotoTimelineContent(
 			items(allAlbums) { album ->
 				val isSelected = selectedAlbumPath == album.path
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					shape = RoundedCornerShape(17.dp),
 					color = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surfaceVariant,
 					shadowElevation = if (isSelected) 2.dp else 0.dp,
 					modifier = Modifier.combinedClickable(
@@ -1693,12 +1766,12 @@ private fun PhotoTimelineContent(
 					),
 				) {
 					Row(
-						modifier = Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 6.dp),
+						modifier = Modifier.height(34.dp).padding(horizontal = 10.dp, vertical = 4.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(6.dp),
+						horizontalArrangement = Arrangement.spacedBy(5.dp),
 					) {
-						Icon(Icons.Rounded.Folder, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.onSecondary else Color(0xFFFF9500), modifier = Modifier.size(15.dp))
-						Text(album.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = if (isSelected) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+						Icon(Icons.Rounded.Folder, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.onSecondary else Color(0xFFFF9500), modifier = Modifier.size(14.dp))
+						Text(album.name, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (isSelected) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
 					}
 				}
 			}
@@ -1706,15 +1779,21 @@ private fun PhotoTimelineContent(
 			// 尾部新建专属相册快捷胶囊
 			item {
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					shape = RoundedCornerShape(17.dp),
 					color = MaterialTheme.colorScheme.secondaryContainer,
 					onClick = onCreateAlbum,
 				) {
 					Row(
-						modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+						modifier = Modifier.height(34.dp).padding(horizontal = 10.dp, vertical = 4.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
+						Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(14.dp))
+						Text("新建相册", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+					}
+				}
+			}
+		}
 						Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(15.dp))
 						Text("新建相册", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
 					}
@@ -1773,8 +1852,15 @@ private fun PhotoTimelineContent(
 									}
 								),
 						) {
+							val thumbTarget = urlOf(item.path)
 							AsyncImage(
-								model = urlOf(item.path),
+								model = ImageRequest.Builder(LocalContext.current)
+									.data(thumbTarget)
+									.size(240, 240)
+									.precision(coil.size.Precision.INEXACT)
+									.allowRgb565(true)
+									.crossfade(false)
+									.build(),
 								contentDescription = item.name,
 								contentScale = ContentScale.Crop,
 								modifier = Modifier.fillMaxSize(),
@@ -1816,9 +1902,9 @@ private fun MediaStreamContent(
 	onOpenVideo: (DavEntry) -> Unit,
 ) {
 	Column(modifier = Modifier.fillMaxSize()) {
-		// 1. 顶部影集/影视分类横滑栏（让影音中创建的分类一目了然）
+		// 1. 顶部影集/影视分类横滑栏（紧凑轻盈胶囊）
 		LazyRow(
-			contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+			contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
 			horizontalArrangement = Arrangement.spacedBy(8.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
@@ -1826,17 +1912,17 @@ private fun MediaStreamContent(
 			item {
 				val isAll = selectedMediaPath.isBlank()
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					shape = RoundedCornerShape(17.dp),
 					color = if (isAll) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surface,
-					shadowElevation = if (isAll) 3.dp else 1.dp,
+					shadowElevation = if (isAll) 2.dp else 1.dp,
 					onClick = { onSelectMediaFolder("") },
 				) {
 					Row(
-						modifier = Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 6.dp),
+						modifier = Modifier.height(34.dp).padding(horizontal = 10.dp, vertical = 4.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(6.dp),
+						horizontalArrangement = Arrangement.spacedBy(5.dp),
 					) {
-						Icon(Icons.Rounded.VideoLibrary, contentDescription = null, tint = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.secondary, modifier = Modifier.size(15.dp))
+						Icon(Icons.Rounded.VideoLibrary, contentDescription = null, tint = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.secondary, modifier = Modifier.size(14.dp))
 						Text("全部影视", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface)
 					}
 				}
@@ -1846,7 +1932,7 @@ private fun MediaStreamContent(
 			items(allMediaFolders) { folder ->
 				val isSelected = selectedMediaPath == folder.path
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					shape = RoundedCornerShape(17.dp),
 					color = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surfaceVariant,
 					shadowElevation = if (isSelected) 2.dp else 0.dp,
 					modifier = Modifier.combinedClickable(
@@ -1855,12 +1941,12 @@ private fun MediaStreamContent(
 					),
 				) {
 					Row(
-						modifier = Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 6.dp),
+						modifier = Modifier.height(34.dp).padding(horizontal = 10.dp, vertical = 4.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(6.dp),
+						horizontalArrangement = Arrangement.spacedBy(5.dp),
 					) {
-						Icon(Icons.Rounded.Folder, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.onSecondary else Color(0xFFFF9500), modifier = Modifier.size(15.dp))
-						Text(folder.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = if (isSelected) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+						Icon(Icons.Rounded.Folder, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.onSecondary else Color(0xFFFF9500), modifier = Modifier.size(14.dp))
+						Text(folder.name, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (isSelected) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
 					}
 				}
 			}
@@ -1868,15 +1954,21 @@ private fun MediaStreamContent(
 			// 尾部新建影集快捷胶囊
 			item {
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					shape = RoundedCornerShape(17.dp),
 					color = MaterialTheme.colorScheme.secondaryContainer,
 					onClick = onCreateMediaFolder,
 				) {
 					Row(
-						modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+						modifier = Modifier.height(34.dp).padding(horizontal = 10.dp, vertical = 4.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
+						Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(14.dp))
+						Text("新建影集", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+					}
+				}
+			}
+		}
 						Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(15.dp))
 						Text("新建影集", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
 					}
