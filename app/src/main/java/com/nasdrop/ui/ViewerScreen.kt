@@ -13,14 +13,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculatePan
-import androidx.compose.foundation.gestures.calculateZoom
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size as GeometrySize
@@ -501,27 +495,25 @@ private fun ZoomableImage(
 						translationX = dx
 						translationY = dy
 					}
-					.pointerInput(scale > 1.05f) {
+					.then(
 						if (scale > 1.05f) {
-							// 放大状态：支持单指平移漫游与自由捏合缩放
-							detectTransformGestures { _, pan, zoom, _ ->
-								val newScale = (scale * zoom).coerceIn(1f, 6f)
-								scale = newScale
-								if (newScale > 1f) {
-									dx += pan.x
-									dy += pan.y
-								} else {
-									dx = 0f
-									dy = 0f
+							Modifier.pointerInput(scale > 1.05f) {
+								detectTransformGestures { _, pan, zoom, _ ->
+									val newScale = (scale * zoom).coerceIn(1f, 6f)
+									scale = newScale
+									if (newScale > 1f) {
+										dx += pan.x
+										dy += pan.y
+									} else {
+										dx = 0f
+										dy = 0f
+									}
 								}
 							}
 						} else {
-							// 1x 原始尺寸：仅双指捏合缩放，单指划动不被拦截，透传给 HorizontalPager 左右翻页
-							detectMultiTouchZoomOnly { zoom ->
-								scale = (scale * zoom).coerceIn(1f, 6f)
-							}
+							Modifier
 						}
-					}
+					)
 					.pointerInput(Unit) {
 						detectTapGestures(
 							onTap = { onToggleControls() },
@@ -1271,27 +1263,4 @@ private fun formatTime(millis: Long): String {
 	val mins = totalSecs / 60
 	val secs = totalSecs % 60
 	return String.format(Locale.ROOT, "%02d:%02d", mins, secs)
-}
-
-/**
- * 仅在多指（双指捏合）缩放手势时消费手势事件；
- * 单指滑动不被消费，从而直接透传给上层 HorizontalPager，实现丝滑左右滑动手势翻页。
- */
-private suspend fun PointerInputScope.detectMultiTouchZoomOnly(
-	onZoom: (Float) -> Unit,
-) {
-	awaitEachGesture {
-		awaitFirstDown(requireUnconsumed = false)
-		do {
-			val event = awaitPointerEvent()
-			val canceled = event.changes.any { it.isConsumed }
-			if (!canceled && event.changes.size > 1) {
-				val zoom = event.calculateZoom()
-				if (zoom != 1f) {
-					onZoom(zoom)
-					event.changes.forEach { it.consume() }
-				}
-			}
-		} while (!canceled && event.changes.any { it.pressed })
-	}
 }

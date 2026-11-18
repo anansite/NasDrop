@@ -101,18 +101,18 @@ jobs:
 
       - name: 打包 APK
         run: |
+          set -e
+          set -o pipefail
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log || {
-            echo "========== BUILD FAILED - COMPILATION ERRORS =========="
-            grep -E "e: |error:|FAILED" build.log -B 2 -A 5 | tail -n 80 || tail -n 60 build.log
-            exit 1
-          }
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
       - name: 整理产物
         run: |
+          set -e
           rm -rf out
           mkdir -p out
           TAG_NAME="v1.0.${{ github.run_number }}"
+          find app/build/outputs/apk/ -type f || true
           for f in app/build/outputs/apk/release/*.apk; do
             [ -f "$f" ] || continue
             filename=$(basename "$f")
@@ -132,6 +132,10 @@ jobs:
             esac
           done
           ls -lh out
+          if [ -z "$(ls -A out)" ]; then
+            echo "ERROR: out directory is empty! No APKs were built!"
+            exit 1
+          fi
 
       - name: 上传 artifact
         uses: actions/upload-artifact@v4

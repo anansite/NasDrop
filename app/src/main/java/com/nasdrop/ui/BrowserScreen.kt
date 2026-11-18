@@ -368,7 +368,7 @@ fun BrowserScreen(
 						routeInfo = routeInfo,
 						versionName = vm.currentVersionName,
 						hasUpdate = vm.hasUpdate,
-						onOpenUpdateDialog = { vm.showUpdateDialog = true },
+						onOpenUpdateDialog = { vm.openUpdateDialog() },
 						onOpenSettings = onOpenSettings,
 					)
 				}
