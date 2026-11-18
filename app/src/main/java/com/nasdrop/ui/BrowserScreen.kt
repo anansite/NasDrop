@@ -2501,7 +2501,7 @@ private fun NetworkManagerSheet(
 						.fillMaxWidth()
 						.height(48.dp),
 				) {
-					Icon(Icons.Rounded.ElectricBolt, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiary)
+					Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiary)
 					Spacer(modifier = Modifier.width(6.dp))
 					Text("⚡ 强制锁定【仅直连模式】", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onTertiary)
 				}
@@ -2514,7 +2514,7 @@ private fun NetworkManagerSheet(
 						.fillMaxWidth()
 						.height(48.dp),
 				) {
-					Icon(Icons.Rounded.Autorenew, contentDescription = null)
+					Icon(Icons.Rounded.Refresh, contentDescription = null)
 					Spacer(modifier = Modifier.width(6.dp))
 					Text("切回【智能自动模式】", fontWeight = FontWeight.Bold)
 				}
