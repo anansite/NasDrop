@@ -147,7 +147,7 @@ class DlnaManager private constructor(
 								}
 							}
 						}
-					} catch (_: java.net.SocketTimeoutException) {
+					} catch (e: java.net.SocketTimeoutException) {
 						// 循环超时继续等待直至 3.5 秒
 					} catch (e: Exception) {
 						break
@@ -159,7 +159,7 @@ class DlnaManager private constructor(
 				socket?.close()
 				try {
 					if (multicastLock?.isHeld == true) multicastLock.release()
-				} catch (_: Exception) {}
+				} catch (e: Exception) {}
 				_isSearching.value = false
 				_devices.value = discoveredMap.values.toList()
 				if (discoveredMap.isEmpty()) {
