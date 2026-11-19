@@ -161,8 +161,11 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -2134,52 +2137,79 @@ private fun PhotoTimelineContent(
 				modifier = Modifier
 					.fillMaxSize()
 					.pointerInput(isMulti) {
-						detectDragGesturesAfterLongPress(
-							onDragStart = { offset ->
-								val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-									offset.x.toInt() in info.offset.x..(info.offset.x + info.size.width) &&
-									offset.y.toInt() in info.offset.y..(info.offset.y + info.size.height)
+						awaitEachGesture {
+							val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+							val startPos = down.position
+							val startTime = System.currentTimeMillis()
+							var isDragSelecting = false
+							var targetSelectState = true
+							var lastPath: String? = null
+
+							while (true) {
+								val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+								val change = event.changes.firstOrNull { it.id == down.id } ?: break
+								if (!change.pressed) {
+									break
 								}
-								val keyPath = hit?.key as? String
-								if (keyPath != null && keyPath.startsWith("/")) {
-									dragSelectActive = true
-									val currentlySelected = selectedPaths.contains(keyPath)
-									dragSelectInitialState = !currentlySelected
-									lastDraggedItemPath = keyPath
-									if (!isMulti) {
-										val entry = groups.flatMap { it.items }.firstOrNull { it.path == keyPath }
-										if (entry != null) onEnterMultiSelect(entry)
-									} else {
-										onToggleSelectByPath?.invoke(keyPath, dragSelectInitialState)
+
+								val elapsed = System.currentTimeMillis() - startTime
+								val dx = change.position.x - startPos.x
+								val dy = change.position.y - startPos.y
+								val distSq = dx * dx + dy * dy
+
+								if (isMulti) {
+									// 已在多选模式下：手指横向或斜向滑动微小位移，立即开启连续滑选！
+									if (!isDragSelecting && distSq > 150) {
+										isDragSelecting = true
+										val initialItem = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+											startPos.x.toInt() in info.offset.x..(info.offset.x + info.size.width) &&
+											startPos.y.toInt() in info.offset.y..(info.offset.y + info.size.height)
+										}
+										val initialKey = initialItem?.key as? String
+										if (initialKey != null && initialKey.startsWith("/")) {
+											targetSelectState = !selectedPaths.contains(initialKey)
+											onToggleSelectByPath?.invoke(initialKey, targetSelectState)
+											lastPath = initialKey
+											haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+										}
 									}
-									haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+								} else {
+									// 未在多选模式下：手指按住不动达到 320ms，立即进入多选并顺势开启滑选！
+									if (!isDragSelecting && distSq < 400 && elapsed >= 320) {
+										val initialItem = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+											startPos.x.toInt() in info.offset.x..(info.offset.x + info.size.width) &&
+											startPos.y.toInt() in info.offset.y..(info.offset.y + info.size.height)
+										}
+										val initialKey = initialItem?.key as? String
+										if (initialKey != null && initialKey.startsWith("/")) {
+											val entry = groups.flatMap { it.items }.firstOrNull { it.path == initialKey }
+											if (entry != null) {
+												isDragSelecting = true
+												targetSelectState = true
+												lastPath = initialKey
+												onEnterMultiSelect(entry)
+												haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+											}
+										}
+									}
 								}
-							},
-							onDrag = { change, _ ->
-								if (dragSelectActive) {
+
+								if (isDragSelecting) {
 									change.consume()
 									val pos = change.position
 									val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
 										pos.x.toInt() in info.offset.x..(info.offset.x + info.size.width) &&
 										pos.y.toInt() in info.offset.y..(info.offset.y + info.size.height)
 									}
-									val keyPath = hit?.key as? String
-									if (keyPath != null && keyPath.startsWith("/") && keyPath != lastDraggedItemPath) {
-										lastDraggedItemPath = keyPath
-										onToggleSelectByPath?.invoke(keyPath, dragSelectInitialState)
+									val hitKey = hit?.key as? String
+									if (hitKey != null && hitKey.startsWith("/") && hitKey != lastPath) {
+										lastPath = hitKey
+										onToggleSelectByPath?.invoke(hitKey, targetSelectState)
 										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 									}
 								}
-							},
-							onDragEnd = {
-								dragSelectActive = false
-								lastDraggedItemPath = null
-							},
-							onDragCancel = {
-								dragSelectActive = false
-								lastDraggedItemPath = null
-							},
-						)
+							}
+						}
 					},
 			) {
 				groups.forEach { group ->

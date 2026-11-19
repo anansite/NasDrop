@@ -534,6 +534,7 @@ private fun ZoomableImage(
 		animationSpec = spring(stiffness = Spring.StiffnessMedium),
 		label = "dismiss_offset"
 	)
+	var lastTapTime by remember { mutableLongStateOf(0L) }
 	val context = LocalContext.current
 
 	// 点开默认立即拉取原图；原图就绪前以缩略图垫底秒开展示，并附带轻巧加载指示
@@ -560,30 +561,107 @@ private fun ZoomableImage(
 	Box(
 		modifier = Modifier
 			.fillMaxSize()
-			.pointerInput(scale <= 1.05f) {
-				if (scale <= 1.05f) {
-					detectVerticalDragGestures(
-						onVerticalDrag = { change, dragAmount ->
-							if (dragAmount > 0 || dismissOffsetY > 0) {
-								change.consume()
-								dismissOffsetY = (dismissOffsetY + dragAmount).coerceAtLeast(0f)
-							}
-						},
-						onDragEnd = {
-							if (dismissOffsetY > 160f) {
-								onDismiss()
-							} else {
-								dismissOffsetY = 0f
-							}
-						},
-						onDragCancel = {
-							dismissOffsetY = 0f
-						}
-					)
-				}
-			}
 			.pointerInput(Unit) {
-				detectTapGestures(onTap = { onToggleControls() })
+				awaitEachGesture {
+					val down = awaitFirstDown(requireUnconsumed = false)
+					val startTime = System.currentTimeMillis()
+					val startPos = down.position
+					var isDragging = false
+					var isPinching = false
+					var initialDistance = 0f
+					var initialScale = scale
+					var lastCentroid = startPos
+
+					while (true) {
+						val event = awaitPointerEvent()
+						val activePointers = event.changes.filter { it.pressed }
+
+						if (activePointers.isEmpty()) {
+							// 所有手指离开屏幕
+							val elapsed = System.currentTimeMillis() - startTime
+							if (isPinching) {
+								isPinching = false
+							} else if (dismissOffsetY > 0f) {
+								if (dismissOffsetY > 160f) {
+									onDismiss()
+								} else {
+									dismissOffsetY = 0f
+								}
+							} else if (!isDragging && elapsed < 350) {
+								val now = System.currentTimeMillis()
+								if (now - lastTapTime < 320) {
+									// 双击放大或复位手势
+									lastTapTime = 0L
+									if (scale > 1.05f) {
+										scale = 1f
+										dx = 0f
+										dy = 0f
+									} else {
+										scale = 2.5f
+									}
+								} else {
+									lastTapTime = now
+									onToggleControls()
+								}
+							}
+							break
+						}
+
+						if (activePointers.size >= 2) {
+							// 双指捏合自由缩放手势
+							isPinching = true
+							isDragging = true
+							dismissOffsetY = 0f
+
+							val p1 = activePointers[0].position
+							val p2 = activePointers[1].position
+							val distance = kotlin.math.hypot(p1.x - p2.x, p1.y - p2.y)
+							val centroid = androidx.compose.ui.geometry.Offset((p1.x + p2.x) / 2f, (p1.y + p2.y) / 2f)
+
+							if (initialDistance <= 0f) {
+								initialDistance = distance
+								initialScale = scale
+								lastCentroid = centroid
+							} else {
+								val zoomFactor = distance / initialDistance
+								val newScale = (initialScale * zoomFactor).coerceIn(1f, 5f)
+								scale = newScale
+								val pan = centroid - lastCentroid
+								dx += pan.x
+								dy += pan.y
+								lastCentroid = centroid
+								activePointers.forEach { it.consume() }
+							}
+						} else if (activePointers.size == 1) {
+							// 单指手势
+							val change = activePointers[0]
+							val totalDeltaX = change.position.x - startPos.x
+							val totalDeltaY = change.position.y - startPos.y
+							val distSq = totalDeltaX * totalDeltaX + totalDeltaY * totalDeltaY
+
+							if (!isDragging && distSq > 300) {
+								isDragging = true
+							}
+
+							if (isDragging && !isPinching) {
+								if (scale > 1.05f) {
+									// 放大状态下：单指滑动拖拽漫游图片画面
+									change.consume()
+									val moveDelta = change.position - change.previousPosition
+									dx += moveDelta.x
+									dy += moveDelta.y
+								} else {
+									// 原始 1x 比例下：下拉滑动手势退出大图
+									if ((totalDeltaY > 0 && totalDeltaY > kotlin.math.abs(totalDeltaX) * 1.2f) || dismissOffsetY > 0f) {
+										change.consume()
+										val moveDeltaY = change.position.y - change.previousPosition.y
+										dismissOffsetY = (dismissOffsetY + moveDeltaY).coerceAtLeast(0f)
+									}
+								}
+							}
+						}
+					}
+				}
 			},
 		contentAlignment = Alignment.Center,
 	) {
@@ -625,37 +703,6 @@ private fun ZoomableImage(
 						scaleY = scale * (1f - dragFraction)
 						translationX = dx
 						translationY = dy + animatedDismissOffsetY
-					}
-					.then(
-						if (scale > 1.05f) {
-							Modifier.pointerInput(scale > 1.05f) {
-								detectTransformGestures { _, pan, zoom, _ ->
-									val newScale = (scale * zoom).coerceIn(1f, 6f)
-									scale = newScale
-									if (newScale > 1f) {
-										dx += pan.x
-										dy += pan.y
-									} else {
-										dx = 0f
-										dy = 0f
-									}
-								}
-							}
-						} else {
-							Modifier
-						}
-					)
-					.pointerInput(Unit) {
-						detectTapGestures(
-							onTap = { onToggleControls() },
-							onDoubleTap = {
-								if (scale > 1.05f) {
-									scale = 1f; dx = 0f; dy = 0f
-								} else {
-									scale = 2.5f
-								}
-							},
-						)
 					},
 			)
 		}
