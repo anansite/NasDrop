@@ -1879,9 +1879,6 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 				}
 			}
 		}
-				}
-			}
-		}
 	}
 }
 
