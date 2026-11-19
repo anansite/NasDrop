@@ -533,14 +533,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val request = withContext(Dispatchers.Main) {
 			((directoryRequests[dir] ?: 0L) + 1L).also { directoryRequests[dir] = it }
 		}
-		val c = clientOf(configuration)
-		val fresh = withContext(Dispatchers.IO) { c.list(dir) }
+		val (fresh, effectivePath) = withContext(Dispatchers.IO) {
+			val c = clientOf(configuration)
+			c.list(dir) to c.effectiveBase.encodedPath
+		}
 		withContext(Dispatchers.Main) {
 			if (directoryRequests[dir] == request && (observedConfiguration == null || observedConfiguration == configuration)) applyDirectoryListing(dir, fresh)
 		}
 		val currentUrl = configuration.baseUrl.toHttpUrlOrNull()
-		if (dir.isEmpty() && currentUrl != null && currentUrl.encodedPath != c.effectiveBase.encodedPath) {
-			val corrected = currentUrl.newBuilder().encodedPath(c.effectiveBase.encodedPath).build().toString()
+		if (dir.isEmpty() && currentUrl != null && currentUrl.encodedPath != effectivePath) {
+			val corrected = currentUrl.newBuilder().encodedPath(effectivePath).build().toString()
 			viewModelScope.launch {
 				val cur = app.prefs.current()
 				if (cur.baseUrl != corrected) {
