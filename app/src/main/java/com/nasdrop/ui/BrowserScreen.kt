@@ -40,7 +40,9 @@ import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -462,6 +464,7 @@ fun BrowserScreen(
 								selectedPaths = vm.selectedPaths,
 								onToggleSelect = { vm.toggleSelect(it) },
 								onEnterMultiSelect = { vm.enterMultiSelect(it) },
+								onUpdateSelectionPaths = { vm.updateSelectionByPaths(it) },
 								onToggleSelectByPath = { path, select -> vm.toggleSelectByPath(path, select) },
 								onToggleSelectGroup = { group, select -> vm.toggleSelectGroup(group, select) },
 								onOpenAction = { activeEntryForAction = it },
@@ -485,6 +488,7 @@ fun BrowserScreen(
 								selectedPaths = vm.selectedPaths,
 								onToggleSelect = { vm.toggleSelect(it) },
 								onEnterMultiSelect = { vm.enterMultiSelect(it) },
+								onUpdateSelectionPaths = { vm.updateSelectionByPaths(it) },
 								onOpenAction = { activeEntryForAction = it },
 								onSelectMediaFolder = { vm.openMedia(it) },
 								onDeleteMediaFolder = { folder -> activeFolderForDelete = Pair(folder, false) },
@@ -1592,7 +1596,8 @@ private fun MultiSelectHeaderStrip(
 	Surface(
 		shape = RoundedCornerShape(12.dp),
 		color = MaterialTheme.colorScheme.surface,
-		shadowElevation = 1.dp,
+		shadowElevation = 0.5.dp,
+		border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
 		modifier = Modifier
 			.fillMaxWidth()
 			.padding(horizontal = 14.dp, vertical = 4.dp),
@@ -1602,12 +1607,19 @@ private fun MultiSelectHeaderStrip(
 			verticalAlignment = Alignment.CenterVertically,
 			horizontalArrangement = Arrangement.SpaceBetween,
 		) {
-			Text(
-				text = "已选中 $selectedCount 项",
-				fontSize = 13.sp,
-				fontWeight = FontWeight.Bold,
-				color = MaterialTheme.colorScheme.onSurface,
-			)
+			Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+				Text(
+					text = "已选 $selectedCount 项",
+					fontSize = 13.sp,
+					fontWeight = FontWeight.Bold,
+					color = MaterialTheme.colorScheme.onSurface,
+				)
+				Text(
+					text = "· 可长按滑动连选",
+					fontSize = 11.sp,
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+				)
+			}
 			Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
 				Text(
 					text = "全选",
@@ -1710,6 +1722,166 @@ private fun BrowserStatus(
 	}
 }
 
+/**
+ * 为 LazyColumn 赋予流畅的滑动多选能力 (包含长按进入多选、顺势拖动连选、边界自动滚屏、震动反馈)
+ */
+@Composable
+private fun Modifier.dragSelectableList(
+	state: LazyListState,
+	items: List<DavEntry>,
+	isMulti: Boolean,
+	selectedEntries: Set<DavEntry>,
+	onEnterMultiSelect: (DavEntry) -> Unit,
+	onUpdateSelection: (Set<DavEntry>) -> Unit,
+): Modifier {
+	val haptic = LocalHapticFeedback.current
+	val scope = rememberCoroutineScope()
+	var dragStartIndex by remember { mutableIntStateOf(-1) }
+	var dragCurrentIndex by remember { mutableIntStateOf(-1) }
+	var baseSelection by remember { mutableStateOf<Set<DavEntry>>(emptySet()) }
+	var isDragging by remember { mutableStateOf(false) }
+
+	return this.pointerInput(items, isMulti, selectedEntries) {
+		detectDragGesturesAfterLongPress(
+			onDragStart = { offset ->
+				val intY = offset.y.toInt()
+				val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+					intY in info.offset..(info.offset + info.size)
+				}
+				if (hit != null && hit.index in items.indices) {
+					val entry = items[hit.index]
+					dragStartIndex = hit.index
+					dragCurrentIndex = hit.index
+					baseSelection = if (isMulti) selectedEntries else emptySet()
+					isDragging = true
+					haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+					if (!isMulti) {
+						onEnterMultiSelect(entry)
+					} else {
+						onUpdateSelection(baseSelection + entry)
+					}
+				}
+			},
+			onDrag = { change, _ ->
+				if (isDragging && dragStartIndex in items.indices) {
+					change.consume()
+					val intY = change.position.y.toInt()
+					val vh = state.layoutInfo.viewportSize.height.toFloat()
+					if (change.position.y < 120f) {
+						scope.launch { state.scrollBy(-25f) }
+					} else if (vh > 0f && change.position.y > vh - 120f) {
+						scope.launch { state.scrollBy(25f) }
+					}
+
+					val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+						intY in info.offset..(info.offset + info.size)
+					}
+					if (hit != null && hit.index in items.indices && hit.index != dragCurrentIndex) {
+						dragCurrentIndex = hit.index
+						val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
+						val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
+						val rangeSet = items.subList(start, end + 1).toSet()
+						onUpdateSelection(baseSelection + rangeSet)
+						haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+					}
+				}
+			},
+			onDragEnd = {
+				isDragging = false
+				dragStartIndex = -1
+				dragCurrentIndex = -1
+			},
+			onDragCancel = {
+				isDragging = false
+				dragStartIndex = -1
+				dragCurrentIndex = -1
+			},
+		)
+	}
+}
+
+/**
+ * 为 LazyVerticalGrid 赋予流畅的滑动多选能力
+ */
+@Composable
+private fun Modifier.dragSelectableGrid(
+	state: LazyGridState,
+	items: List<DavEntry>,
+	isMulti: Boolean,
+	selectedEntries: Set<DavEntry>,
+	onEnterMultiSelect: (DavEntry) -> Unit,
+	onUpdateSelection: (Set<DavEntry>) -> Unit,
+): Modifier {
+	val haptic = LocalHapticFeedback.current
+	val scope = rememberCoroutineScope()
+	var dragStartIndex by remember { mutableIntStateOf(-1) }
+	var dragCurrentIndex by remember { mutableIntStateOf(-1) }
+	var baseSelection by remember { mutableStateOf<Set<DavEntry>>(emptySet()) }
+	var isDragging by remember { mutableStateOf(false) }
+
+	return this.pointerInput(items, isMulti, selectedEntries) {
+		detectDragGesturesAfterLongPress(
+			onDragStart = { offset ->
+				val px = offset.x.toInt()
+				val py = offset.y.toInt()
+				val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+					px in info.offset.x..(info.offset.x + info.size.width) &&
+					py in info.offset.y..(info.offset.y + info.size.height)
+				}
+				if (hit != null && hit.index in items.indices) {
+					val entry = items[hit.index]
+					dragStartIndex = hit.index
+					dragCurrentIndex = hit.index
+					baseSelection = if (isMulti) selectedEntries else emptySet()
+					isDragging = true
+					haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+					if (!isMulti) {
+						onEnterMultiSelect(entry)
+					} else {
+						onUpdateSelection(baseSelection + entry)
+					}
+				}
+			},
+			onDrag = { change, _ ->
+				if (isDragging && dragStartIndex in items.indices) {
+					change.consume()
+					val px = change.position.x.toInt()
+					val py = change.position.y.toInt()
+					val vh = state.layoutInfo.viewportSize.height.toFloat()
+					if (change.position.y < 120f) {
+						scope.launch { state.scrollBy(-25f) }
+					} else if (vh > 0f && change.position.y > vh - 120f) {
+						scope.launch { state.scrollBy(25f) }
+					}
+
+					val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+						px in info.offset.x..(info.offset.x + info.size.width) &&
+						py in info.offset.y..(info.offset.y + info.size.height)
+					}
+					if (hit != null && hit.index in items.indices && hit.index != dragCurrentIndex) {
+						dragCurrentIndex = hit.index
+						val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
+						val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
+						val rangeSet = items.subList(start, end + 1).toSet()
+						onUpdateSelection(baseSelection + rangeSet)
+						haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+					}
+				}
+			},
+			onDragEnd = {
+				isDragging = false
+				dragStartIndex = -1
+				dragCurrentIndex = -1
+			},
+			onDragCancel = {
+				isDragging = false
+				dragStartIndex = -1
+				dragCurrentIndex = -1
+			},
+		)
+	}
+}
+
 @Composable
 private fun FileBrowserContent(
 	vm: BrowserViewModel,
@@ -1743,12 +1915,20 @@ private fun FileBrowserContent(
 
 	when (vm.viewMode) {
 		ViewMode.Cards -> {
-			// 夸克式极简纯净无框列表：纯白底、无卡片框、精致微留白、一屏容纳更多文件
+			// 夸克式极简纯净列表：白底微留白、细致缩进分割线、长按滑动多选
 			LazyColumn(
 				state = vm.fileListState,
 				modifier = Modifier
 					.fillMaxSize()
-					.background(MaterialTheme.colorScheme.surface),
+					.background(MaterialTheme.colorScheme.surface)
+					.dragSelectableList(
+						state = vm.fileListState,
+						items = items,
+						isMulti = isMulti,
+						selectedEntries = vm.selectedEntries,
+						onEnterMultiSelect = { vm.enterMultiSelect(it) },
+						onUpdateSelection = { vm.updateSelection(it) },
+					),
 			) {
 				items(items, key = { it.path }) { entry ->
 					val isSelected = vm.selectedEntries.contains(entry)
@@ -1756,10 +1936,13 @@ private fun FileBrowserContent(
 						modifier = Modifier
 							.fillMaxWidth()
 							.background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-							.combinedClickable(
-								onClick = { onOpenEntry(entry) },
-								onLongClick = { onLongClickEntry(entry) },
-							)
+							.clickable {
+								if (isMulti) {
+									vm.toggleSelect(entry)
+								} else {
+									onOpenEntry(entry)
+								}
+							}
 							.padding(horizontal = 14.dp, vertical = 7.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1811,7 +1994,11 @@ private fun FileBrowserContent(
 							}
 						}
 					}
-					HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 0.5.dp)
+					HorizontalDivider(
+						color = MaterialTheme.colorScheme.surfaceVariant,
+						thickness = 0.5.dp,
+						modifier = Modifier.padding(start = 68.dp),
+					)
 				}
 
 				item {
@@ -1836,7 +2023,15 @@ private fun FileBrowserContent(
 				state = vm.fileCompactState,
 				modifier = Modifier
 					.fillMaxSize()
-					.background(MaterialTheme.colorScheme.surface),
+					.background(MaterialTheme.colorScheme.surface)
+					.dragSelectableList(
+						state = vm.fileCompactState,
+						items = items,
+						isMulti = isMulti,
+						selectedEntries = vm.selectedEntries,
+						onEnterMultiSelect = { vm.enterMultiSelect(it) },
+						onUpdateSelection = { vm.updateSelection(it) },
+					),
 			) {
 				items(items, key = { it.path }) { entry ->
 					val isSelected = vm.selectedEntries.contains(entry)
@@ -1844,10 +2039,13 @@ private fun FileBrowserContent(
 						modifier = Modifier
 							.fillMaxWidth()
 							.background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-							.combinedClickable(
-								onClick = { onOpenEntry(entry) },
-								onLongClick = { onLongClickEntry(entry) },
-							)
+							.clickable {
+								if (isMulti) {
+									vm.toggleSelect(entry)
+								} else {
+									onOpenEntry(entry)
+								}
+							}
 							.padding(horizontal = 14.dp, vertical = 8.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1890,7 +2088,11 @@ private fun FileBrowserContent(
 							}
 						}
 					}
-					HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 0.5.dp)
+					HorizontalDivider(
+						color = MaterialTheme.colorScheme.surfaceVariant,
+						thickness = 0.5.dp,
+						modifier = Modifier.padding(start = 56.dp),
+					)
 				}
 			}
 		}
@@ -1902,7 +2104,16 @@ private fun FileBrowserContent(
 				contentPadding = PaddingValues(14.dp),
 				horizontalArrangement = Arrangement.spacedBy(10.dp),
 				verticalArrangement = Arrangement.spacedBy(10.dp),
-				modifier = Modifier.fillMaxSize(),
+				modifier = Modifier
+					.fillMaxSize()
+					.dragSelectableGrid(
+						state = vm.fileGridState,
+						items = items,
+						isMulti = isMulti,
+						selectedEntries = vm.selectedEntries,
+						onEnterMultiSelect = { vm.enterMultiSelect(it) },
+						onUpdateSelection = { vm.updateSelection(it) },
+					),
 			) {
 				items(items, key = { it.path }) { entry ->
 					val isSelected = vm.selectedEntries.contains(entry)
@@ -1912,10 +2123,13 @@ private fun FileBrowserContent(
 						elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
 						modifier = Modifier
 							.fillMaxWidth()
-							.combinedClickable(
-								onClick = { onOpenEntry(entry) },
-								onLongClick = { onLongClickEntry(entry) },
-							),
+							.clickable {
+								if (isMulti) {
+									vm.toggleSelect(entry)
+								} else {
+									onOpenEntry(entry)
+								}
+							},
 					) {
 						Column(
 							modifier = Modifier.padding(10.dp),
@@ -2034,6 +2248,7 @@ private fun PhotoTimelineContent(
 	selectedPaths: Set<String> = emptySet(),
 	onToggleSelect: (DavEntry) -> Unit = {},
 	onEnterMultiSelect: (DavEntry) -> Unit = {},
+	onUpdateSelectionPaths: ((Set<String>) -> Unit)? = null,
 	onToggleSelectByPath: ((String, Boolean) -> Unit)? = null,
 	onToggleSelectGroup: ((com.nasdrop.TimelineGroup, Boolean) -> Unit)? = null,
 	onOpenAction: (DavEntry) -> Unit = {},
@@ -2046,9 +2261,13 @@ private fun PhotoTimelineContent(
 	onOpenImage: (DavEntry) -> Unit,
 ) {
 	val haptic = LocalHapticFeedback.current
-	var dragSelectActive by remember { mutableStateOf(false) }
-	var dragSelectInitialState by remember { mutableStateOf(true) }
-	var lastDraggedItemPath by remember { mutableStateOf<String?>(null) }
+	val scope = rememberCoroutineScope()
+	val allPhotos = remember(groups) { groups.flatMap { it.items } }
+	var dragStartIndex by remember { mutableIntStateOf(-1) }
+	var dragCurrentIndex by remember { mutableIntStateOf(-1) }
+	var baseSelection by remember { mutableStateOf<Set<String>>(emptySet()) }
+	var isDragging by remember { mutableStateOf(false) }
+
 	Column(modifier = Modifier.fillMaxSize()) {
 		// 1. 顶部子相册分类横滑条（紧凑轻盈胶囊）
 		LazyRow(
@@ -2136,80 +2355,74 @@ private fun PhotoTimelineContent(
 				verticalArrangement = Arrangement.spacedBy(3.dp),
 				modifier = Modifier
 					.fillMaxSize()
-					.pointerInput(isMulti) {
-						awaitEachGesture {
-							val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
-							val startPos = down.position
-							val startTime = System.currentTimeMillis()
-							var isDragSelecting = false
-							var targetSelectState = true
-							var lastPath: String? = null
-
-							while (true) {
-								val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-								val change = event.changes.firstOrNull { it.id == down.id } ?: break
-								if (!change.pressed) {
-									break
+					.pointerInput(allPhotos, isMulti, selectedPaths) {
+						detectDragGesturesAfterLongPress(
+							onDragStart = { offset ->
+								val px = offset.x.toInt()
+								val py = offset.y.toInt()
+								val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+									px in info.offset.x..(info.offset.x + info.size.width) &&
+									py in info.offset.y..(info.offset.y + info.size.height)
 								}
-
-								val elapsed = System.currentTimeMillis() - startTime
-								val dx = change.position.x - startPos.x
-								val dy = change.position.y - startPos.y
-								val distSq = dx * dx + dy * dy
-
-								if (isMulti) {
-									// 已在多选模式下：手指横向或斜向滑动微小位移，立即开启连续滑选！
-									if (!isDragSelecting && distSq > 150) {
-										isDragSelecting = true
-										val initialItem = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-											startPos.x.toInt() in info.offset.x..(info.offset.x + info.size.width) &&
-											startPos.y.toInt() in info.offset.y..(info.offset.y + info.size.height)
-										}
-										val initialKey = initialItem?.key as? String
-										if (initialKey != null && initialKey.startsWith("/")) {
-											targetSelectState = !selectedPaths.contains(initialKey)
-											onToggleSelectByPath?.invoke(initialKey, targetSelectState)
-											lastPath = initialKey
-											haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-										}
-									}
-								} else {
-									// 未在多选模式下：手指按住不动达到 320ms，立即进入多选并顺势开启滑选！
-									if (!isDragSelecting && distSq < 400 && elapsed >= 320) {
-										val initialItem = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-											startPos.x.toInt() in info.offset.x..(info.offset.x + info.size.width) &&
-											startPos.y.toInt() in info.offset.y..(info.offset.y + info.size.height)
-										}
-										val initialKey = initialItem?.key as? String
-										if (initialKey != null && initialKey.startsWith("/")) {
-											val entry = groups.flatMap { it.items }.firstOrNull { it.path == initialKey }
-											if (entry != null) {
-												isDragSelecting = true
-												targetSelectState = true
-												lastPath = initialKey
-												onEnterMultiSelect(entry)
-												haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-											}
+								val hitPath = hit?.key as? String
+								if (hitPath != null && hitPath.startsWith("/")) {
+									val idx = allPhotos.indexOfFirst { it.path == hitPath }
+									if (idx >= 0) {
+										val entry = allPhotos[idx]
+										dragStartIndex = idx
+										dragCurrentIndex = idx
+										baseSelection = if (isMulti) selectedPaths else emptySet()
+										isDragging = true
+										haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+										if (!isMulti) {
+											onEnterMultiSelect(entry)
+										} else {
+											onUpdateSelectionPaths?.invoke(baseSelection + hitPath)
 										}
 									}
 								}
-
-								if (isDragSelecting) {
+							},
+							onDrag = { change, _ ->
+								if (isDragging && dragStartIndex in allPhotos.indices) {
 									change.consume()
-									val pos = change.position
-									val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-										pos.x.toInt() in info.offset.x..(info.offset.x + info.size.width) &&
-										pos.y.toInt() in info.offset.y..(info.offset.y + info.size.height)
+									val px = change.position.x.toInt()
+									val py = change.position.y.toInt()
+									val vh = state.layoutInfo.viewportSize.height.toFloat()
+									if (change.position.y < 120f) {
+										scope.launch { state.scrollBy(-25f) }
+									} else if (vh > 0f && change.position.y > vh - 120f) {
+										scope.launch { state.scrollBy(25f) }
 									}
-									val hitKey = hit?.key as? String
-									if (hitKey != null && hitKey.startsWith("/") && hitKey != lastPath) {
-										lastPath = hitKey
-										onToggleSelectByPath?.invoke(hitKey, targetSelectState)
-										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+
+									val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+										px in info.offset.x..(info.offset.x + info.size.width) &&
+										py in info.offset.y..(info.offset.y + info.size.height)
+									}
+									val hitPath = hit?.key as? String
+									if (hitPath != null && hitPath.startsWith("/")) {
+										val idx = allPhotos.indexOfFirst { it.path == hitPath }
+										if (idx >= 0 && idx != dragCurrentIndex) {
+											dragCurrentIndex = idx
+											val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(allPhotos.indices)
+											val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(allPhotos.indices)
+											val rangePaths = allPhotos.subList(start, end + 1).map { it.path }.toSet()
+											onUpdateSelectionPaths?.invoke(baseSelection + rangePaths)
+											haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+										}
 									}
 								}
-							}
-						}
+							},
+							onDragEnd = {
+								isDragging = false
+								dragStartIndex = -1
+								dragCurrentIndex = -1
+							},
+							onDragCancel = {
+								isDragging = false
+								dragStartIndex = -1
+								dragCurrentIndex = -1
+							},
+						)
 					},
 			) {
 				groups.forEach { group ->
@@ -2272,20 +2485,13 @@ private fun PhotoTimelineContent(
 								.clip(RoundedCornerShape(cornerRadius))
 								.then(if (borderStroke != null) Modifier.border(borderStroke, RoundedCornerShape(cornerRadius)) else Modifier)
 								.background(MaterialTheme.colorScheme.outlineVariant)
-								.combinedClickable(
-									onClick = {
-										if (isMulti) {
-											onToggleSelect(item)
-										} else {
-											onOpenImage(item)
-										}
-									},
-									onLongClick = {
-										if (!isMulti) {
-											onEnterMultiSelect(item)
-										}
+								.clickable {
+									if (isMulti) {
+										onToggleSelect(item)
+									} else {
+										onOpenImage(item)
 									}
-								),
+								},
 						) {
 							val thumbTarget = urlOf(item.path)
 							var thumbFailed by remember(item.path) { mutableStateOf(false) }
@@ -2355,6 +2561,7 @@ private fun MediaStreamContent(
 	selectedPaths: Set<String> = emptySet(),
 	onToggleSelect: (DavEntry) -> Unit = {},
 	onEnterMultiSelect: (DavEntry) -> Unit = {},
+	onUpdateSelectionPaths: ((Set<String>) -> Unit)? = null,
 	onOpenAction: (DavEntry) -> Unit = {},
 	onSelectMediaFolder: (String) -> Unit,
 	onDeleteMediaFolder: (DavEntry) -> Unit,
@@ -2448,7 +2655,16 @@ private fun MediaStreamContent(
 				contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
 				horizontalArrangement = Arrangement.spacedBy(10.dp),
 				verticalArrangement = Arrangement.spacedBy(10.dp),
-				modifier = Modifier.fillMaxSize(),
+				modifier = Modifier
+					.fillMaxSize()
+					.dragSelectableGrid(
+						state = state,
+						items = videos,
+						isMulti = isMulti,
+						selectedEntries = videos.filter { selectedPaths.contains(it.path) }.toSet(),
+						onEnterMultiSelect = onEnterMultiSelect,
+						onUpdateSelection = { set -> onUpdateSelectionPaths?.invoke(set.map { it.path }.toSet()) },
+					),
 			) {
 				items(videos, key = { it.path }) { video ->
 					val isSelected = selectedPaths.contains(video.path)
@@ -2458,20 +2674,13 @@ private fun MediaStreamContent(
 						elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
 						modifier = Modifier
 							.fillMaxWidth()
-							.combinedClickable(
-								onClick = {
-									if (isMulti) {
-										onToggleSelect(video)
-									} else {
-										onOpenVideo(video)
-									}
-								},
-								onLongClick = {
-									if (!isMulti) {
-										onEnterMultiSelect(video)
-									}
+							.clickable {
+								if (isMulti) {
+									onToggleSelect(video)
+								} else {
+									onOpenVideo(video)
 								}
-							),
+							},
 					) {
 						Column {
 							// 16:9 院线质感海报视窗：优先展示服务端缩略图（OpenList type=thumb，真图片），
@@ -2914,8 +3123,8 @@ private fun NetworkManagerSheet(
 					Text(
 						text = when {
 							routeInfo.isLanDirect -> "当前通过本地局域网高速直连，物理延迟极低，跑满局域网最高带宽。"
-							routeInfo.isDirect && !routeInfo.isRelay -> "当前已成功建立 P2P 点对点直连打洞，流量直接点对点传输，不走中继服务器。"
-							routeInfo.isRelay -> "当前通过 Tailscale DERP 中继转发，速度受服务器带宽限制。可点击下方「强制打洞直连」促成双方 P2P 直连。"
+							routeInfo.isDirect && !routeInfo.isRelay -> "当前已建立端到端极速直连，直接与 NAS 服务器高速传输，不经过第三方中继。"
+							routeInfo.isRelay -> "当前通过远程中继线路连接。可点击下方「极速直连加速」尝试切换为高速端到端直连。"
 							else -> routeInfo.label.ifBlank { "当前正在检测网络链路状态…" }
 						},
 						fontSize = 12.sp,
@@ -2934,7 +3143,7 @@ private fun NetworkManagerSheet(
 
 			Spacer(modifier = Modifier.height(14.dp))
 
-			// 核心主操作：强制打洞直连（优先促成 Tailscale P2P 直连）
+			// 核心主操作：极速直连加速（优先促成高速端到端直连）
 			Button(
 				onClick = onTriggerPunch,
 				colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
@@ -2946,7 +3155,7 @@ private fun NetworkManagerSheet(
 				Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
 				Spacer(modifier = Modifier.width(6.dp))
 				Text(
-					text = "⚡ 立即强制打洞直连 (P2P)",
+					text = "⚡ 立即极速直连加速 (高速通道)",
 					fontWeight = FontWeight.Bold,
 					color = MaterialTheme.colorScheme.onPrimary,
 				)

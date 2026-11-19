@@ -368,162 +368,82 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 				}
 			}
 
-			// ==================== 卡片 3: 直连与局域网传输 ====================
+			// ==================== 卡片 3: 直连与局域网传输 (极简夸克风格) ====================
 			Card(
-				shape = RoundedCornerShape(18.dp),
+				shape = RoundedCornerShape(16.dp),
 				colors = CardDefaults.cardColors(containerColor = colors.surface),
-				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+				elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
 				modifier = Modifier.fillMaxWidth(),
 			) {
 				Column(modifier = Modifier.padding(16.dp)) {
-					Text(
-						text = "直连与局域网传输",
-						fontSize = 14.sp,
-						fontWeight = FontWeight.ExtraBold,
-						color = colors.onSurface,
-					)
-					Text(
-						text = "优先本地局域网高速传输，物理低延迟跑满带宽",
-						fontSize = 12.sp,
-						color = colors.onSurfaceVariant,
-					)
-					Spacer(modifier = Modifier.height(14.dp))
-
-					// 核心直连 / 局域网状态大卡片
 					val isLan = routeInfo.isLan || routeInfo.isLanDirect
 					val isDirect = routeInfo.isDirect && !routeInfo.isRelay
-					val heroBgColor = when {
+					val statusDotColor = when {
+						isLan -> Color(0xFF2E7D32)
+						isDirect -> Color(0xFF00796B)
+						routeInfo.isRelay -> Color(0xFFE65100)
+						else -> colors.onSurfaceVariant
+					}
+					val statusBgColor = when {
 						isLan -> Color(0xFFE8F5E9)
 						isDirect -> Color(0xFFE0F2F1)
 						routeInfo.isRelay -> Color(0xFFFFF3E0)
-						else -> Color(0xFFF5F5F5)
+						else -> colors.surfaceVariant.copy(alpha = 0.5f)
 					}
-					val heroBorderColor = when {
-						isLan -> Color(0xFF81C784)
-						isDirect -> Color(0xFF4DB6AC)
-						routeInfo.isRelay -> Color(0xFFFFB74D)
-						else -> colors.outlineVariant.copy(alpha = 0.5f)
-					}
-					val heroTextColor = when {
-						isLan -> Color(0xFF2E7D32)
-						isDirect -> Color(0xFF00695C)
-						routeInfo.isRelay -> Color(0xFFE65100)
-						else -> colors.onSurface
+					val statusLabel = when {
+						isLan -> "局域网直连"
+						isDirect -> "极速直连"
+						routeInfo.isRelay -> "远程中继"
+						else -> "未连接"
 					}
 
-					Surface(
-						shape = RoundedCornerShape(14.dp),
-						color = heroBgColor,
-						border = BorderStroke(1.dp, heroBorderColor),
+					Row(
 						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.SpaceBetween,
 					) {
-						Column(modifier = Modifier.padding(14.dp)) {
-							Row(
-								modifier = Modifier.fillMaxWidth(),
-								verticalAlignment = Alignment.CenterVertically,
-								horizontalArrangement = Arrangement.SpaceBetween,
-							) {
-								Row(
-									verticalAlignment = Alignment.CenterVertically,
-									horizontalArrangement = Arrangement.spacedBy(8.dp),
-								) {
-									Icon(
-										imageVector = when {
-											isLan -> Icons.Rounded.Home
-											isDirect -> Icons.Rounded.FlashOn
-											routeInfo.isRelay -> Icons.Rounded.Sync
-											else -> Icons.Rounded.WifiOff
-										},
-										contentDescription = null,
-										tint = heroTextColor,
-										modifier = Modifier.size(22.dp),
-									)
-									Text(
-										text = when {
-											isLan -> "本地局域网直连 (LAN)"
-											isDirect -> "原生系统直连 (Direct)"
-											routeInfo.isRelay -> "远程中继连接"
-											else -> "未建立直连"
-										},
-										fontSize = 15.sp,
-										fontWeight = FontWeight.Bold,
-										color = heroTextColor,
-									)
-								}
-
-								if (routeInfo.latencyMs > 0) {
-									Surface(
-										shape = RoundedCornerShape(8.dp),
-										color = heroTextColor.copy(alpha = 0.15f),
-									) {
-										Text(
-											text = "${routeInfo.latencyMs} ms",
-											fontSize = 12.sp,
-											fontWeight = FontWeight.ExtraBold,
-											color = heroTextColor,
-											modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-										)
-									}
-								}
-							}
-
-							Spacer(modifier = Modifier.height(8.dp))
-
+						Column(modifier = Modifier.weight(1f)) {
 							Text(
-								text = when {
-									isLan -> "⚡ 物理延迟极低，已跑满本地 Wi-Fi / 千兆局域网最高带宽，视频与大文件无损秒开。"
-									isDirect -> "⚡ 直接与 NAS 服务器建立通信，端到端高速传输，不经过任何第三方服务器中继。"
-									routeInfo.isRelay -> "当前处于中继连接，若在同一局域网内请点击下方「刷新直连检测」以切回极速局域网直连。"
-									else -> routeInfo.label.ifBlank { "当前未连入家庭 Wi-Fi 或 WebDAV 服务尚未连通。" }
-								},
-								fontSize = 12.sp,
-								color = heroTextColor.copy(alpha = 0.9f),
-								lineHeight = 17.sp,
+								text = "直连与局域网传输",
+								fontSize = 14.sp,
+								fontWeight = FontWeight.Bold,
+								color = colors.onSurface,
 							)
+							Text(
+								text = "优先本地局域网高速传输，物理低延迟跑满带宽",
+								fontSize = 11.sp,
+								color = colors.onSurfaceVariant,
+							)
+						}
 
-							if (routeInfo.endpoint.isNotBlank()) {
-								Spacer(modifier = Modifier.height(4.dp))
-								Text(
-									text = "连接端点: ${routeInfo.endpoint}",
-									fontSize = 11.sp,
-									color = heroTextColor.copy(alpha = 0.7f),
-								)
-							}
-
+						// 紧凑链路状态胶囊
+						Surface(
+							shape = RoundedCornerShape(14.dp),
+							color = statusBgColor,
+							onClick = { vm.reloadSettings() },
+						) {
 							Row(
-								modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-								horizontalArrangement = Arrangement.End,
 								verticalAlignment = Alignment.CenterVertically,
+								modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+								horizontalArrangement = Arrangement.spacedBy(4.dp),
 							) {
-								TextButton(
-									onClick = { vm.reloadSettings() },
-									enabled = !saving && !testing,
-								) {
-									Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(15.dp), tint = heroTextColor)
-									Spacer(modifier = Modifier.width(4.dp))
-									Text("刷新直连检测", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = heroTextColor)
-								}
-								if (!isLan && !isDirect) {
-									Spacer(modifier = Modifier.width(6.dp))
-									FilledTonalButton(
-										onClick = {
-											vm.punchHole { result ->
-												Toast.makeText(context, result, Toast.LENGTH_SHORT).show()
-											}
-										},
-										shape = RoundedCornerShape(10.dp),
-										contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-									) {
-										Icon(Icons.Rounded.FlashOn, contentDescription = null, modifier = Modifier.size(14.dp))
-										Spacer(modifier = Modifier.width(4.dp))
-										Text("直连打洞", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-									}
-								}
+								Box(
+									modifier = Modifier
+										.size(6.dp)
+										.clip(CircleShape)
+										.background(statusDotColor)
+								)
+								Text(
+									text = if (routeInfo.latencyMs > 0) "$statusLabel ${routeInfo.latencyMs}ms" else statusLabel,
+									fontSize = 11.sp,
+									fontWeight = FontWeight.SemiBold,
+									color = statusDotColor,
+								)
 							}
 						}
 					}
 
-					Spacer(modifier = Modifier.height(14.dp))
+					Spacer(modifier = Modifier.height(12.dp))
 
 					// 模式选择：聚焦直连与智能模式
 					Text(

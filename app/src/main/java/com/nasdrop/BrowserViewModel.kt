@@ -991,6 +991,22 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		selectedEntries = currentItems.toSet()
 	}
 
+	fun updateSelection(newSet: Set<DavEntry>) {
+		selectedEntries = newSet
+		if (newSet.isNotEmpty() && !isMultiSelectMode) {
+			isMultiSelectMode = true
+		}
+	}
+
+	fun updateSelectionByPaths(paths: Set<String>) {
+		val allKnown = (currentAlbumPhotos + filteredEntries + currentMediaVideos).distinctBy { it.path }
+		val newSet = allKnown.filter { paths.contains(it.path) }.toSet()
+		selectedEntries = newSet
+		if (newSet.isNotEmpty() && !isMultiSelectMode) {
+			isMultiSelectMode = true
+		}
+	}
+
 	fun toggleSelectByPath(path: String, select: Boolean) {
 		val found = currentAlbumPhotos.firstOrNull { it.path == path }
 			?: filteredEntries.firstOrNull { it.path == path }
