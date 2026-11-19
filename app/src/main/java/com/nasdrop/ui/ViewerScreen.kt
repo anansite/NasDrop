@@ -52,6 +52,7 @@ import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Cast
@@ -127,7 +128,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ButtonDefaults
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.nasdrop.NasDb
 import com.nasdrop.DavEntry
 import com.nasdrop.app
@@ -923,6 +928,17 @@ fun ModernVideoScrubber(
 	}
 }
 
+private fun setImmersiveFullscreen(activity: Activity?, enabled: Boolean) {
+	val window = activity?.window ?: return
+	val controller = WindowCompat.getInsetsController(window, window.decorView)
+	if (enabled) {
+		controller.hide(WindowInsetsCompat.Type.systemBars())
+		controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+	} else {
+		controller.show(WindowInsetsCompat.Type.systemBars())
+	}
+}
+
 /**
  * 商业级专业网盘视频播放器：
  * - 手势调节：左侧上下滑调节亮度、右侧上下滑调节音量、水平横滑快进快退预览
@@ -930,7 +946,8 @@ fun ModernVideoScrubber(
  * - 倍速切换：0.75x、1.0x、1.25x、1.5x、2.0x
  * - 画面比例切换：适应屏幕 (FIT) vs 铺满 (FILL) vs 居中缩放 (ZOOM)
  * - 悬浮手势 HUD 实时反馈
-	 * 播放器配置沿用 Media3 的 UnstableApi，在此入口显式确认以满足 Android Lint。
+ * - 沉浸式真全屏与无线投屏串流中心
+ * 播放器配置沿用 Media3 的 UnstableApi，在此入口显式确认以满足 Android Lint。
  */
 @Composable
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -950,10 +967,20 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 	var lastTapTimestamp by remember { mutableLongStateOf(0L) }
 	var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
 	var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+	var showCastSheet by remember { mutableStateOf(false) }
 
-	// 退出播放器时自动恢复系统方向
+	val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+	val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+	// 横屏联动沉浸式全屏（隐藏状态栏与虚拟导航键，100% 满屏无黑边沉浸）
+	LaunchedEffect(isLandscape) {
+		setImmersiveFullscreen(activity, isLandscape)
+	}
+
+	// 退出播放器时自动恢复系统方向与系统栏显示
 	DisposableEffect(Unit) {
 		onDispose {
+			setImmersiveFullscreen(activity, false)
 			activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
 		}
 	}
@@ -1316,26 +1343,16 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
-						// 投屏 / 外部播放按钮
+						// 投屏与串流直链中心按钮
 						IconButton(
 							onClick = {
 								lastInteractionTime = System.currentTimeMillis()
-								if (!url.isNullOrBlank()) {
-									try {
-										val intent = Intent(Intent.ACTION_VIEW).apply {
-											setDataAndType(Uri.parse(url), "video/*")
-											addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-										}
-										context.startActivity(Intent.createChooser(intent, "投屏 / 外部播放"))
-									} catch (e: Exception) {
-										Toast.makeText(context, "未找到支持投屏或外部播放的应用", Toast.LENGTH_SHORT).show()
-									}
-								}
+								showCastSheet = true
 							}
 						) {
 							Icon(
 								Icons.Rounded.Cast,
-								contentDescription = "投屏 / 外部播放",
+								contentDescription = "投屏与串流直链",
 								tint = OnMediaBackdrop,
 								modifier = Modifier.size(24.dp),
 							)
@@ -1471,27 +1488,73 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 							}
 						}
 
-						// 倍速切换药丸
-						val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
-						Surface(
-							shape = RoundedCornerShape(16.dp),
-							color = OnMediaBackdrop.copy(alpha = 0.2f),
-							onClick = {
-								val nextIdx = (speeds.indexOf(playbackSpeed) + 1) % speeds.size
-								val nextSpeed = speeds[nextIdx]
-								playbackSpeed = nextSpeed
-								normalPlaybackSpeed = nextSpeed
-								player.playbackParameters = PlaybackParameters(nextSpeed)
-								lastInteractionTime = System.currentTimeMillis()
-							},
+						// 画幅与倍速药丸组合
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(8.dp),
 						) {
-							Text(
-								text = if (playbackSpeed == 1.0f) "1.0x" else "${playbackSpeed}x",
-								color = OnMediaBackdrop,
-								fontSize = 12.sp,
-								fontWeight = FontWeight.Bold,
-								modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+							// 画幅比例切换药丸 (FIT 自适应 / ZOOM 居中裁剪铺满 / FILL 拉伸满屏)
+							val resizeModes = listOf(
+								Triple(AspectRatioFrameLayout.RESIZE_MODE_FIT, "自适应 (原始)", "FIT"),
+								Triple(AspectRatioFrameLayout.RESIZE_MODE_ZOOM, "居中裁剪铺满", "ZOOM"),
+								Triple(AspectRatioFrameLayout.RESIZE_MODE_FILL, "拉伸铺满全屏", "FILL")
 							)
+							Surface(
+								shape = RoundedCornerShape(16.dp),
+								color = OnMediaBackdrop.copy(alpha = 0.2f),
+								onClick = {
+									val currentIdx = resizeModes.indexOfFirst { it.first == resizeMode }.coerceAtLeast(0)
+									val next = resizeModes[(currentIdx + 1) % resizeModes.size]
+									resizeMode = next.first
+									hudText = "画幅: ${next.second}"
+									hudVisible = true
+									lastInteractionTime = System.currentTimeMillis()
+								},
+							) {
+								Row(
+									modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.spacedBy(4.dp),
+								) {
+									Icon(
+										Icons.Rounded.AspectRatio,
+										contentDescription = "画幅比例",
+										tint = OnMediaBackdrop,
+										modifier = Modifier.size(14.dp)
+									)
+									Text(
+										text = resizeModes.firstOrNull { it.first == resizeMode }?.third ?: "FIT",
+										color = OnMediaBackdrop,
+										fontSize = 12.sp,
+										fontWeight = FontWeight.Bold,
+									)
+								}
+							}
+
+							// 倍速切换药丸
+							val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+							Surface(
+								shape = RoundedCornerShape(16.dp),
+								color = OnMediaBackdrop.copy(alpha = 0.2f),
+								onClick = {
+									val nextIdx = (speeds.indexOf(playbackSpeed) + 1) % speeds.size
+									val nextSpeed = speeds[nextIdx]
+									playbackSpeed = nextSpeed
+									normalPlaybackSpeed = nextSpeed
+									player.playbackParameters = PlaybackParameters(nextSpeed)
+									hudText = "播放倍速: ${if (nextSpeed == 1.0f) "1.0X 正常" else "${nextSpeed}X"}"
+									hudVisible = true
+									lastInteractionTime = System.currentTimeMillis()
+								},
+							) {
+								Text(
+									text = if (playbackSpeed == 1.0f) "1.0x" else "${playbackSpeed}x",
+									color = OnMediaBackdrop,
+									fontSize = 12.sp,
+									fontWeight = FontWeight.Bold,
+									modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+								)
+							}
 						}
 					}
 				}
@@ -1522,6 +1585,135 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						fontSize = 12.sp,
 						fontWeight = FontWeight.Medium,
 					)
+				}
+			}
+		}
+
+		// 无线投屏与串流直链中心底部抽屉
+		if (showCastSheet) {
+			ModalBottomSheet(
+				onDismissRequest = { showCastSheet = false },
+				containerColor = MaterialTheme.colorScheme.surface,
+			) {
+				Column(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(horizontal = 24.dp)
+						.padding(bottom = 36.dp),
+					verticalArrangement = Arrangement.spacedBy(16.dp),
+				) {
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.SpaceBetween,
+					) {
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(10.dp),
+						) {
+							Surface(
+								shape = CircleShape,
+								color = MaterialTheme.colorScheme.primaryContainer,
+								modifier = Modifier.size(36.dp),
+							) {
+								Box(contentAlignment = Alignment.Center) {
+									Icon(
+										Icons.Rounded.Cast,
+										contentDescription = null,
+										tint = MaterialTheme.colorScheme.onPrimaryContainer,
+										modifier = Modifier.size(20.dp),
+									)
+								}
+							}
+							Text("无线投屏与串流中心", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+						}
+						IconButton(onClick = { showCastSheet = false }) {
+							Icon(Icons.Rounded.Close, contentDescription = "关闭")
+						}
+					}
+
+					// 卡片 1：串流直链秒播（支持电视盒、PotPlayer、Kodi、VLC 秒播）
+					Surface(
+						shape = RoundedCornerShape(16.dp),
+						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+						border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+						modifier = Modifier.fillMaxWidth(),
+					) {
+						Column(
+							modifier = Modifier.padding(16.dp),
+							verticalArrangement = Arrangement.spacedBy(10.dp),
+						) {
+							Row(
+								modifier = Modifier.fillMaxWidth(),
+								verticalAlignment = Alignment.CenterVertically,
+								horizontalArrangement = Arrangement.SpaceBetween,
+							) {
+								Text("视频串流直链 (HTTP Range / 原画秒播)", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+								Text("无损原画", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+							}
+							Text(
+								text = url ?: "暂无直链",
+								style = MaterialTheme.typography.bodySmall,
+								color = MaterialTheme.colorScheme.onSurfaceVariant,
+								maxLines = 2,
+								overflow = TextOverflow.Ellipsis,
+							)
+							Button(
+								onClick = {
+									if (!url.isNullOrBlank()) {
+										val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+										cm.setPrimaryClip(ClipData.newPlainText("视频直链", url))
+										Toast.makeText(context, "✅ 直链已复制！可粘贴到 TV/PotPlayer/Kodi/VLC 极速秒播", Toast.LENGTH_LONG).show()
+										showCastSheet = false
+									}
+								},
+								modifier = Modifier.fillMaxWidth(),
+								shape = RoundedCornerShape(12.dp),
+							) {
+								Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+								Spacer(modifier = Modifier.width(8.dp))
+								Text("一键复制串流直链 (TV/电脑直接播)")
+							}
+						}
+					}
+
+					// 卡片 2：唤起本机第三方播放器或投屏助手
+					Surface(
+						shape = RoundedCornerShape(16.dp),
+						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+						border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+						modifier = Modifier.fillMaxWidth(),
+					) {
+						Column(
+							modifier = Modifier.padding(16.dp),
+							verticalArrangement = Arrangement.spacedBy(10.dp),
+						) {
+							Text("本机播放器与投屏助手", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+							Text("调起系统应用选择器，使用 VLC、MX Player 或系统无线投屏助手播放", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+							OutlinedButton(
+								onClick = {
+									if (!url.isNullOrBlank()) {
+										try {
+											val intent = Intent(Intent.ACTION_VIEW).apply {
+												setDataAndType(Uri.parse(url), "video/*")
+												addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+											}
+											context.startActivity(Intent.createChooser(intent, "选择播放器或投屏设备"))
+											showCastSheet = false
+										} catch (e: Exception) {
+											Toast.makeText(context, "未找到可用的外部播放器", Toast.LENGTH_SHORT).show()
+										}
+									}
+								},
+								modifier = Modifier.fillMaxWidth(),
+								shape = RoundedCornerShape(12.dp),
+							) {
+								Icon(Icons.Rounded.PlayCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+								Spacer(modifier = Modifier.width(8.dp))
+								Text("唤起外部播放器 / 投屏助手")
+							}
+						}
+					}
 				}
 			}
 		}
