@@ -185,7 +185,6 @@ class MainActivity : ComponentActivity() {
 				}
 
 				is Route.Video -> {
-					BackHandler { route = Route.Browser }
 					VideoPlayer(
 						entry = r.entry,
 						url = vm.directUrlFor(r.entry.path),

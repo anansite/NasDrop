@@ -985,6 +985,15 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 	val configuration = androidx.compose.ui.platform.LocalConfiguration.current
 	val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
+	// 拦截系统返回键：横屏全屏时优先退出全屏回竖屏；竖屏时才退出播放器
+	BackHandler {
+		if (isLandscape) {
+			activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+		} else {
+			onBack()
+		}
+	}
+
 	// 横屏联动沉浸式全屏（隐藏状态栏与虚拟导航键，100% 满屏无黑边沉浸）
 	LaunchedEffect(isLandscape) {
 		setImmersiveFullscreen(activity, isLandscape)
@@ -1338,7 +1347,13 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						verticalAlignment = Alignment.CenterVertically,
 						modifier = Modifier.weight(1f),
 					) {
-						IconButton(onClick = onBack) {
+						IconButton(onClick = {
+							if (isLandscape) {
+								activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+							} else {
+								onBack()
+							}
+						}) {
 							Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = OnMediaBackdrop)
 						}
 						Text(
@@ -1643,9 +1658,9 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 								}
 							}
 							Column {
-								Text("无线投屏与串流中心", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+								Text("DLNA 电视投屏", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 								Text(
-									text = dlnaStatusMessage.ifBlank { "局域网 DLNA / UPnP 智能直投" },
+									text = dlnaStatusMessage.ifBlank { "局域网智能电视 · 盒子 · 投影仪直投" },
 									style = MaterialTheme.typography.labelSmall,
 									color = MaterialTheme.colorScheme.onSurfaceVariant,
 								)
@@ -1656,7 +1671,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						}
 					}
 
-					// 模块 1：投屏中状态与大屏播控卡片（如果有设备正在投屏）
+					// 投屏中状态与大屏播控卡片（如果有设备正在投屏）
 					if (activeDlnaDevice != null) {
 						Surface(
 							shape = RoundedCornerShape(16.dp),
@@ -1745,7 +1760,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						}
 					}
 
-					// 模块 2：局域网 DLNA 电视直投专区
+					// 局域网 DLNA 电视直投专区
 					Surface(
 						shape = RoundedCornerShape(16.dp),
 						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -1861,89 +1876,9 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 							}
 						}
 					}
-
-					// 模块 3：串流直链秒播（支持电视盒、PotPlayer、Kodi、VLC 秒播）
-					Surface(
-						shape = RoundedCornerShape(16.dp),
-						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-						border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-						modifier = Modifier.fillMaxWidth(),
-					) {
-						Column(
-							modifier = Modifier.padding(16.dp),
-							verticalArrangement = Arrangement.spacedBy(10.dp),
-						) {
-							Row(
-								modifier = Modifier.fillMaxWidth(),
-								verticalAlignment = Alignment.CenterVertically,
-								horizontalArrangement = Arrangement.SpaceBetween,
-							) {
-								Text("视频串流直链 (HTTP Range / 原画秒播)", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-								Text("无损原画", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-							}
-							Text(
-								text = url ?: "暂无直链",
-								style = MaterialTheme.typography.bodySmall,
-								color = MaterialTheme.colorScheme.onSurfaceVariant,
-								maxLines = 2,
-								overflow = TextOverflow.Ellipsis,
-							)
-							Button(
-								onClick = {
-									if (!url.isNullOrBlank()) {
-										val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-										cm?.setPrimaryClip(ClipData.newPlainText("视频直链", url))
-										Toast.makeText(context, "✅ 直链已复制！可粘贴到 TV/PotPlayer/Kodi/VLC 极速秒播", Toast.LENGTH_LONG).show()
-										showCastSheet = false
-									}
-								},
-								modifier = Modifier.fillMaxWidth(),
-								shape = RoundedCornerShape(12.dp),
-							) {
-								Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
-								Spacer(modifier = Modifier.width(8.dp))
-								Text("一键复制串流直链 (TV/电脑直接播)")
-							}
-						}
-					}
-
-					// 模块 4：唤起本机第三方播放器或投屏助手
-					Surface(
-						shape = RoundedCornerShape(16.dp),
-						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-						border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-						modifier = Modifier.fillMaxWidth(),
-					) {
-						Column(
-							modifier = Modifier.padding(16.dp),
-							verticalArrangement = Arrangement.spacedBy(10.dp),
-						) {
-							Text("本机播放器与投屏助手", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-							Text("调起系统应用选择器，使用 VLC、MX Player 或系统无线投屏助手播放", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-							OutlinedButton(
-								onClick = {
-									if (!url.isNullOrBlank()) {
-										try {
-											val intent = Intent(Intent.ACTION_VIEW).apply {
-												setDataAndType(Uri.parse(url), "video/*")
-												addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-											}
-											context.startActivity(Intent.createChooser(intent, "选择播放器或投屏设备"))
-											showCastSheet = false
-										} catch (e: Exception) {
-											Toast.makeText(context, "未找到可用的外部播放器", Toast.LENGTH_SHORT).show()
-										}
-									}
-								},
-								modifier = Modifier.fillMaxWidth(),
-								shape = RoundedCornerShape(12.dp),
-							) {
-								Icon(Icons.Rounded.PlayCircle, contentDescription = null, modifier = Modifier.size(18.dp))
-								Spacer(modifier = Modifier.width(8.dp))
-								Text("唤起外部播放器 / 投屏助手")
-							}
-						}
-					}
+				}
+			}
+		}
 				}
 			}
 		}
