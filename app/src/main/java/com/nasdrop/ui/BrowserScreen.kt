@@ -861,12 +861,28 @@ private fun CompactNetworkBadge(routeInfo: RouteInfo, onClick: () -> Unit) {
 				"中继",
 			)
 		}
+		routeInfo.label.contains("等待登录") -> {
+			Quadruple(
+				Color(0xFFFFF8E1),
+				Color(0xFFF57F17),
+				Color(0xFFFBC02D),
+				"待登录",
+			)
+		}
+		routeInfo.label.contains("不可达") || routeInfo.label.contains("异常") || routeInfo.label.contains("失败") -> {
+			Quadruple(
+				Color(0xFFFFEBEE),
+				Color(0xFFC62828),
+				Color(0xFFE53935),
+				"未连通",
+			)
+		}
 		else -> {
 			Quadruple(
 				Color(0xFFE3F2FD),
 				Color(0xFF1565C0),
 				Color(0xFF1E88E5),
-				"连接中",
+				if (routeInfo.label.isNotBlank() && !routeInfo.label.contains("正在")) "连通中" else "连接中",
 			)
 		}
 	}
@@ -933,12 +949,28 @@ private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
 				"中继代理",
 			)
 		}
+		routeInfo.label.contains("等待登录") -> {
+			Quadruple(
+				Color(0xFFFFF8E1),
+				Color(0xFFF57F17),
+				Color(0xFFFBC02D),
+				"Tailscale 待登录",
+			)
+		}
+		routeInfo.label.contains("不可达") || routeInfo.label.contains("异常") || routeInfo.label.contains("失败") -> {
+			Quadruple(
+				Color(0xFFFFEBEE),
+				Color(0xFFC62828),
+				Color(0xFFE53935),
+				routeInfo.label,
+			)
+		}
 		else -> {
 			Quadruple(
 				Color(0xFFE3F2FD),
 				Color(0xFF1565C0),
 				Color(0xFF1E88E5),
-				"正在连接…",
+				routeInfo.label.ifBlank { "正在连接…" },
 			)
 		}
 	}
@@ -2514,7 +2546,7 @@ private fun NetworkManagerSheet(
 				Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
 				Spacer(modifier = Modifier.width(6.dp))
 				Text(
-					text = if (currentMode == com.nasdrop.ConnectionMode.Direct) "探测直连连通性" else "⚡ 立即强制打洞直连 (P2P)",
+					text = "⚡ 立即强制打洞直连 (P2P)",
 					fontWeight = FontWeight.Bold,
 					color = MaterialTheme.colorScheme.onPrimary,
 				)
@@ -2533,7 +2565,7 @@ private fun NetworkManagerSheet(
 				) {
 					Icon(Icons.Rounded.FlashOn, contentDescription = null)
 					Spacer(modifier = Modifier.width(6.dp))
-					Text("切换为【局域网/系统直连】", fontWeight = FontWeight.Bold)
+					Text("切换为【仅限局域网直连】", fontWeight = FontWeight.Bold)
 				}
 				Spacer(modifier = Modifier.height(10.dp))
 			} else {

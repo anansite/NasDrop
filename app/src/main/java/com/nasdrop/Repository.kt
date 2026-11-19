@@ -101,8 +101,8 @@ class Repository(private val context: Context) {
 
 	@Volatile private var trustAllCerts = false
 	private val okHttp: OkHttpClient get() = if (trustAllCerts) permissiveHttp else verifiedHttp
-	private val verifiedProbe = verifiedHttp.newBuilder().connectTimeout(3000, TimeUnit.MILLISECONDS).readTimeout(3000, TimeUnit.MILLISECONDS).build()
-	private val permissiveProbe by lazy { permissiveHttp.newBuilder().connectTimeout(3000, TimeUnit.MILLISECONDS).readTimeout(3000, TimeUnit.MILLISECONDS).build() }
+	private val verifiedProbe = verifiedHttp.newBuilder().connectTimeout(1200, TimeUnit.MILLISECONDS).readTimeout(1200, TimeUnit.MILLISECONDS).build()
+	private val permissiveProbe by lazy { permissiveHttp.newBuilder().connectTimeout(1200, TimeUnit.MILLISECONDS).readTimeout(1200, TimeUnit.MILLISECONDS).build() }
 	private val probeHttp: OkHttpClient get() = if (trustAllCerts) permissiveProbe else verifiedProbe
 
 	private fun imageClient(client: OkHttpClient): OkHttpClient = client.newBuilder()
@@ -177,6 +177,7 @@ class Repository(private val context: Context) {
 
 	@Volatile
 	private var directConfirmed: DirectProbeResult? = null
+	val isDirectConfirmed: Boolean get() = directConfirmed != null
 
 	/** 按当前配置准备 WebDavClient */
 	@Synchronized
@@ -218,35 +219,48 @@ class Repository(private val context: Context) {
 				isProbing = false,
 				isLanDirect = direct.isLan,
 			)
-		} else if (normalized.connectionMode != ConnectionMode.Direct) {
+		} else {
+			// 直连不可达（或强制组网）：优先使用内嵌 Tailscale 隧道，绝不挂死应用
 			if (TsBridge.available) {
 				val origin = root.newBuilder().encodedPath("/").query(null).fragment(null).build().toString()
 				TsBridge.setInsecureTls(normalized.trustAllCerts)
 				val p = TsBridge.start(context, normalized.hostname, normalized.authKey, origin)
 				if (p <= 0) {
-					_routeInfo.value = RouteInfo(false, false, "", "", "Tailscale 尚未就绪")
+					_routeInfo.value = RouteInfo(false, false, "", "", "Tailscale 尚未就绪", isProbing = false)
 					Log.w("Repository", "隧道初始化失败，mode=${normalized.connectionMode}，host=${root.host}")
 					throw IllegalStateException("Tailscale 隧道未就绪，请检查组网授权后重新连接")
 				}
 				bridgeToken = TsBridge.token
 				base = "http://127.0.0.1:$p${root.encodedPath}".toHttpUrlOrNull() ?: error("本地隧道地址不合法")
 				updateRouteInfo()
+				if (normalized.connectionMode == ConnectionMode.Direct) {
+					_routeInfo.value = RouteInfo(
+						isDirect = false,
+						isRelay = true,
+						endpoint = "",
+						peerName = "",
+						label = "局域网不可达 · 自动启用组网",
+						isProbing = false,
+						isLanDirect = false,
+					)
+				}
 			} else {
-				_routeInfo.value = RouteInfo(false, false, "", "", "当前安装包未包含 Tailscale")
-				Log.w("Repository", "缺少内嵌 Tailscale，mode=${normalized.connectionMode}，host=${root.host}")
-				throw IllegalStateException("当前安装包未包含内嵌 Tailscale，请安装完整版或在可直连网络下选择直连模式")
+				if (normalized.connectionMode == ConnectionMode.Direct) {
+					_routeInfo.value = RouteInfo(
+						isDirect = false,
+						isRelay = false,
+						endpoint = "",
+						peerName = "",
+						label = "直连不可达（无法访问 ${root.host}）",
+						isProbing = false,
+						isLanDirect = false,
+					)
+				} else {
+					_routeInfo.value = RouteInfo(false, false, "", "", "当前安装包未包含 Tailscale", isProbing = false)
+					Log.w("Repository", "缺少内嵌 Tailscale，mode=${normalized.connectionMode}，host=${root.host}")
+					throw IllegalStateException("当前安装包未包含内嵌 Tailscale，请安装完整版或在可直连网络下选择直连模式")
+				}
 			}
-		} else {
-			// 用户指定了直连模式，但实测探测不可达：真实呈现不可达状态，绝不伪造"系统直连"
-			_routeInfo.value = RouteInfo(
-				isDirect = false,
-				isRelay = false,
-				endpoint = "",
-				peerName = "",
-				label = "直连不可达（无法访问 ${root.host}）",
-				isProbing = false,
-				isLanDirect = false,
-			)
 		}
 
 		val apiOrigin = base.newBuilder().encodedPath("/").query(null).fragment(null).build()
@@ -265,28 +279,41 @@ class Repository(private val context: Context) {
 	private fun doDirectProbe(root: HttpUrl, user: String, pass: String): DirectProbeResult? {
 		return try {
 			val host = root.host
-			val addrs = java.net.InetAddress.getAllByName(host)
 			var anyIp = host
 			var isLan = false
-			for (addr in addrs) {
-				val ip = addr.hostAddress ?: continue
-				anyIp = ip
-				val bytes = addr.address
-				if (bytes.size == 4) {
-					val b0 = bytes[0].toInt() and 0xFF
-					val b1 = bytes[1].toInt() and 0xFF
-					// 100.64.0.0/10 是 CGNAT/Tailscale 段。以前这里无条件跳过直连、强制走内嵌
-					// tsnet 隧道——但如果设备系统层面已装 Tailscale，100.x 本就能系统直连，
-					// 再套一层内嵌隧道反而绕远/走 DERP，是图片慢、视频卡的根因。
-					// 现在改为不做特判：照样发一次 PROPFIND 实测，通就走直连（最快），
-					// 不通（probeHttp 1.5s 超时）才回退内嵌 tsnet 打洞。
+			val isIp = host.matches(Regex("""\d+\.\d+\.\d+\.\d+"""))
+			if (isIp) {
+				val parts = host.split('.').mapNotNull { it.toIntOrNull() }
+				if (parts.size == 4) {
+					val b0 = parts[0]
+					val b1 = parts[1]
 					isLan = (b0 == 10) ||
 						(b0 == 172 && (b1 in 16..31)) ||
 						(b0 == 192 && b1 == 168) ||
 						(b0 == 169 && b1 == 254) ||
-						addr.isSiteLocalAddress ||
-						addr.isLoopbackAddress
-					if (isLan) break
+						(b0 == 127)
+				}
+			} else {
+				try {
+					val addrs = java.net.InetAddress.getAllByName(host)
+					for (addr in addrs) {
+						val ip = addr.hostAddress ?: continue
+						anyIp = ip
+						val bytes = addr.address
+						if (bytes.size == 4) {
+							val b0 = bytes[0].toInt() and 0xFF
+							val b1 = bytes[1].toInt() and 0xFF
+							isLan = (b0 == 10) ||
+								(b0 == 172 && (b1 in 16..31)) ||
+								(b0 == 192 && b1 == 168) ||
+								(b0 == 169 && b1 == 254) ||
+								addr.isSiteLocalAddress ||
+								addr.isLoopbackAddress
+							if (isLan) break
+						}
+					}
+				} catch (_: Exception) {
+					return null
 				}
 			}
 
@@ -320,9 +347,9 @@ class Repository(private val context: Context) {
 	 * 本地端口可能变化，调用方必须丢弃旧 client 并重建。
 	 */
 	fun reconnectTunnelIfNeeded(settings: Settings): Boolean {
-		if (settings.connectionMode == ConnectionMode.Direct || !TsBridge.available) return false
+		if (!TsBridge.available) return false
 		// 已确认局域网/公网原生直连，本就没走隧道，无需重连
-		if (settings.connectionMode == ConnectionMode.Auto && directConfirmed != null) return false
+		if (directConfirmed != null) return false
 
 		val st = TsBridge.status()
 		if (st.startsWith("running") && TsBridge.port > 0) {
@@ -356,29 +383,8 @@ class Repository(private val context: Context) {
 
 	/** 主动触发 NAT 打洞，促使链路从 DERP 中继切换为 P2P 直连 */
 	fun triggerHolePunch(): String {
-		if (cachedKey?.connectionMode == ConnectionMode.Direct) {
-			val root = cachedKey?.baseUrl?.toHttpUrlOrNull()
-			if (root != null) {
-				val direct = doDirectProbe(root, cachedKey!!.user, cachedKey!!.password)
-				if (direct != null) {
-					directConfirmed = direct
-					_routeInfo.value = RouteInfo(
-						isDirect = true,
-						isRelay = false,
-						endpoint = direct.ip,
-						peerName = if (direct.isLan) "LAN" else "Direct",
-						label = if (direct.isLan) "局域网直连 · ${direct.latencyMs}ms" else "系统直连 · ${direct.latencyMs}ms",
-						latencyMs = direct.latencyMs,
-						isProbing = false,
-						isLanDirect = direct.isLan,
-					)
-					return "直连连通正常 (延迟 ${direct.latencyMs}ms)"
-				} else {
-					directConfirmed = null
-					_routeInfo.value = RouteInfo(false, false, "", "", "直连无法访问 ${root.host}", isProbing = false)
-					return "直连探测失败，无法连接到目标服务"
-				}
-			}
+		if (directConfirmed != null) {
+			return "当前使用局域网直连 (延迟 ${directConfirmed?.latencyMs ?: 0}ms)"
 		}
 		val result = TsBridge.punchHole()
 		updateRouteInfo()
@@ -387,7 +393,7 @@ class Repository(private val context: Context) {
 
 	/** 刷新链路状态（判断是 P2P 直连打洞还是 DERP 中继代理） */
 	fun updateRouteInfo() {
-		if (cachedKey?.connectionMode == ConnectionMode.Direct && directConfirmed != null) {
+		if (directConfirmed != null) {
 			return // 局域网直连模式保持原样，不被 Tailscale 状态覆盖
 		}
 		val info = TsBridge.peerLinkInfo()
@@ -422,15 +428,35 @@ class Repository(private val context: Context) {
 				// 积极直连巡检：在中继状态下立即触发后台积极穿透与局域网探活
 				startAggressiveDirectAttemptIfNeeded()
 			}
+			parts.firstOrNull() == "running" -> {
+				val st = TsBridge.status()
+				val ip = st.removePrefix("running:").removePrefix("running").trim(':')
+				_routeInfo.value = RouteInfo(
+					isDirect = false,
+					isRelay = true,
+					endpoint = ip,
+					peerName = "",
+					label = "🛡️ Tailscale 隧道已连通",
+					isProbing = false,
+					isLanDirect = false,
+				)
+			}
 			else -> {
 				val st = TsBridge.status()
+				val isStarting = st == "starting" || st == "idle" || st.isBlank()
 				_routeInfo.value = RouteInfo(
 					isDirect = false,
 					isRelay = false,
 					endpoint = "",
 					peerName = "",
-					label = if (st.startsWith("running")) "🛡️ Tailscale 正在优化连接…" else "🛡️ 正在建立连接…",
-					isProbing = false,
+					label = when {
+						st.startsWith("running") -> "🛡️ Tailscale 隧道已连通"
+						st == "needs-login" -> "Tailscale 等待登录"
+						st.startsWith("error") -> "Tailscale 异常: " + st.removePrefix("error:").trim()
+						st == "stopped" -> "Tailscale 已停止"
+						else -> "🛡️ 正在建立连接…"
+					},
+					isProbing = isStarting,
 					isLanDirect = false,
 				)
 			}

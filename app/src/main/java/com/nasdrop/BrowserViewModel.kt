@@ -618,7 +618,15 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				pollPeerStatus()
 				val info = app.repo.routeInfo.value
 				val isNowDirect = info.isDirect
-				val isReady = info.isDirect || info.isRelay
+				val tsRunning = TsBridge.status().startsWith("running")
+				val isReady = info.isDirect || info.isRelay || tsRunning
+
+				// 异常自愈防护：若持久化配置锁在 Direct 模式但局域网不可达，自动回退到 Auto 模式并自愈
+				if (connectionMode == ConnectionMode.Direct && !app.repo.isDirectConfirmed && !info.isDirect && !info.isLan) {
+					setConnectionMode(ConnectionMode.Auto) {
+						uiMessage = "检测到局域网不可达，已自动切换为智能自动模式"
+					}
+				}
 
 				if (isReady) {
 					if ((!loading && error != null) || (!lastDirect && isNowDirect)) {
