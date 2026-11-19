@@ -172,7 +172,12 @@ class MainActivity : ComponentActivity() {
 						startIndex = r.index,
 						urlOf = { vm.directUrlFor(it) },
 						thumbOf = { vm.serverThumbUrlFor(it) },
-						onBack = { route = Route.Browser },
+						onBack = { currentEntry ->
+							if (currentEntry != null) {
+								vm.syncViewerPosition(currentEntry)
+							}
+							route = Route.Browser
+						},
 						onSaveToGallery = { entry, cb -> vm.saveImageToGallery(entry, cb) },
 						onShare = { entry, cb -> vm.prepareShareImage(entry, cb) },
 						onDelete = { entry -> vm.delete(entry) },

@@ -9,6 +9,8 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.widget.Toast
 import android.util.Log
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -95,6 +97,13 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/** 视图模式：夸克式极简列表 vs 宫格大图 */
 	var viewMode by mutableStateOf(ViewMode.Cards)
 		private set
+
+	/** 持久化列表与网格滚动位置，跨 Route（看图/视频/设置）生命周期不丢失 */
+	val photoGridState = LazyGridState()
+	val fileListState = LazyListState()
+	val fileCompactState = LazyListState()
+	val fileGridState = LazyGridState()
+	val mediaGridState = LazyGridState()
 
 	/** 夸克同款排序方式：按修改时间 / 按名称 / 按大小 */
 	var sortOrder by mutableStateOf(SortOrder.ModifiedDesc)
@@ -730,6 +739,54 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	fun markThumbnailFailed(entryPath: String) {
 		client?.markThumbnailFailed(entryPath)
+		thumbRevision++
+	}
+
+	/** 看图器退出时，平滑对齐当前浏览的照片，防止滚动位置跳回顶部 */
+	fun syncViewerPosition(entry: DavEntry) {
+		viewModelScope.launch {
+			if (currentTab == MainTab.Photos) {
+				var index = 0
+				for (g in photoTimelineGroups) {
+					index++ // 标题项占 1 个 span
+					val itemIdx = g.items.indexOfFirst { it.path == entry.path }
+					if (itemIdx != -1) {
+						index += itemIdx
+						val visible = photoGridState.layoutInfo.visibleItemsInfo
+						if (visible.none { it.index == index }) {
+							photoGridState.scrollToItem((index - 1).coerceAtLeast(0))
+						}
+						break
+					} else {
+						index += g.items.size
+					}
+				}
+			} else if (currentTab == MainTab.Files) {
+				val idx = filteredEntries.indexOfFirst { it.path == entry.path }
+				if (idx != -1) {
+					when (viewMode) {
+						ViewMode.Cards -> {
+							val visible = fileListState.layoutInfo.visibleItemsInfo
+							if (visible.none { it.index == idx }) {
+								fileListState.scrollToItem((idx - 1).coerceAtLeast(0))
+							}
+						}
+						ViewMode.Compact -> {
+							val visible = fileCompactState.layoutInfo.visibleItemsInfo
+							if (visible.none { it.index == idx }) {
+								fileCompactState.scrollToItem((idx - 1).coerceAtLeast(0))
+							}
+						}
+						ViewMode.Grid -> {
+							val visible = fileGridState.layoutInfo.visibleItemsInfo
+							if (visible.none { it.index == idx }) {
+								fileGridState.scrollToItem((idx - 1).coerceAtLeast(0))
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 
 	fun loginUrl(): String = authUrl
@@ -1113,10 +1170,21 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	fun open(target: String) {
 		directoryLoadJob?.cancel()
 		val cached = dirCache[target]
+		val oldPath = path
 		path = target
 		entries = mergeUploadedEntries(target, cached.orEmpty())
 		loading = cached == null && entries.isEmpty()
 		error = null
+
+		if (oldPath != target) {
+			viewModelScope.launch {
+				runCatching {
+					fileListState.scrollToItem(0)
+					fileCompactState.scrollToItem(0)
+					fileGridState.scrollToItem(0)
+				}
+			}
+		}
 
 		directoryLoadJob = viewModelScope.launch {
 			try {
@@ -1250,23 +1318,31 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	fun openAlbum(albumPath: String) {
-		selectedAlbumPath = albumPath
+		if (selectedAlbumPath != albumPath) {
+			selectedAlbumPath = albumPath
+			viewModelScope.launch { runCatching { photoGridState.scrollToItem(0) } }
+		}
 	}
 
 	fun upAlbum() {
 		if (selectedAlbumPath.isBlank()) return
 		val parent = selectedAlbumPath.substringBeforeLast('/', "")
 		selectedAlbumPath = if (parent.equals("Photos", true) || parent == "相册") "" else parent
+		viewModelScope.launch { runCatching { photoGridState.scrollToItem(0) } }
 	}
 
 	fun openMedia(mediaPath: String) {
-		selectedMediaPath = mediaPath
+		if (selectedMediaPath != mediaPath) {
+			selectedMediaPath = mediaPath
+			viewModelScope.launch { runCatching { mediaGridState.scrollToItem(0) } }
+		}
 	}
 
 	fun upMedia() {
 		if (selectedMediaPath.isBlank()) return
 		val parent = selectedMediaPath.substringBeforeLast('/', "")
 		selectedMediaPath = if (parent.equals("movies", true) || parent == "影视" || parent == "影音") "" else parent
+		viewModelScope.launch { runCatching { mediaGridState.scrollToItem(0) } }
 	}
 
 	/** 在相册专属目录下新建相册文件夹：立即乐观呈现于相册胶囊栏与选择列表，创建失败平滑回滚 */

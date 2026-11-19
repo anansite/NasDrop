@@ -1,6 +1,7 @@
 package com.nasdrop.ui
 
 import android.app.Activity
+import androidx.activity.compose.BackHandler
 import android.content.Context
 import android.media.AudioManager
 import android.view.WindowManager
@@ -135,7 +136,7 @@ fun ImageViewer(
 	urlOf: (String) -> String?,
 	/** 列表已加载的服务端缩略图直链，作为原图加载期间/失败时的即时垫底图 */
 	thumbOf: ((String) -> String?)? = null,
-	onBack: () -> Unit,
+	onBack: (DavEntry?) -> Unit,
 	onSaveToGallery: ((DavEntry, (Boolean, String) -> Unit) -> Unit)? = null,
 	onShare: ((DavEntry, (java.io.File?) -> Unit) -> Unit)? = null,
 	onDelete: ((DavEntry) -> Unit)? = null,
@@ -143,14 +144,23 @@ fun ImageViewer(
 	val context = LocalContext.current
 	var imageList by remember(images) { mutableStateOf(images) }
 	if (imageList.isEmpty()) {
-		LaunchedEffect(Unit) { onBack() }
+		LaunchedEffect(Unit) { onBack(null) }
 		return
 	}
 
 	val pager = rememberPagerState(initialPage = startIndex.coerceIn(0, imageList.lastIndex)) {
 		imageList.size
 	}
-	val current = imageList.getOrNull(pager.currentPage.coerceIn(0, imageList.lastIndex)) ?: return
+	val current = imageList.getOrNull(pager.currentPage.coerceIn(0, imageList.lastIndex))
+
+	BackHandler {
+		onBack(current)
+	}
+
+	if (current == null) {
+		LaunchedEffect(Unit) { onBack(null) }
+		return
+	}
 
 	var isCurrentZoomed by remember { mutableStateOf(false) }
 	LaunchedEffect(pager.currentPage) {
@@ -240,7 +250,7 @@ fun ImageViewer(
 					}
 				},
 				navigationIcon = {
-					IconButton(onClick = onBack) {
+					IconButton(onClick = { onBack(current) }) {
 						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回")
 					}
 				},
@@ -415,7 +425,7 @@ fun ImageViewer(
 							onDelete?.invoke(target)
 							val remaining = imageList.filterNot { it.path == target.path }
 							if (remaining.isEmpty()) {
-								onBack()
+								onBack(null)
 							} else {
 								imageList = remaining
 							}

@@ -40,6 +40,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -442,6 +443,7 @@ fun BrowserScreen(
 
 						MainTab.Photos -> {
 							PhotoTimelineContent(
+								state = vm.photoGridState,
 								groups = vm.photoTimelineGroups,
 								allAlbums = vm.allAlbumFolders,
 								selectedAlbumPath = vm.selectedAlbumPath,
@@ -462,6 +464,7 @@ fun BrowserScreen(
 
 						MainTab.Media -> {
 							MediaStreamContent(
+								state = vm.mediaGridState,
 								videos = vm.currentMediaVideos,
 								allMediaFolders = vm.allMediaFolders,
 								selectedMediaPath = vm.selectedMediaPath,
@@ -1676,6 +1679,7 @@ private fun FileBrowserContent(
 		ViewMode.Cards -> {
 			// 夸克式极简纯净无框列表：纯白底、无卡片框、精致微留白、一屏容纳更多文件
 			LazyColumn(
+				state = vm.fileListState,
 				modifier = Modifier
 					.fillMaxSize()
 					.background(MaterialTheme.colorScheme.surface),
@@ -1695,7 +1699,14 @@ private fun FileBrowserContent(
 						horizontalArrangement = Arrangement.spacedBy(12.dp),
 					) {
 						// 左侧夸克同款文件徽标（微圆角，专属卡片或视频封面）
-						FileThumbnail(entry = entry, urlOf = { vm.thumbnailUrlFor(it) }, size = 42.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
+						FileThumbnail(
+							entry = entry,
+							urlOf = { vm.thumbnailUrlFor(it) },
+							directUrlOf = { vm.directUrlFor(it) },
+							onThumbnailError = { vm.markThumbnailFailed(it) },
+							size = 42.dp,
+							customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null,
+						)
 
 						// 中间主标题与单行元数据（保留完整文件名，如 LibreTV播放器.mp4）
 						Column(modifier = Modifier.weight(1f)) {
@@ -1756,6 +1767,7 @@ private fun FileBrowserContent(
 
 		ViewMode.Compact -> {
 			LazyColumn(
+				state = vm.fileCompactState,
 				modifier = Modifier
 					.fillMaxSize()
 					.background(MaterialTheme.colorScheme.surface),
@@ -1778,7 +1790,14 @@ private fun FileBrowserContent(
 							SelectCheckbox(isSelected = isSelected)
 						}
 
-						FileThumbnail(entry = entry, urlOf = { vm.thumbnailUrlFor(it) }, size = 32.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
+						FileThumbnail(
+							entry = entry,
+							urlOf = { vm.thumbnailUrlFor(it) },
+							directUrlOf = { vm.directUrlFor(it) },
+							onThumbnailError = { vm.markThumbnailFailed(it) },
+							size = 32.dp,
+							customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null,
+						)
 
 						Column(modifier = Modifier.weight(1f)) {
 							Text(
@@ -1812,6 +1831,7 @@ private fun FileBrowserContent(
 
 		ViewMode.Grid -> {
 			LazyVerticalGrid(
+				state = vm.fileGridState,
 				columns = GridCells.Fixed(2),
 				contentPadding = PaddingValues(14.dp),
 				horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1820,7 +1840,6 @@ private fun FileBrowserContent(
 			) {
 				items(items, key = { it.path }) { entry ->
 					val isSelected = vm.selectedEntries.contains(entry)
-					val imgUrl = if (entry.isImage) vm.thumbnailUrlFor(entry.path) else null
 					Card(
 						shape = RoundedCornerShape(14.dp),
 						colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1853,14 +1872,20 @@ private fun FileBrowserContent(
 							}
 
 							Spacer(modifier = Modifier.height(2.dp))
-							if (entry.isImage && !imgUrl.isNullOrBlank()) {
-								var imgFailed by remember(entry.path) { mutableStateOf(false) }
-								if (!imgFailed) {
+							if (entry.isImage) {
+								val thumbTarget = vm.thumbnailUrlFor(entry.path)
+								var thumbFailed by remember(entry.path) { mutableStateOf(false) }
+								var directFailed by remember(entry.path) { mutableStateOf(false) }
+								val actualData = if (thumbFailed) {
+									if (!directFailed) vm.directUrlFor(entry.path) else null
+								} else {
+									thumbTarget ?: vm.directUrlFor(entry.path)
+								}
+								if (!directFailed && !actualData.isNullOrBlank()) {
 									AsyncImage(
 										model = ImageRequest.Builder(LocalContext.current)
-											.data(imgUrl)
+											.data(actualData)
 											.memoryCacheKey("thumb:${entry.path}")
-											.diskCacheKey("thumb:${entry.path}")
 											.size(240, 240)
 											.precision(coil.size.Precision.INEXACT)
 											.allowRgb565(true)
@@ -1869,8 +1894,12 @@ private fun FileBrowserContent(
 										contentDescription = entry.name,
 										contentScale = ContentScale.Crop,
 										onError = {
-											imgFailed = true
-											vm.markThumbnailFailed(entry.path)
+											if (!thumbFailed) {
+												thumbFailed = true
+												vm.markThumbnailFailed(entry.path)
+											} else {
+												directFailed = true
+											}
 										},
 										modifier = Modifier
 											.fillMaxWidth()
@@ -1931,6 +1960,7 @@ private fun SelectCheckbox(isSelected: Boolean, modifier: Modifier = Modifier) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PhotoTimelineContent(
+	state: LazyGridState,
 	groups: List<com.nasdrop.TimelineGroup>,
 	allAlbums: List<DavEntry>,
 	selectedAlbumPath: String,
@@ -2027,6 +2057,7 @@ private fun PhotoTimelineContent(
 			}
 		} else {
 			LazyVerticalGrid(
+				state = state,
 				columns = GridCells.Fixed(3),
 				contentPadding = PaddingValues(4.dp),
 				horizontalArrangement = Arrangement.spacedBy(3.dp),
@@ -2069,27 +2100,42 @@ private fun PhotoTimelineContent(
 						) {
 							val thumbTarget = urlOf(item.path)
 							var thumbFailed by remember(item.path) { mutableStateOf(false) }
-							val actualData = if (thumbFailed && directUrlOf != null) directUrlOf(item.path) else (thumbTarget ?: directUrlOf?.invoke(item.path))
-							AsyncImage(
-								model = ImageRequest.Builder(LocalContext.current)
-									.data(actualData)
-									.memoryCacheKey("thumb:${item.path}")
-									.diskCacheKey("thumb:${item.path}")
-									.size(240, 240)
-									.precision(coil.size.Precision.INEXACT)
-									.allowRgb565(true)
-									.crossfade(false)
-									.build(),
-								onError = {
-									if (!thumbFailed) {
-										thumbFailed = true
-										onThumbnailError?.invoke(item.path)
-									}
-								},
-								contentDescription = item.name,
-								contentScale = ContentScale.Crop,
-								modifier = Modifier.fillMaxSize(),
-							)
+							var directFailed by remember(item.path) { mutableStateOf(false) }
+							val actualData = if (thumbFailed && directUrlOf != null) {
+								if (!directFailed) directUrlOf(item.path) else null
+							} else {
+								thumbTarget ?: directUrlOf?.invoke(item.path)
+							}
+							if (!directFailed && !actualData.isNullOrBlank()) {
+								AsyncImage(
+									model = ImageRequest.Builder(LocalContext.current)
+										.data(actualData)
+										.memoryCacheKey("thumb:${item.path}")
+										.size(240, 240)
+										.precision(coil.size.Precision.INEXACT)
+										.allowRgb565(true)
+										.crossfade(false)
+										.build(),
+									onError = {
+										if (!thumbFailed) {
+											thumbFailed = true
+											onThumbnailError?.invoke(item.path)
+										} else {
+											directFailed = true
+										}
+									},
+									contentDescription = item.name,
+									contentScale = ContentScale.Crop,
+									modifier = Modifier.fillMaxSize(),
+								)
+							} else {
+								Box(
+									modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
+									contentAlignment = Alignment.Center,
+								) {
+									FileIcon(category = FileCategory.Image, isDir = false, size = 32.dp)
+								}
+							}
 
 							// 仅在多选模式下显示右上角勾选框（日常沉浸全图，长按才浮现选框）
 							if (isMulti) {
@@ -2112,6 +2158,7 @@ private fun PhotoTimelineContent(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MediaStreamContent(
+	state: LazyGridState,
 	videos: List<DavEntry>,
 	allMediaFolders: List<DavEntry>,
 	selectedMediaPath: String,
@@ -2207,6 +2254,7 @@ private fun MediaStreamContent(
 			}
 		} else {
 			LazyVerticalGrid(
+				state = state,
 				columns = GridCells.Fixed(2),
 				contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
 				horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -2257,7 +2305,6 @@ private fun MediaStreamContent(
 										model = ImageRequest.Builder(LocalContext.current)
 											.data(thumbUrl)
 											.memoryCacheKey("thumb:${video.path}")
-											.diskCacheKey("thumb:${video.path}")
 											.size(320, 180)
 											.precision(coil.size.Precision.INEXACT)
 											.allowRgb565(true)

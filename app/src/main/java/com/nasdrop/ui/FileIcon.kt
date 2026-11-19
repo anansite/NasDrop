@@ -57,6 +57,8 @@ import com.nasdrop.NasFolderIcon
 fun FileThumbnail(
 	entry: DavEntry,
 	urlOf: (String) -> String?,
+	directUrlOf: ((String) -> String?)? = null,
+	onThumbnailError: ((String) -> Unit)? = null,
 	size: Dp = 44.dp,
 	customIconKey: String? = null,
 	modifier: Modifier = Modifier,
@@ -64,12 +66,18 @@ fun FileThumbnail(
 	val cornerRadius = 6.dp
 
 	when {
-		// 1. 图片真实缩略图（带轻量灰度矢量占位与平滑淡入，彻底杜绝黑块）
+		// 1. 图片真实缩略图（服务端缩略图 -> 原图直链下采样多级回退，零黑块）
 		entry.isImage -> {
-			val url = urlOf(entry.path)
-			var isError by remember(entry.path) { mutableStateOf(false) }
+			val thumbTarget = urlOf(entry.path)
+			var thumbFailed by remember(entry.path) { mutableStateOf(false) }
+			var directFailed by remember(entry.path) { mutableStateOf(false) }
+			val actualData = if (thumbFailed && directUrlOf != null) {
+				if (!directFailed) directUrlOf(entry.path) else null
+			} else {
+				thumbTarget ?: directUrlOf?.invoke(entry.path)
+			}
 
-			if (!isError && !url.isNullOrBlank()) {
+			if (!directFailed && !actualData.isNullOrBlank()) {
 				Box(
 					modifier = modifier
 						.size(size)
@@ -86,9 +94,8 @@ fun FileThumbnail(
 					)
 					AsyncImage(
 						model = ImageRequest.Builder(LocalContext.current)
-							.data(url)
+							.data(actualData)
 							.memoryCacheKey("thumb:${entry.path}")
-							.diskCacheKey("thumb:${entry.path}")
 							.size(240, 240)
 							.precision(coil.size.Precision.INEXACT)
 							.allowRgb565(true)
@@ -96,7 +103,14 @@ fun FileThumbnail(
 							.build(),
 						contentDescription = entry.name,
 						contentScale = ContentScale.Crop,
-						onError = { isError = true },
+						onError = {
+							if (!thumbFailed) {
+								thumbFailed = true
+								onThumbnailError?.invoke(entry.path)
+							} else {
+								directFailed = true
+							}
+						},
 						modifier = Modifier.fillMaxSize(),
 					)
 				}
@@ -131,7 +145,6 @@ fun FileThumbnail(
 						model = ImageRequest.Builder(LocalContext.current)
 							.data(url)
 							.memoryCacheKey("thumb:${entry.path}")
-							.diskCacheKey("thumb:${entry.path}")
 							.size(240, 240)
 							.precision(coil.size.Precision.INEXACT)
 							.allowRgb565(true)
@@ -139,7 +152,10 @@ fun FileThumbnail(
 							.build(),
 						contentDescription = entry.name,
 						contentScale = ContentScale.Crop,
-						onError = { isError = true },
+						onError = {
+							isError = true
+							onThumbnailError?.invoke(entry.path)
+						},
 						modifier = Modifier.fillMaxSize(),
 					)
 				}

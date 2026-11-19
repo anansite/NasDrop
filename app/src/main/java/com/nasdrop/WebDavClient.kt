@@ -192,8 +192,8 @@ class WebDavClient(
 		val sign = signUrls[path.trim('/')]
 		if (!sign.isNullOrBlank()) {
 			try {
-				val b = (apiOrigin ?: effectiveBase).newBuilder()
-					.addPathSegment("p")
+				val rootBase = (apiOrigin ?: effectiveBase).newBuilder().encodedPath("/").build()
+				val b = rootBase.newBuilder().addPathSegment("p")
 				path.trim('/').split('/').forEach { if (it.isNotEmpty()) b.addPathSegment(it) }
 				b.addQueryParameter("sign", sign)
 				// origin 换成本客户端入口：直连模式=原域名；bridge 模式=127.0.0.1:port
@@ -392,7 +392,8 @@ class WebDavClient(
 							try {
 								val cleanPath = thumb.substringBefore('?')
 								val query = thumb.substringAfter('?', "")
-								val b = (apiOrigin ?: base).newBuilder().encodedPath(cleanPath)
+								val rootBase = (apiOrigin ?: effectiveBase).newBuilder().encodedPath("/").build()
+								val b = rootBase.newBuilder().encodedPath(cleanPath)
 								if (query.isNotEmpty()) {
 									query.split('&').forEach { param ->
 										val kv = param.split('=', limit = 2)
@@ -401,7 +402,7 @@ class WebDavClient(
 								}
 								// origin 换成本客户端入口：直连模式=原域名；bridge 模式=127.0.0.1:port
 								b.build().newBuilder()
-									.scheme(base.scheme).host(base.host).port(base.port)
+									.scheme(effectiveBase.scheme).host(effectiveBase.host).port(effectiveBase.port)
 									.build().toString()
 							} catch (_: Exception) { null }
 						} else null
