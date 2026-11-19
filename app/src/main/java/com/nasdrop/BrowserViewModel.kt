@@ -29,6 +29,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 enum class MainTab {
 	Files,
@@ -532,9 +533,17 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val request = withContext(Dispatchers.Main) {
 			((directoryRequests[dir] ?: 0L) + 1L).also { directoryRequests[dir] = it }
 		}
-		val fresh = withContext(Dispatchers.IO) { clientOf(configuration).list(dir) }
+		val c = clientOf(configuration)
+		val fresh = withContext(Dispatchers.IO) { c.list(dir) }
 		withContext(Dispatchers.Main) {
 			if (directoryRequests[dir] == request && (observedConfiguration == null || observedConfiguration == configuration)) applyDirectoryListing(dir, fresh)
+		}
+		val currentUrl = configuration.baseUrl.toHttpUrlOrNull()
+		if (dir.isEmpty() && currentUrl != null && currentUrl.encodedPath != c.effectiveBase.encodedPath) {
+			val corrected = currentUrl.newBuilder().encodedPath(c.effectiveBase.encodedPath).build().toString()
+			viewModelScope.launch {
+				app.prefs.update { it.copy(baseUrl = corrected) }
+			}
 		}
 		return fresh
 	}

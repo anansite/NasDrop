@@ -135,8 +135,39 @@ class WebDavClient(
 	 */
 	var onThumbnailsLoaded: ((Set<String>) -> Unit)? = null
 
+	/**
+	 * 实际生效的 WebDAV 根地址：若配置未带 /dav/ 但服务端要求 /dav/（如 OpenList/AList），
+	 * 或配置带了 /dav/ 但服务端是原生 WebDAV，握手自适应后会更新此地址，实现双向自动适配。
+	 */
+	@Volatile var effectiveBase: HttpUrl = base
+		private set
+
+	/**
+	 * 智能 /dav 路径自适应：
+	 * 当根路径 PROPFIND 返回 404/405 时，若当前 base 不带 /dav 则尝试追加 /dav/；若带 /dav 则尝试去掉 /dav/。
+	 * 握手成功后更新 effectiveBase，彻底自适应 OpenList/AList 与原生 WebDAV 的路径差异。
+	 */
+	private fun tryAlternativeDavUrl(): HttpUrl? {
+		val encoded = effectiveBase.encodedPath
+		return if (encoded.endsWith("/dav/") || encoded.endsWith("/dav")) {
+			// 当前带有 /dav，尝试去掉 /dav/
+			val segments = effectiveBase.pathSegments.filter { it.isNotEmpty() && it != "dav" }
+			val builder = effectiveBase.newBuilder().encodedPath("/")
+			segments.forEach { builder.addPathSegment(it) }
+			builder.addPathSegment("")
+			val newBase = builder.build()
+			if (newBase != effectiveBase) newBase else null
+		} else {
+			// 当前不带 /dav，尝试追加 /dav/
+			val builder = effectiveBase.newBuilder()
+			if (!effectiveBase.encodedPath.endsWith("/")) builder.addPathSegment("")
+			builder.addPathSegment("dav").addPathSegment("")
+			builder.build()
+		}
+	}
+
 	fun urlFor(path: String, dir: Boolean = false): HttpUrl {
-		val b = base.newBuilder()
+		val b = effectiveBase.newBuilder()
 		path.trim('/').split('/').forEach { if (it.isNotEmpty()) b.addPathSegment(it) }
 		if (dir && path.isNotEmpty()) b.addPathSegment("")
 		return b.build()
@@ -153,13 +184,13 @@ class WebDavClient(
 		val sign = signUrls[path.trim('/')]
 		if (!sign.isNullOrBlank()) {
 			try {
-				val b = apiOrigin!!.newBuilder()
+				val b = (apiOrigin ?: effectiveBase).newBuilder()
 					.addPathSegment("p")
 				path.trim('/').split('/').forEach { if (it.isNotEmpty()) b.addPathSegment(it) }
 				b.addQueryParameter("sign", sign)
 				// origin 换成本客户端入口：直连模式=原域名；bridge 模式=127.0.0.1:port
 				return b.build().newBuilder()
-					.scheme(base.scheme).host(base.host).port(base.port)
+					.scheme(effectiveBase.scheme).host(effectiveBase.host).port(effectiveBase.port)
 					.build()
 			} catch (_: Exception) {
 				// 落到下面的 WebDAV 回退
@@ -207,7 +238,32 @@ class WebDavClient(
 			.build()
 
 		metaCall(req).execute().use { resp ->
-			if (!resp.isSuccessful) throw DavException(resp.code, "列目录失败")
+			if (!resp.isSuccessful) {
+				// 根目录 (path 为空) 遇到 404/405 时触发 /dav 智能双向自适应探测
+				if (path.isEmpty() && (resp.code == 404 || resp.code == 405)) {
+					val altBase = tryAlternativeDavUrl()
+					if (altBase != null) {
+						val altReq = Request.Builder()
+							.url(altBase)
+							.header("Depth", "1")
+							.method("PROPFIND", PROPFIND_BODY.toRequestBody("application/xml; charset=utf-8".toMediaTypeOrNull()))
+							.build()
+						try {
+							metaCall(altReq).execute().use { altResp ->
+								if (altResp.isSuccessful) {
+									val stream = altResp.body?.byteStream() ?: throw DavException(altResp.code, "空响应")
+									effectiveBase = altBase
+									logger.info("已自动适配 WebDAV 路径前缀为: $altBase")
+									return parse(stream, path)
+								}
+							}
+						} catch (_: Exception) {
+							// 自适应探测失败，继续向下抛出原 resp 异常
+						}
+					}
+				}
+				throw DavException(resp.code, "列目录失败")
+			}
 			val stream = resp.body?.byteStream() ?: throw DavException(resp.code, "空响应")
 			return parse(stream, path)
 		}
@@ -227,6 +283,27 @@ class WebDavClient(
 		call.timeout().timeout(8, TimeUnit.SECONDS)
 		call.execute().use { resp ->
 			if (!resp.isSuccessful) {
+				if (resp.code == 404 || resp.code == 405) {
+					val altBase = tryAlternativeDavUrl()
+					if (altBase != null) {
+						val altReq = Request.Builder()
+							.url(altBase)
+							.header("Depth", "0")
+							.method("PROPFIND", PROPFIND_BODY.toRequestBody("application/xml; charset=utf-8".toMediaTypeOrNull()))
+							.build()
+						try {
+							val altCall = http.newCall(altReq)
+							altCall.timeout().timeout(8, TimeUnit.SECONDS)
+							altCall.execute().use { altResp ->
+								if (altResp.isSuccessful) {
+									effectiveBase = altBase
+									logger.info("探测时自动适配 WebDAV 路径前缀为: $altBase")
+									return
+								}
+							}
+						} catch (_: Exception) {}
+					}
+				}
 				val reason = when (resp.code) {
 					401 -> "认证失败，请检查用户名和密码"
 					403 -> "当前账号无权访问 WebDAV"
@@ -359,9 +436,9 @@ class WebDavClient(
 		return try {
 			val t = thumb.toHttpUrlOrNull() ?: return thumb
 			t.newBuilder()
-				.scheme(base.scheme)
-				.host(base.host)
-				.port(base.port)
+				.scheme(effectiveBase.scheme)
+				.host(effectiveBase.host)
+				.port(effectiveBase.port)
 				.build()
 				.toString()
 		} catch (_: Exception) {
@@ -405,7 +482,7 @@ class WebDavClient(
 	 * 这里用列目录时从 href 推断出的真实前缀，推断不到才退回 base 自身路径。
 	 */
 	fun move(from: String, to: String) {
-		val prefix = (davRootPrefix ?: base.encodedPath).trimEnd('/')
+		val prefix = (davRootPrefix ?: effectiveBase.encodedPath).trimEnd('/')
 		val destination = "$prefix/" + to.trim('/')
 		val req = Request.Builder()
 			.url(urlFor(from))
