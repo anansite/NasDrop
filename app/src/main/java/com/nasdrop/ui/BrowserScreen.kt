@@ -482,8 +482,6 @@ fun BrowserScreen(
 								selectedPaths = vm.selectedPaths,
 								onToggleSelect = { vm.toggleSelect(it) },
 								onEnterMultiSelect = { vm.enterMultiSelect(it) },
-								onToggleSelectByPath = { path, select -> vm.toggleSelectByPath(path, select) },
-								onToggleSelectGroup = { group, select -> vm.toggleSelectGroup(group, select) },
 								onOpenAction = { activeEntryForAction = it },
 								onSelectMediaFolder = { vm.openMedia(it) },
 								onDeleteMediaFolder = { folder -> activeFolderForDelete = Pair(folder, false) },
@@ -522,7 +520,7 @@ fun BrowserScreen(
 				}
 
 				// 主界面全局悬浮传输灵动胶囊：在传输进行中常驻底部，实时展示任务数与速率，点击直达传输中心
-				AnimatedVisibility(
+				androidx.compose.animation.AnimatedVisibility(
 					visible = vm.activeTransferCount > 0 && !showTransferSheet,
 					enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
 					exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
