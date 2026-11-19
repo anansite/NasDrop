@@ -455,6 +455,7 @@ fun BrowserScreen(
 								onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 								urlOf = { vm.thumbnailUrlFor(it) },
 								directUrlOf = { vm.directUrlFor(it) },
+								onThumbnailError = { vm.markThumbnailFailed(it) },
 								onOpenImage = onOpenImage,
 							)
 						}
@@ -473,6 +474,7 @@ fun BrowserScreen(
 								onDeleteMediaFolder = { folder -> activeFolderForDelete = Pair(folder, false) },
 								onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
 								urlOf = { vm.thumbnailUrlFor(it) },
+								onThumbnailError = { vm.markThumbnailFailed(it) },
 								onOpenVideo = onOpenVideo,
 							)
 						}
@@ -1852,16 +1854,33 @@ private fun FileBrowserContent(
 
 							Spacer(modifier = Modifier.height(2.dp))
 							if (entry.isImage && !imgUrl.isNullOrBlank()) {
-								AsyncImage(
-									model = imgUrl,
-									contentDescription = entry.name,
-									contentScale = ContentScale.Crop,
-									modifier = Modifier
-										.fillMaxWidth()
-										.aspectRatio(1.2f)
-										.clip(RoundedCornerShape(8.dp))
-										.background(MaterialTheme.colorScheme.outlineVariant),
-								)
+								var imgFailed by remember(entry.path) { mutableStateOf(false) }
+								if (!imgFailed) {
+									AsyncImage(
+										model = ImageRequest.Builder(LocalContext.current)
+											.data(imgUrl)
+											.memoryCacheKey("thumb:${entry.path}")
+											.diskCacheKey("thumb:${entry.path}")
+											.size(240, 240)
+											.precision(coil.size.Precision.INEXACT)
+											.allowRgb565(true)
+											.crossfade(false)
+											.build(),
+										contentDescription = entry.name,
+										contentScale = ContentScale.Crop,
+										onError = {
+											imgFailed = true
+											vm.markThumbnailFailed(entry.path)
+										},
+										modifier = Modifier
+											.fillMaxWidth()
+											.aspectRatio(1.2f)
+											.clip(RoundedCornerShape(8.dp))
+											.background(MaterialTheme.colorScheme.outlineVariant),
+									)
+								} else {
+									FileIconByEntry(entry = entry, size = 52.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
+								}
 							} else {
 								FileIconByEntry(entry = entry, size = 52.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
 							}
@@ -1925,6 +1944,7 @@ private fun PhotoTimelineContent(
 	onCreateAlbum: () -> Unit,
 	urlOf: (String) -> String?,
 	directUrlOf: ((String) -> String?)? = null,
+	onThumbnailError: ((String) -> Unit)? = null,
 	onOpenImage: (DavEntry) -> Unit,
 ) {
 	Column(modifier = Modifier.fillMaxSize()) {
@@ -2053,13 +2073,18 @@ private fun PhotoTimelineContent(
 							AsyncImage(
 								model = ImageRequest.Builder(LocalContext.current)
 									.data(actualData)
+									.memoryCacheKey("thumb:${item.path}")
+									.diskCacheKey("thumb:${item.path}")
 									.size(240, 240)
 									.precision(coil.size.Precision.INEXACT)
 									.allowRgb565(true)
-									.crossfade(true)
+									.crossfade(false)
 									.build(),
 								onError = {
-									if (!thumbFailed) thumbFailed = true
+									if (!thumbFailed) {
+										thumbFailed = true
+										onThumbnailError?.invoke(item.path)
+									}
 								},
 								contentDescription = item.name,
 								contentScale = ContentScale.Crop,
@@ -2099,6 +2124,7 @@ private fun MediaStreamContent(
 	onDeleteMediaFolder: (DavEntry) -> Unit,
 	onCreateMediaFolder: () -> Unit,
 	urlOf: (String) -> String?,
+	onThumbnailError: ((String) -> Unit)? = null,
 	onOpenVideo: (DavEntry) -> Unit,
 ) {
 	Column(modifier = Modifier.fillMaxSize()) {
@@ -2230,12 +2256,19 @@ private fun MediaStreamContent(
 									AsyncImage(
 										model = ImageRequest.Builder(LocalContext.current)
 											.data(thumbUrl)
-											.crossfade(true)
-											.size(640, 360)
+											.memoryCacheKey("thumb:${video.path}")
+											.diskCacheKey("thumb:${video.path}")
+											.size(320, 180)
+											.precision(coil.size.Precision.INEXACT)
+											.allowRgb565(true)
+											.crossfade(false)
 											.build(),
 										contentDescription = video.name,
 										contentScale = ContentScale.Crop,
-										onError = { thumbFailed = true },
+										onError = {
+											thumbFailed = true
+											onThumbnailError?.invoke(video.path)
+										},
 										modifier = Modifier.fillMaxSize(),
 									)
 								}

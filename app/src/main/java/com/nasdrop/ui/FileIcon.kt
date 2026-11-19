@@ -87,8 +87,12 @@ fun FileThumbnail(
 					AsyncImage(
 						model = ImageRequest.Builder(LocalContext.current)
 							.data(url)
-							.crossfade(true)
-							.size(256, 256)
+							.memoryCacheKey("thumb:${entry.path}")
+							.diskCacheKey("thumb:${entry.path}")
+							.size(240, 240)
+							.precision(coil.size.Precision.INEXACT)
+							.allowRgb565(true)
+							.crossfade(false)
 							.build(),
 						contentDescription = entry.name,
 						contentScale = ContentScale.Crop,
@@ -126,8 +130,12 @@ fun FileThumbnail(
 					AsyncImage(
 						model = ImageRequest.Builder(LocalContext.current)
 							.data(url)
-							.crossfade(true)
-							.size(160, 160)
+							.memoryCacheKey("thumb:${entry.path}")
+							.diskCacheKey("thumb:${entry.path}")
+							.size(240, 240)
+							.precision(coil.size.Precision.INEXACT)
+							.allowRgb565(true)
+							.crossfade(false)
 							.build(),
 						contentDescription = entry.name,
 						contentScale = ContentScale.Crop,

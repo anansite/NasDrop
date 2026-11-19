@@ -117,6 +117,14 @@ class WebDavClient(
 	private val thumbUrls = java.util.concurrent.ConcurrentHashMap<String, String>()
 	/** OpenList 原生直链签名：path -> sign（来自 fs/list），用于 /p/<path>?sign= 原图/原视频直链 */
 	private val signUrls = java.util.concurrent.ConcurrentHashMap<String, String>()
+	/** 记录加载失败的缩略图 key，避免每次滑动重复尝试拉取已失效的缩略图 */
+	private val failedThumbs = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+	fun markThumbnailFailed(path: String) {
+		val key = path.trim('/')
+		failedThumbs.add(key)
+		thumbUrls.remove(key)
+	}
 
 	/**
 	 * 服务端真实的 WebDAV 根前缀（例如 "/dav"），从 PROPFIND 的 href 推断。
@@ -206,14 +214,21 @@ class WebDavClient(
 	 * 看图器如果拿到"回退后的原图地址"，就会在缩略图垫底层和原图层**各下一次原图**
 	 * （/dav/ 与 /p/ 两个不同 URL，缓存互不命中），白白翻倍流量、拖慢清晰时间。
 	 */
-	fun serverThumbUrl(path: String): HttpUrl? = thumbUrls[path.trim('/')]?.toHttpUrlOrNull()
+	fun serverThumbUrl(path: String): HttpUrl? {
+		val key = path.trim('/')
+		if (failedThumbs.contains(key)) return null
+		return thumbUrls[key]?.toHttpUrlOrNull()
+	}
 
 	/**
 	 * 列表缩略图专用：命中服务端缩略图返回真图片直链，否则图片回退原图地址（视频返回 null）。
 	 * 下载/播放/删除等仍走 urlFor()，绝不受影响。
 	 */
 	fun thumbnailUrl(path: String): HttpUrl? {
-		thumbUrls[path.trim('/')]?.toHttpUrlOrNull()?.let { return it }
+		val key = path.trim('/')
+		if (!failedThumbs.contains(key)) {
+			thumbUrls[key]?.toHttpUrlOrNull()?.let { return it }
+		}
 		// 图片没有专用服务端缩略图时回退原图直链（Coil 负责按 240x240 下采样解码，内存开销极低）；
 		// 视频没有服务端缩略图时返回 null——绝不让 Coil 去拉取整个视频当图片解码。
 		val ext = path.substringAfterLast('.', "").lowercase()

@@ -478,7 +478,10 @@ private fun ZoomableImage(
 		// 第 1 层：优先完整展示低带宽缩略图（原比例 Fit，跟随缩放手势），保证进入即刻看清画面，绝不黑屏/白屏
 		if (!thumbUrl.isNullOrBlank() && !isFullLoaded) {
 			AsyncImage(
-				model = thumbUrl,
+				model = ImageRequest.Builder(LocalContext.current)
+					.data(thumbUrl)
+					.crossfade(false)
+					.build(),
 				contentDescription = null,
 				contentScale = ContentScale.Fit,
 				modifier = Modifier

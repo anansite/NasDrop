@@ -149,7 +149,6 @@ class Repository(private val context: Context) {
 			.callFactory(Call.Factory { request ->
 				(if (trustAllCerts) permissiveImage else verifiedImage).newCall(request)
 			})
-			.crossfade(true)
 			.build()
 	}
 

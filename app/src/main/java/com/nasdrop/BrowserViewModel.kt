@@ -714,6 +714,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		return client?.serverThumbUrl(key)?.toString()
 	}
 
+	fun markThumbnailFailed(entryPath: String) {
+		client?.markThumbnailFailed(entryPath)
+	}
+
 	fun loginUrl(): String = authUrl
 
 	fun logs(): String = if (TsBridge.available) TsBridge.logs() else ""
