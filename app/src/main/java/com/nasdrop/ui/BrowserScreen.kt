@@ -6,6 +6,9 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -53,6 +56,7 @@ import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.CloudDone
@@ -158,6 +162,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.input.pointer.pointerInput
@@ -451,6 +459,8 @@ fun BrowserScreen(
 								selectedPaths = vm.selectedPaths,
 								onToggleSelect = { vm.toggleSelect(it) },
 								onEnterMultiSelect = { vm.enterMultiSelect(it) },
+								onToggleSelectByPath = { path, select -> vm.toggleSelectByPath(path, select) },
+								onToggleSelectGroup = { group, select -> vm.toggleSelectGroup(group, select) },
 								onOpenAction = { activeEntryForAction = it },
 								onSelectAlbum = { vm.openAlbum(it) },
 								onDeleteAlbum = { folder -> activeFolderForDelete = Pair(folder, true) },
@@ -472,6 +482,8 @@ fun BrowserScreen(
 								selectedPaths = vm.selectedPaths,
 								onToggleSelect = { vm.toggleSelect(it) },
 								onEnterMultiSelect = { vm.enterMultiSelect(it) },
+								onToggleSelectByPath = { path, select -> vm.toggleSelectByPath(path, select) },
+								onToggleSelectGroup = { group, select -> vm.toggleSelectGroup(group, select) },
 								onOpenAction = { activeEntryForAction = it },
 								onSelectMediaFolder = { vm.openMedia(it) },
 								onDeleteMediaFolder = { folder -> activeFolderForDelete = Pair(folder, false) },
@@ -507,6 +519,50 @@ fun BrowserScreen(
 						onUploadPhoto = { photoPicker.launch(arrayOf("image/*")) },
 						onUploadVideo = { videoPicker.launch(arrayOf("video/*")) },
 					)
+				}
+
+				// 主界面全局悬浮传输灵动胶囊：在传输进行中常驻底部，实时展示任务数与速率，点击直达传输中心
+				AnimatedVisibility(
+					visible = vm.activeTransferCount > 0 && !showTransferSheet,
+					enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+					exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+					modifier = Modifier
+						.align(Alignment.BottomCenter)
+						.padding(bottom = if (vm.isMultiSelectMode) 88.dp else 16.dp),
+				) {
+					Surface(
+						shape = RoundedCornerShape(24.dp),
+						color = MaterialTheme.colorScheme.primaryContainer,
+						shadowElevation = 8.dp,
+						tonalElevation = 6.dp,
+						border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+						onClick = { showTransferSheet = true },
+					) {
+						Row(
+							modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(10.dp),
+						) {
+							Icon(
+								imageVector = Icons.Rounded.Sync,
+								contentDescription = "传输中",
+								tint = MaterialTheme.colorScheme.primary,
+								modifier = Modifier.size(18.dp),
+							)
+							Text(
+								text = "传输中 (${vm.activeTransferCount}) · ${if (vm.totalSpeedBps > 0) "${formatSize(vm.totalSpeedBps)}/s" else "正在处理…"}",
+								fontSize = 13.sp,
+								fontWeight = FontWeight.Bold,
+								color = MaterialTheme.colorScheme.onPrimaryContainer,
+							)
+							Icon(
+								imageVector = Icons.Rounded.ChevronRight,
+								contentDescription = null,
+								tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+								modifier = Modifier.size(16.dp),
+							)
+						}
+					}
 				}
 			}
 		}
@@ -1579,23 +1635,32 @@ private fun BatchActionTray(
 	onDelete: () -> Unit,
 	onCancel: () -> Unit,
 ) {
-	Surface(
-		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-		color = MaterialTheme.colorScheme.surface,
-		shadowElevation = 16.dp,
-		modifier = Modifier.fillMaxWidth(),
+	Box(
+		modifier = Modifier
+			.fillMaxWidth()
+			.padding(horizontal = 16.dp, vertical = 10.dp),
+		contentAlignment = Alignment.Center,
 	) {
-		Row(
-			modifier = Modifier
-				.fillMaxWidth()
-				.padding(horizontal = 24.dp, vertical = 14.dp),
-			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.SpaceAround,
+		Surface(
+			shape = RoundedCornerShape(26.dp),
+			color = MaterialTheme.colorScheme.surface,
+			shadowElevation = 14.dp,
+			tonalElevation = 6.dp,
+			border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+			modifier = Modifier.fillMaxWidth(),
 		) {
-			BatchActionItem(icon = Icons.Rounded.CloudDownload, label = "批量下载", onClick = onDownload)
-			BatchActionItem(icon = Icons.Rounded.DriveFileMove, label = "批量移动", onClick = onMove)
-			BatchActionItem(icon = Icons.Rounded.Delete, label = "彻底删除", onClick = onDelete, tint = MaterialTheme.colorScheme.error)
-			BatchActionItem(icon = Icons.Rounded.ArrowBack, label = "取消", onClick = onCancel)
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 16.dp, vertical = 12.dp),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.SpaceAround,
+			) {
+				BatchActionItem(icon = Icons.Rounded.CloudDownload, label = "批量下载", onClick = onDownload)
+				BatchActionItem(icon = Icons.Rounded.DriveFileMove, label = "批量移动", onClick = onMove)
+				BatchActionItem(icon = Icons.Rounded.Delete, label = "彻底删除", onClick = onDelete, tint = MaterialTheme.colorScheme.error)
+				BatchActionItem(icon = Icons.Rounded.ArrowBack, label = "取消", onClick = onCancel)
+			}
 		}
 	}
 }
@@ -1968,6 +2033,8 @@ private fun PhotoTimelineContent(
 	selectedPaths: Set<String> = emptySet(),
 	onToggleSelect: (DavEntry) -> Unit = {},
 	onEnterMultiSelect: (DavEntry) -> Unit = {},
+	onToggleSelectByPath: ((String, Boolean) -> Unit)? = null,
+	onToggleSelectGroup: ((com.nasdrop.TimelineGroup, Boolean) -> Unit)? = null,
 	onOpenAction: (DavEntry) -> Unit = {},
 	onSelectAlbum: (String) -> Unit,
 	onDeleteAlbum: (DavEntry) -> Unit,
@@ -1977,6 +2044,10 @@ private fun PhotoTimelineContent(
 	onThumbnailError: ((String) -> Unit)? = null,
 	onOpenImage: (DavEntry) -> Unit,
 ) {
+	val haptic = LocalHapticFeedback.current
+	var dragSelectActive by remember { mutableStateOf(false) }
+	var dragSelectInitialState by remember { mutableStateOf(true) }
+	var lastDraggedItemPath by remember { mutableStateOf<String?>(null) }
 	Column(modifier = Modifier.fillMaxSize()) {
 		// 1. 顶部子相册分类横滑条（紧凑轻盈胶囊）
 		LazyRow(
@@ -2062,26 +2133,116 @@ private fun PhotoTimelineContent(
 				contentPadding = PaddingValues(4.dp),
 				horizontalArrangement = Arrangement.spacedBy(3.dp),
 				verticalArrangement = Arrangement.spacedBy(3.dp),
-				modifier = Modifier.fillMaxSize(),
+				modifier = Modifier
+					.fillMaxSize()
+					.pointerInput(isMulti) {
+						detectDragGesturesAfterLongPress(
+							onDragStart = { offset ->
+								val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+									offset.x.toInt() in info.offset.x..(info.offset.x + info.size.width) &&
+									offset.y.toInt() in info.offset.y..(info.offset.y + info.size.height)
+								}
+								val keyPath = hit?.key as? String
+								if (keyPath != null && keyPath.startsWith("/")) {
+									dragSelectActive = true
+									val currentlySelected = selectedPaths.contains(keyPath)
+									dragSelectInitialState = !currentlySelected
+									lastDraggedItemPath = keyPath
+									if (!isMulti) {
+										val entry = groups.flatMap { it.items }.firstOrNull { it.path == keyPath }
+										if (entry != null) onEnterMultiSelect(entry)
+									} else {
+										onToggleSelectByPath?.invoke(keyPath, dragSelectInitialState)
+									}
+									haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+								}
+							},
+							onDrag = { change, _ ->
+								if (dragSelectActive) {
+									change.consume()
+									val pos = change.position
+									val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+										pos.x.toInt() in info.offset.x..(info.offset.x + info.size.width) &&
+										pos.y.toInt() in info.offset.y..(info.offset.y + info.size.height)
+									}
+									val keyPath = hit?.key as? String
+									if (keyPath != null && keyPath.startsWith("/") && keyPath != lastDraggedItemPath) {
+										lastDraggedItemPath = keyPath
+										onToggleSelectByPath?.invoke(keyPath, dragSelectInitialState)
+										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+									}
+								}
+							},
+							onDragEnd = {
+								dragSelectActive = false
+								lastDraggedItemPath = null
+							},
+							onDragCancel = {
+								dragSelectActive = false
+								lastDraggedItemPath = null
+							},
+						)
+					},
 			) {
 				groups.forEach { group ->
 					item(span = { GridItemSpan(3) }) {
 						Row(
-							modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+							modifier = Modifier
+								.fillMaxWidth()
+								.padding(horizontal = 10.dp, vertical = 6.dp),
 							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(8.dp),
+							horizontalArrangement = Arrangement.SpaceBetween,
 						) {
-							Text(group.dateTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-							Text("${group.count}张", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+							Row(
+								verticalAlignment = Alignment.CenterVertically,
+								horizontalArrangement = Arrangement.spacedBy(8.dp),
+							) {
+								Text(group.dateTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+								Text("${group.count}张", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+							}
+							if (isMulti) {
+								val isAllGroupSelected = group.items.isNotEmpty() && group.items.all { selectedPaths.contains(it.path) }
+								Surface(
+									shape = RoundedCornerShape(12.dp),
+									color = if (isAllGroupSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+									onClick = {
+										onToggleSelectGroup?.invoke(group, !isAllGroupSelected)
+									},
+								) {
+									Text(
+										text = if (isAllGroupSelected) "取消全选" else "全选",
+										fontSize = 12.sp,
+										fontWeight = FontWeight.Bold,
+										color = if (isAllGroupSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
+										modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+									)
+								}
+							}
 						}
 					}
 
 					items(group.items, key = { it.path }) { item ->
 						val isSelected = selectedPaths.contains(item.path)
+						val targetScale = if (isMulti && isSelected) 0.88f else 1f
+						val scale by animateFloatAsState(
+							targetValue = targetScale,
+							animationSpec = spring(
+								dampingRatio = Spring.DampingRatioMediumBouncy,
+								stiffness = Spring.StiffnessLow,
+							),
+							label = "photo_scale",
+						)
+						val cornerRadius = if (isMulti && isSelected) 10.dp else 4.dp
+						val borderStroke = if (isMulti && isSelected) BorderStroke(2.5.dp, MaterialTheme.colorScheme.primary) else null
 						Box(
 							modifier = Modifier
 								.aspectRatio(1f)
-								.clip(RoundedCornerShape(4.dp))
+								.graphicsLayer {
+									scaleX = scale
+									scaleY = scale
+								}
+								.clip(RoundedCornerShape(cornerRadius))
+								.then(if (borderStroke != null) Modifier.border(borderStroke, RoundedCornerShape(cornerRadius)) else Modifier)
 								.background(MaterialTheme.colorScheme.outlineVariant)
 								.combinedClickable(
 									onClick = {
@@ -2436,7 +2597,32 @@ private fun TransferCenterSheet(
 	onShowNetworkSheet: () -> Unit = {},
 ) {
 	var filter by rememberSaveable { mutableIntStateOf(0) }
+	val haptic = LocalHapticFeedback.current
+	val completedCount = tasks.count { it.status == TransferStatus.COMPLETED }
 	val finishedStates = setOf(TransferStatus.COMPLETED, TransferStatus.FAILED, TransferStatus.CANCELLED)
+
+	// 监听完成项计数增长，触发一次轻微触觉震动反馈，给予实时的成就感与爽快感
+	LaunchedEffect(completedCount) {
+		if (completedCount > 0) {
+			haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+		}
+	}
+
+	val totalCount = tasks.size
+	val runningTasks = tasks.filter { it.status == TransferStatus.RUNNING || it.status == TransferStatus.CONFIRMING }
+	val hasActiveRunning = runningTasks.isNotEmpty()
+	val isAllCompleted = totalCount > 0 && tasks.all { it.status == TransferStatus.COMPLETED }
+	val totalBytes = tasks.sumOf { it.totalBytes }
+	val sentBytes = tasks.sumOf { it.sentBytes }
+	val rawBatchProgress = if (totalBytes > 0) (sentBytes.toFloat() / totalBytes).coerceIn(0f, 1f)
+		else if (totalCount > 0) (completedCount.toFloat() / totalCount).coerceIn(0f, 1f)
+		else 0f
+	val animatedBatchProgress by animateFloatAsState(
+		targetValue = rawBatchProgress,
+		animationSpec = spring(stiffness = Spring.StiffnessLow),
+		label = "batch_progress"
+	)
+
 	val visibleTasks = tasks.filter {
 		when (filter) {
 			1 -> it.isUpload
@@ -2464,10 +2650,81 @@ private fun TransferCenterSheet(
 				}
 				IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, contentDescription = "关闭传输中心") }
 			}
-			Text(
-				"${tasks.count { it.status !in finishedStates }} 个进行中 · ${tasks.count { it.status == TransferStatus.COMPLETED }} 个完成 · ${tasks.count { it.status == TransferStatus.FAILED }} 个失败 · ${tasks.count { it.status == TransferStatus.CANCELLED }} 个取消",
-				style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-			)
+
+			// 传输批次总览 Hero Card
+			if (totalCount > 0) {
+				Surface(
+					shape = RoundedCornerShape(16.dp),
+					color = if (isAllCompleted) Color(0xFF2E7D32).copy(alpha = 0.12f) else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+					border = BorderStroke(1.dp, if (isAllCompleted) Color(0xFF2E7D32).copy(alpha = 0.35f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
+					modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 4.dp),
+				) {
+					Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+						Row(
+							modifier = Modifier.fillMaxWidth(),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.SpaceBetween,
+						) {
+							Row(
+								verticalAlignment = Alignment.CenterVertically,
+								horizontalArrangement = Arrangement.spacedBy(8.dp),
+							) {
+								Icon(
+									if (isAllCompleted) Icons.Rounded.CheckCircle else Icons.Rounded.Sync,
+									contentDescription = null,
+									tint = if (isAllCompleted) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary,
+									modifier = Modifier.size(18.dp)
+								)
+								Text(
+									if (isAllCompleted) "本批次任务已全部完成 🎉"
+									else "批次传输中 (${(rawBatchProgress * 100).toInt()}%)",
+									style = MaterialTheme.typography.titleSmall,
+									fontWeight = FontWeight.Bold,
+									color = if (isAllCompleted) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface,
+								)
+							}
+							Text(
+								if (hasActiveRunning && totalSpeedBps > 0) "${formatSize(totalSpeedBps)}/s"
+								else if (isAllCompleted) "共 $totalCount 项"
+								else "${completedCount} / $totalCount 项",
+								style = MaterialTheme.typography.labelMedium,
+								fontWeight = FontWeight.Bold,
+								color = if (isAllCompleted) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary,
+							)
+						}
+						Spacer(modifier = Modifier.height(10.dp))
+						LinearProgressIndicator(
+							progress = { if (isAllCompleted) 1f else animatedBatchProgress },
+							color = if (isAllCompleted) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary,
+							trackColor = MaterialTheme.colorScheme.surfaceVariant,
+							modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+						)
+						Spacer(modifier = Modifier.height(6.dp))
+						Row(
+							modifier = Modifier.fillMaxWidth(),
+							horizontalArrangement = Arrangement.SpaceBetween,
+						) {
+							Text(
+								"已完成 $completedCount / $totalCount 项",
+								style = MaterialTheme.typography.bodySmall,
+								color = MaterialTheme.colorScheme.onSurfaceVariant,
+							)
+							if (totalBytes > 0) {
+								Text(
+									"${formatSize(sentBytes)} / ${formatSize(totalBytes)}",
+									style = MaterialTheme.typography.bodySmall,
+									color = MaterialTheme.colorScheme.onSurfaceVariant,
+								)
+							}
+						}
+					}
+				}
+			} else {
+				Text(
+					"${tasks.count { it.status !in finishedStates }} 个进行中 · ${tasks.count { it.status == TransferStatus.COMPLETED }} 个完成 · ${tasks.count { it.status == TransferStatus.FAILED }} 个失败 · ${tasks.count { it.status == TransferStatus.CANCELLED }} 个取消",
+					style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+				)
+			}
 			val hasActiveRunning = tasks.any { it.status == TransferStatus.RUNNING || it.status == TransferStatus.CONFIRMING }
 			if (hasActiveRunning) {
 				Text(
@@ -2500,27 +2757,51 @@ private fun TransferCenterSheet(
 			} else {
 				LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
 					items(visibleTasks, key = { it.id }) { task ->
+						val isCompleted = task.status == TransferStatus.COMPLETED
 						val terminal = task.status in finishedStates
 						val statusText = when (task.status) {
 							TransferStatus.RUNNING -> if (task.isUpload) "正在上传" else "正在下载"
 							TransferStatus.CONFIRMING -> "正在写入存储…"
 							TransferStatus.QUEUED -> "排队等待中"
 							TransferStatus.PAUSED -> "已暂停"
-							TransferStatus.COMPLETED -> if (task.isUpload) "上传完成" else "下载完成"
+							TransferStatus.COMPLETED -> if (task.isUpload) "✓ 上传完成" else "✓ 下载完成"
 							TransferStatus.FAILED -> "传输失败"
 							TransferStatus.CANCELLED -> "已取消"
 						}
-						Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.medium) {
+						Surface(
+							color = if (isCompleted) Color(0xFF2E7D32).copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant,
+							shape = MaterialTheme.shapes.medium,
+							border = if (isCompleted) BorderStroke(1.dp, Color(0xFF2E7D32).copy(alpha = 0.35f)) else null,
+						) {
 							Column(Modifier.fillMaxWidth().padding(16.dp)) {
 								Row(verticalAlignment = Alignment.CenterVertically) {
-									Icon(if (task.isUpload) Icons.Rounded.CloudUpload else Icons.Rounded.CloudDownload, contentDescription = if (task.isUpload) "上传" else "下载", tint = MaterialTheme.colorScheme.primary)
+									Icon(
+										if (isCompleted) Icons.Rounded.CheckCircle
+										else if (task.isUpload) Icons.Rounded.CloudUpload
+										else Icons.Rounded.CloudDownload,
+										contentDescription = if (task.isUpload) "上传" else "下载",
+										tint = if (isCompleted) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary,
+									)
 									Text(task.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f).padding(start = 10.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
 								}
-								Text(statusText, style = MaterialTheme.typography.bodyMedium, color = if (task.status == TransferStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(top = 10.dp))
+								Text(
+									statusText,
+									style = MaterialTheme.typography.bodyMedium,
+									fontWeight = if (isCompleted) FontWeight.Bold else FontWeight.Normal,
+									color = if (isCompleted) Color(0xFF2E7D32) else if (task.status == TransferStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+									modifier = Modifier.padding(top = 10.dp)
+								)
 								if (task.status == TransferStatus.FAILED && !task.error.isNullOrBlank()) {
 									Text(task.error.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
 								}
-								if (!terminal) {
+								if (isCompleted) {
+									// 满格 100% 翡翠绿进度条，强化逐项完成的成就感
+									LinearProgressIndicator(
+										progress = { 1f },
+										color = Color(0xFF2E7D32),
+										modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(4.dp).clip(RoundedCornerShape(2.dp)),
+									)
+								} else if (!terminal) {
 									if (task.status == TransferStatus.CONFIRMING) {
 										LinearProgressIndicator(progress = { 0.99f }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
 									} else if (task.status == TransferStatus.RUNNING && task.totalBytes <= 0) {

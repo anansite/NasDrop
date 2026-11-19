@@ -9,7 +9,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
@@ -17,6 +20,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.geometry.CornerRadius
@@ -115,7 +119,12 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
+import android.content.ClipboardManager
+import android.content.ClipData
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -123,6 +132,8 @@ import com.nasdrop.NasDb
 import com.nasdrop.DavEntry
 import com.nasdrop.app
 import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 /**
@@ -224,6 +235,7 @@ fun ImageViewer(
 						isCurrentZoomed = zoomed
 					}
 				},
+				onDismiss = { onBack(current) },
 			)
 		}
 
@@ -391,24 +403,60 @@ fun ImageViewer(
 			}
 		}
 
-		// 详情弹窗
+		// 底部图片属性与参数抽屉
 		if (showInfoDialog) {
-			AlertDialog(
+			ModalBottomSheet(
 				onDismissRequest = { showInfoDialog = false },
-				title = { Text("图片详情", fontWeight = FontWeight.Bold) },
-				text = {
-					Column {
-						Text("名称: ${current.name}", style = MaterialTheme.typography.bodyMedium)
-						Spacer(Modifier.height(8.dp))
-						Text("大小: ${current.sizeHuman}", style = MaterialTheme.typography.bodyMedium)
-						Spacer(Modifier.height(8.dp))
-						Text("路径: ${current.path}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+				containerColor = MaterialTheme.colorScheme.surface,
+			) {
+				Column(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(horizontal = 24.dp)
+						.padding(bottom = 36.dp),
+					verticalArrangement = Arrangement.spacedBy(16.dp),
+				) {
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.SpaceBetween,
+					) {
+						Text("图片属性详情", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+						IconButton(onClick = { showInfoDialog = false }) {
+							Icon(Icons.Rounded.Close, contentDescription = "关闭")
+						}
 					}
-				},
-				confirmButton = {
-					TextButton(onClick = { showInfoDialog = false }) { Text("关闭") }
-				},
-			)
+
+					Surface(
+						shape = RoundedCornerShape(16.dp),
+						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+						modifier = Modifier.fillMaxWidth(),
+					) {
+						Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+							ImageDetailItem(label = "文件名称", value = current.name)
+							ImageDetailItem(label = "文件大小", value = current.sizeHuman.ifBlank { formatSize(current.size) })
+							ImageDetailItem(
+								label = "存储路径",
+								value = current.path,
+								canCopy = true,
+								onCopy = {
+									val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+									clipboard?.setPrimaryClip(ClipData.newPlainText("NAS Path", current.path))
+									Toast.makeText(context, "已复制存储路径", Toast.LENGTH_SHORT).show()
+								}
+							)
+							ImageDetailItem(
+								label = "修改时间",
+								value = if (current.modified > 0) SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(current.modified)) else "未知"
+							)
+							ImageDetailItem(
+								label = "文件类型",
+								value = current.name.substringAfterLast('.', "未知").uppercase(Locale.ROOT)
+							)
+						}
+					}
+				}
+			}
 		}
 
 		// 删除确认弹窗
@@ -442,6 +490,31 @@ fun ImageViewer(
 }
 
 @Composable
+private fun ImageDetailItem(
+	label: String,
+	value: String,
+	canCopy: Boolean = false,
+	onCopy: (() -> Unit)? = null,
+) {
+	Row(
+		modifier = Modifier.fillMaxWidth(),
+		verticalAlignment = Alignment.CenterVertically,
+		horizontalArrangement = Arrangement.SpaceBetween,
+	) {
+		Column(modifier = Modifier.weight(1f)) {
+			Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+			Spacer(modifier = Modifier.height(2.dp))
+			Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
+		}
+		if (canCopy && onCopy != null) {
+			IconButton(onClick = onCopy, modifier = Modifier.size(32.dp)) {
+				Icon(Icons.Rounded.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+			}
+		}
+	}
+}
+
+@Composable
 private fun ZoomableImage(
 	url: String?,
 	thumbUrl: String?,
@@ -450,10 +523,17 @@ private fun ZoomableImage(
 	targetSize: Size,
 	onToggleControls: () -> Unit,
 	onZoomChanged: (Boolean) -> Unit = {},
+	onDismiss: () -> Unit = {},
 ) {
 	var scale by remember { mutableFloatStateOf(1f) }
 	var dx by remember { mutableFloatStateOf(0f) }
 	var dy by remember { mutableFloatStateOf(0f) }
+	var dismissOffsetY by remember { mutableFloatStateOf(0f) }
+	val animatedDismissOffsetY by animateFloatAsState(
+		targetValue = dismissOffsetY,
+		animationSpec = spring(stiffness = Spring.StiffnessMedium),
+		label = "dismiss_offset"
+	)
 	val context = LocalContext.current
 
 	// 点开默认立即拉取原图；原图就绪前以缩略图垫底秒开展示，并附带轻巧加载指示
@@ -480,6 +560,28 @@ private fun ZoomableImage(
 	Box(
 		modifier = Modifier
 			.fillMaxSize()
+			.pointerInput(scale <= 1.05f) {
+				if (scale <= 1.05f) {
+					detectVerticalDragGestures(
+						onVerticalDrag = { change, dragAmount ->
+							if (dragAmount > 0 || dismissOffsetY > 0) {
+								change.consume()
+								dismissOffsetY = (dismissOffsetY + dragAmount).coerceAtLeast(0f)
+							}
+						},
+						onDragEnd = {
+							if (dismissOffsetY > 160f) {
+								onDismiss()
+							} else {
+								dismissOffsetY = 0f
+							}
+						},
+						onDragCancel = {
+							dismissOffsetY = 0f
+						}
+					)
+				}
+			}
 			.pointerInput(Unit) {
 				detectTapGestures(onTap = { onToggleControls() })
 			},
@@ -497,10 +599,11 @@ private fun ZoomableImage(
 				modifier = Modifier
 					.fillMaxSize()
 					.graphicsLayer {
-						scaleX = scale
-						scaleY = scale
+						val dragFraction = (animatedDismissOffsetY / 1500f).coerceIn(0f, 0.35f)
+						scaleX = scale * (1f - dragFraction)
+						scaleY = scale * (1f - dragFraction)
 						translationX = dx
-						translationY = dy
+						translationY = dy + animatedDismissOffsetY
 					},
 			)
 		}
@@ -517,10 +620,11 @@ private fun ZoomableImage(
 				modifier = Modifier
 					.fillMaxSize()
 					.graphicsLayer {
-						scaleX = scale
-						scaleY = scale
+						val dragFraction = (animatedDismissOffsetY / 1500f).coerceIn(0f, 0.35f)
+						scaleX = scale * (1f - dragFraction)
+						scaleY = scale * (1f - dragFraction)
 						translationX = dx
-						translationY = dy
+						translationY = dy + animatedDismissOffsetY
 					}
 					.then(
 						if (scale > 1.05f) {
@@ -795,6 +899,8 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 	var bufferedPosition by remember { mutableLongStateOf(0L) }
 	var duration by remember { mutableLongStateOf(0L) }
 	var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
+	var normalPlaybackSpeed by remember { mutableFloatStateOf(1.0f) }
+	var lastTapTimestamp by remember { mutableLongStateOf(0L) }
 	var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
 	var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
@@ -945,7 +1051,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 			modifier = Modifier.fillMaxSize(),
 		)
 
-		// 全屏透明交互手势层（位于 PlayerView 之上，优先捕捉点击唤出/隐藏控制栏与滑动手势）
+		// 全屏透明交互手势层（位于 PlayerView 之上，优先捕捉长按 2.0x、双击快退/快进、点击显隐控制栏与滑动手势）
 		Box(
 			modifier = Modifier
 				.fillMaxSize()
@@ -959,69 +1065,114 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						var totalDy = 0f
 						val isRightSide = startPos.x > size.width / 2f
 						var isSeeking = false
+						var longPressTriggered = false
 
 						while (true) {
 							val event = awaitPointerEvent()
 							val change = event.changes.firstOrNull { it.id == down.id } ?: break
+							val elapsed = System.currentTimeMillis() - startTime
+
 							if (!change.pressed) {
 								// 松手（UP）
-								val elapsed = System.currentTimeMillis() - startTime
-								val distSq = (change.position.x - startPos.x) * (change.position.x - startPos.x) +
-									(change.position.y - startPos.y) * (change.position.y - startPos.y)
-								if (!isDrag && distSq < 900 && elapsed < 400) {
-									// 确认无大幅滑动、短时抬手：100% 触发控制栏显隐切换
-									showControls = !showControls
-									lastInteractionTime = System.currentTimeMillis()
+								if (longPressTriggered) {
+									// 长按松手：立即平滑恢复原播放速度
+									player.playbackParameters = PlaybackParameters(normalPlaybackSpeed)
+									hudVisible = false
+								} else {
+									val distSq = (change.position.x - startPos.x) * (change.position.x - startPos.x) +
+										(change.position.y - startPos.y) * (change.position.y - startPos.y)
+									if (!isDrag && distSq < 900 && elapsed < 400) {
+										val now = System.currentTimeMillis()
+										if (now - lastTapTimestamp < 350) {
+											// 双击手势：左右两侧快退/快进 10s，中间切换播放/暂停
+											lastTapTimestamp = 0L
+											if (startPos.x < size.width * 0.35f) {
+												val target = (player.currentPosition - 10000L).coerceAtLeast(0L)
+												player.seekTo(target)
+												currentPosition = target
+												hudText = "⏪ 快退 10 秒"
+												hudVisible = true
+											} else if (startPos.x > size.width * 0.65f) {
+												val target = (player.currentPosition + 10000L).coerceAtMost(duration.coerceAtLeast(1L))
+												player.seekTo(target)
+												currentPosition = target
+												hudText = "⏩ 快进 10 秒"
+												hudVisible = true
+											} else {
+												if (player.isPlaying) player.pause() else player.play()
+												hudText = if (player.isPlaying) "⏸ 暂停" else "▶ 播放"
+												hudVisible = true
+											}
+											lastInteractionTime = System.currentTimeMillis()
+										} else {
+											lastTapTimestamp = now
+											showControls = !showControls
+											lastInteractionTime = System.currentTimeMillis()
+										}
+									}
+									if (isSeeking) {
+										val seekDelta = (totalDx * 150).toLong()
+										val target = (player.currentPosition + seekDelta).coerceIn(0L, duration.coerceAtLeast(1L))
+										player.seekTo(target)
+										currentPosition = target
+										lastInteractionTime = System.currentTimeMillis()
+									}
+									if (!longPressTriggered) {
+										hudVisible = false
+									}
 								}
-								if (isSeeking) {
-									val seekDelta = (totalDx * 150).toLong()
-									val target = (player.currentPosition + seekDelta).coerceIn(0L, duration.coerceAtLeast(1L))
-									player.seekTo(target)
-									currentPosition = target
-									lastInteractionTime = System.currentTimeMillis()
-								}
-								hudVisible = false
 								break
 							} else {
 								val dx = change.position.x - startPos.x
 								val dy = change.position.y - startPos.y
 								val distSq = dx * dx + dy * dy
-								// 移动超过 30 像素才判定为拖拽，彻底避免单击产生微抖误触快进
-								if (!isDrag && distSq > 900) {
-									isDrag = true
+
+								// 长按 2.0x 极速检测：未滑动且持续按压超过 400ms 触发
+								if (!isDrag && distSq < 900 && elapsed >= 400 && !longPressTriggered) {
+									longPressTriggered = true
+									normalPlaybackSpeed = player.playbackParameters.speed
+									player.playbackParameters = PlaybackParameters(2.0f)
+									hudText = "▶▶ 2.0X 极速快进中"
+									hudVisible = true
 								}
-								if (isDrag) {
-									change.consume()
-									totalDx = dx
-									totalDy = dy
-									lastInteractionTime = System.currentTimeMillis()
-									if (kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy) * 1.5f || isSeeking) {
-										// 水平滑动：快进 / 快退
-										isSeeking = true
-										val seekDelta = (totalDx * 150).toLong()
-										val target = (player.currentPosition + seekDelta).coerceIn(0L, duration.coerceAtLeast(1L))
-										hudText = "${formatTime(target)} / ${formatTime(duration)}"
-										hudVisible = true
-									} else {
-										// 垂直滑动：左侧调节屏幕亮度，右侧调节媒体音量
-										val deltaFraction = -dy / size.height.toFloat()
-										if (isRightSide) {
-											val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-											val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-											val newVol = (curVol + (deltaFraction * maxVol * 1.5f).toInt()).coerceIn(0, maxVol)
-											audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
-											val percent = (newVol * 100) / maxVol
-											hudText = "音量: $percent%"
+
+								if (!longPressTriggered) {
+									if (!isDrag && distSq > 900) {
+										isDrag = true
+									}
+									if (isDrag) {
+										change.consume()
+										totalDx = dx
+										totalDy = dy
+										lastInteractionTime = System.currentTimeMillis()
+										if (kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy) * 1.5f || isSeeking) {
+											// 水平滑动：快进 / 快退
+											isSeeking = true
+											val seekDelta = (totalDx * 150).toLong()
+											val target = (player.currentPosition + seekDelta).coerceIn(0L, duration.coerceAtLeast(1L))
+											hudText = "${formatTime(target)} / ${formatTime(duration)}"
 											hudVisible = true
 										} else {
-											activity?.window?.let { win ->
-												val lp = win.attributes
-												val curB = if (lp.screenBrightness < 0f) 0.5f else lp.screenBrightness
-												val newB = (curB + deltaFraction * 1.2f).coerceIn(0.05f, 1f)
-												lp.screenBrightness = newB
-												win.attributes = lp
-												hudText = "亮度: ${(newB * 100).toInt()}%"
+											// 垂直滑动：左侧调节屏幕亮度，右侧调节媒体音量
+											val deltaFraction = -dy / size.height.toFloat()
+											if (isRightSide) {
+												val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+												val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+												val newVol = (curVol + (deltaFraction * maxVol * 1.5f).toInt()).coerceIn(0, maxVol)
+												audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
+												val percent = (newVol * 100) / maxVol
+												hudText = "音量: $percent%"
 												hudVisible = true
+											} else {
+												activity?.window?.let { win ->
+													val lp = win.attributes
+													val curB = if (lp.screenBrightness < 0f) 0.5f else lp.screenBrightness
+													val newB = (curB + deltaFraction * 1.2f).coerceIn(0.05f, 1f)
+													lp.screenBrightness = newB
+													win.attributes = lp
+													hudText = "亮度: ${(newB * 100).toInt()}%"
+													hudVisible = true
+												}
 											}
 										}
 									}
@@ -1052,6 +1203,11 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 					Icon(
 						imageVector = if (hudText.contains("音量")) Icons.Rounded.VolumeUp
 						else if (hudText.contains("亮度")) Icons.Rounded.BrightnessMedium
+						else if (hudText.contains("快退") || hudText.contains("⏪")) Icons.Rounded.Replay10
+						else if (hudText.contains("快进") || hudText.contains("⏩")) Icons.Rounded.Forward10
+						else if (hudText.contains("2.0X")) Icons.Rounded.FastForward
+						else if (hudText.contains("暂停")) Icons.Rounded.Pause
+						else if (hudText.contains("播放")) Icons.Rounded.PlayArrow
 						else Icons.Rounded.FastForward,
 						contentDescription = null,
 						tint = OnMediaBackdrop,
@@ -1277,6 +1433,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 								val nextIdx = (speeds.indexOf(playbackSpeed) + 1) % speeds.size
 								val nextSpeed = speeds[nextIdx]
 								playbackSpeed = nextSpeed
+								normalPlaybackSpeed = nextSpeed
 								player.playbackParameters = PlaybackParameters(nextSpeed)
 								lastInteractionTime = System.currentTimeMillis()
 							},

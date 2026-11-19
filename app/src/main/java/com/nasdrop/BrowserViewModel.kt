@@ -991,6 +991,30 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		selectedEntries = currentItems.toSet()
 	}
 
+	fun toggleSelectByPath(path: String, select: Boolean) {
+		val found = currentAlbumPhotos.firstOrNull { it.path == path }
+			?: filteredEntries.firstOrNull { it.path == path }
+			?: currentMediaVideos.firstOrNull { it.path == path }
+			?: return
+		val newSet = selectedEntries.toMutableSet()
+		if (select) {
+			newSet.add(found)
+		} else {
+			newSet.remove(found)
+		}
+		selectedEntries = newSet
+	}
+
+	fun toggleSelectGroup(group: TimelineGroup, select: Boolean) {
+		val newSet = selectedEntries.toMutableSet()
+		if (select) {
+			newSet.addAll(group.items)
+		} else {
+			newSet.removeAll(group.items.toSet())
+		}
+		selectedEntries = newSet
+	}
+
 	/** 批量删除仅撤销已成功路径的上传覆盖，失败项保留并由刷新恢复。 */
 	fun batchDelete(onDone: (Int, Int) -> Unit = { _, _ -> }) {
 		val targets = selectedEntries.toList()
