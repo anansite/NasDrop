@@ -204,8 +204,8 @@ class Repository(private val context: Context) {
 		_routeInfo.value = RouteInfo(false, false, "", "", "正在连接…", isProbing = true)
 
 		var base: HttpUrl = root
-		// 强制组网绝不探测或退回系统直连；直连模式直接访问，自动模式才进行可达性探测。
-		val direct = if (normalized.connectionMode == ConnectionMode.Auto) doDirectProbe(root, normalized.user, normalized.password) else null
+		// 直连与自动模式优先探测真实连通性；强制组网则始终走内嵌 Tailscale
+		val direct = if (normalized.connectionMode != ConnectionMode.Tailscale) doDirectProbe(root, normalized.user, normalized.password) else null
 		if (direct != null) {
 			directConfirmed = direct
 			_routeInfo.value = RouteInfo(
@@ -237,7 +237,16 @@ class Repository(private val context: Context) {
 				throw IllegalStateException("当前安装包未包含内嵌 Tailscale，请安装完整版或在可直连网络下选择直连模式")
 			}
 		} else {
-			_routeInfo.value = RouteInfo(true, false, root.host, "Direct", "系统直连")
+			// 用户指定了直连模式，但实测探测不可达：真实呈现不可达状态，绝不伪造"系统直连"
+			_routeInfo.value = RouteInfo(
+				isDirect = false,
+				isRelay = false,
+				endpoint = "",
+				peerName = "",
+				label = "直连不可达（无法访问 ${root.host}）",
+				isProbing = false,
+				isLanDirect = false,
+			)
 		}
 
 		val apiOrigin = base.newBuilder().encodedPath("/").query(null).fragment(null).build()
@@ -347,8 +356,29 @@ class Repository(private val context: Context) {
 
 	/** 主动触发 NAT 打洞，促使链路从 DERP 中继切换为 P2P 直连 */
 	fun triggerHolePunch(): String {
-		if (directConfirmed != null || cachedKey?.connectionMode == ConnectionMode.Direct) {
-			return "当前使用系统直连，无需 Tailscale 打洞"
+		if (cachedKey?.connectionMode == ConnectionMode.Direct) {
+			val root = cachedKey?.baseUrl?.toHttpUrlOrNull()
+			if (root != null) {
+				val direct = doDirectProbe(root, cachedKey!!.user, cachedKey!!.password)
+				if (direct != null) {
+					directConfirmed = direct
+					_routeInfo.value = RouteInfo(
+						isDirect = true,
+						isRelay = false,
+						endpoint = direct.ip,
+						peerName = if (direct.isLan) "LAN" else "Direct",
+						label = if (direct.isLan) "局域网直连 · ${direct.latencyMs}ms" else "系统直连 · ${direct.latencyMs}ms",
+						latencyMs = direct.latencyMs,
+						isProbing = false,
+						isLanDirect = direct.isLan,
+					)
+					return "直连连通正常 (延迟 ${direct.latencyMs}ms)"
+				} else {
+					directConfirmed = null
+					_routeInfo.value = RouteInfo(false, false, "", "", "直连无法访问 ${root.host}", isProbing = false)
+					return "直连探测失败，无法连接到目标服务"
+				}
+			}
 		}
 		val result = TsBridge.punchHole()
 		updateRouteInfo()
@@ -357,7 +387,7 @@ class Repository(private val context: Context) {
 
 	/** 刷新链路状态（判断是 P2P 直连打洞还是 DERP 中继代理） */
 	fun updateRouteInfo() {
-		if (directConfirmed != null || cachedKey?.connectionMode == ConnectionMode.Direct) {
+		if (cachedKey?.connectionMode == ConnectionMode.Direct && directConfirmed != null) {
 			return // 局域网直连模式保持原样，不被 Tailscale 状态覆盖
 		}
 		val info = TsBridge.peerLinkInfo()

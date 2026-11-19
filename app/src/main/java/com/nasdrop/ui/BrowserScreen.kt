@@ -454,6 +454,7 @@ fun BrowserScreen(
 								onDeleteAlbum = { folder -> activeFolderForDelete = Pair(folder, true) },
 								onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 								urlOf = { vm.thumbnailUrlFor(it) },
+								directUrlOf = { vm.directUrlFor(it) },
 								onOpenImage = onOpenImage,
 							)
 						}
@@ -1891,6 +1892,7 @@ private fun PhotoTimelineContent(
 	onDeleteAlbum: (DavEntry) -> Unit,
 	onCreateAlbum: () -> Unit,
 	urlOf: (String) -> String?,
+	directUrlOf: ((String) -> String?)? = null,
 	onOpenImage: (DavEntry) -> Unit,
 ) {
 	Column(modifier = Modifier.fillMaxSize()) {
@@ -2014,14 +2016,19 @@ private fun PhotoTimelineContent(
 								),
 						) {
 							val thumbTarget = urlOf(item.path)
+							var thumbFailed by remember(item.path) { mutableStateOf(false) }
+							val actualData = if (thumbFailed && directUrlOf != null) directUrlOf(item.path) else (thumbTarget ?: directUrlOf?.invoke(item.path))
 							AsyncImage(
 								model = ImageRequest.Builder(LocalContext.current)
-									.data(thumbTarget)
+									.data(actualData)
 									.size(240, 240)
 									.precision(coil.size.Precision.INEXACT)
 									.allowRgb565(true)
-									.crossfade(false)
+									.crossfade(true)
 									.build(),
+								onError = {
+									if (!thumbFailed) thumbFailed = true
+								},
 								contentDescription = item.name,
 								contentScale = ContentScale.Crop,
 								modifier = Modifier.fillMaxSize(),
@@ -2473,15 +2480,19 @@ private fun NetworkManagerSheet(
 					HumanNetworkPill(routeInfo = routeInfo, onClick = {})
 					Spacer(modifier = Modifier.height(8.dp))
 					Text(
-						text = if (routeInfo.isDirect) "当前通过直连高速访问 NAS。"
-						else "当前通过 Tailscale 中继转发，速度受 DERP 服务器带宽限制。若在同网络或已配置系统组网，可强制锁定直连。",
+						text = when {
+							routeInfo.isLanDirect -> "当前通过本地局域网高速直连，物理延迟极低，跑满局域网最高带宽。"
+							routeInfo.isDirect && !routeInfo.isRelay -> "当前已成功建立 P2P 点对点直连打洞，流量直接点对点传输，不走中继服务器。"
+							routeInfo.isRelay -> "当前通过 Tailscale DERP 中继转发，速度受服务器带宽限制。可点击下方「强制打洞直连」促成双方 P2P 直连。"
+							else -> routeInfo.label.ifBlank { "当前正在检测网络链路状态…" }
+						},
 						fontSize = 12.sp,
 						color = MaterialTheme.colorScheme.onSurface,
 						lineHeight = 18.sp,
 					)
-					Spacer(modifier = Modifier.height(4.dp))
+					Spacer(modifier = Modifier.height(6.dp))
 					Text(
-						text = "当前工作模式：${currentMode.title}（${currentMode.desc}）",
+						text = "工作模式：${currentMode.title}（${currentMode.desc}）",
 						fontSize = 11.sp,
 						color = MaterialTheme.colorScheme.primary,
 						fontWeight = FontWeight.Medium,
@@ -2491,36 +2502,7 @@ private fun NetworkManagerSheet(
 
 			Spacer(modifier = Modifier.height(14.dp))
 
-			// 快捷强制直连 / 恢复自动
-			if (currentMode != com.nasdrop.ConnectionMode.Direct) {
-				Button(
-					onClick = { onSwitchMode(com.nasdrop.ConnectionMode.Direct) },
-					colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
-					shape = RoundedCornerShape(14.dp),
-					modifier = Modifier
-						.fillMaxWidth()
-						.height(48.dp),
-				) {
-					Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiary)
-					Spacer(modifier = Modifier.width(6.dp))
-					Text("⚡ 强制锁定【仅直连模式】", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onTertiary)
-				}
-				Spacer(modifier = Modifier.height(10.dp))
-			} else {
-				OutlinedButton(
-					onClick = { onSwitchMode(com.nasdrop.ConnectionMode.Auto) },
-					shape = RoundedCornerShape(14.dp),
-					modifier = Modifier
-						.fillMaxWidth()
-						.height(48.dp),
-				) {
-					Icon(Icons.Rounded.Refresh, contentDescription = null)
-					Spacer(modifier = Modifier.width(6.dp))
-					Text("切回【智能自动模式】", fontWeight = FontWeight.Bold)
-				}
-				Spacer(modifier = Modifier.height(10.dp))
-			}
-
+			// 核心主操作：强制打洞直连（优先促成 Tailscale P2P 直连）
 			Button(
 				onClick = onTriggerPunch,
 				colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
@@ -2531,7 +2513,43 @@ private fun NetworkManagerSheet(
 			) {
 				Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
 				Spacer(modifier = Modifier.width(6.dp))
-				Text("重新探测直连与打洞", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+				Text(
+					text = if (currentMode == com.nasdrop.ConnectionMode.Direct) "探测直连连通性" else "⚡ 立即强制打洞直连 (P2P)",
+					fontWeight = FontWeight.Bold,
+					color = MaterialTheme.colorScheme.onPrimary,
+				)
+			}
+
+			Spacer(modifier = Modifier.height(10.dp))
+
+			// 模式切换辅助操作
+			if (currentMode != com.nasdrop.ConnectionMode.Direct) {
+				OutlinedButton(
+					onClick = { onSwitchMode(com.nasdrop.ConnectionMode.Direct) },
+					shape = RoundedCornerShape(14.dp),
+					modifier = Modifier
+						.fillMaxWidth()
+						.height(48.dp),
+				) {
+					Icon(Icons.Rounded.FlashOn, contentDescription = null)
+					Spacer(modifier = Modifier.width(6.dp))
+					Text("切换为【局域网/系统直连】", fontWeight = FontWeight.Bold)
+				}
+				Spacer(modifier = Modifier.height(10.dp))
+			} else {
+				Button(
+					onClick = { onSwitchMode(com.nasdrop.ConnectionMode.Auto) },
+					colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
+					shape = RoundedCornerShape(14.dp),
+					modifier = Modifier
+						.fillMaxWidth()
+						.height(48.dp),
+				) {
+					Icon(Icons.Rounded.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiary)
+					Spacer(modifier = Modifier.width(6.dp))
+					Text("切回【智能自动模式】(推荐)", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onTertiary)
+				}
+				Spacer(modifier = Modifier.height(10.dp))
 			}
 
 			Spacer(modifier = Modifier.height(10.dp))

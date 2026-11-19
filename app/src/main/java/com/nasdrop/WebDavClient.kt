@@ -183,10 +183,10 @@ class WebDavClient(
 	 */
 	fun thumbnailUrl(path: String): HttpUrl? {
 		thumbUrls[path.trim('/')]?.toHttpUrlOrNull()?.let { return it }
-		// 图片没有服务端缩略图时回退原图（图片本身体积小）；
+		// 图片没有专用服务端缩略图时回退原图直链（Coil 负责按 240x240 下采样解码，内存开销极低）；
 		// 视频没有服务端缩略图时返回 null——绝不让 Coil 去拉取整个视频当图片解码。
 		val ext = path.substringAfterLast('.', "").lowercase()
-		return if (ext in DavEntry.IMAGES) urlFor(path) else null
+		return if (ext in DavEntry.IMAGES) directUrlFor(path) else null
 	}
 
 	/**
@@ -313,19 +313,6 @@ class WebDavClient(
 									.build().toString()
 							} catch (_: Exception) { null }
 						} else null
-					}
-					// 若服务端未直接返回 thumb，但有原生直链 sign，OpenList 原生支持 /d/<path>?sign=...&type=thumb 服务端秒级裁切微缩图
-					if (resolvedThumb == null && sign != null && (name.endsWith(".jpg", true) || name.endsWith(".png", true) || name.endsWith(".jpeg", true) || name.endsWith(".webp", true))) {
-						try {
-							val b = (apiOrigin ?: base).newBuilder().encodedPath("/d")
-							key.split('/').forEach { if (it.isNotEmpty()) b.addPathSegment(it) }
-							b.addQueryParameter("sign", sign)
-							b.addQueryParameter("type", "thumb")
-							val url = b.build().newBuilder()
-								.scheme(base.scheme).host(base.host).port(base.port)
-								.build()
-							resolvedThumb = url.toString()
-						} catch (_: Exception) {}
 					}
 					if (name.isNotEmpty() && !resolvedThumb.isNullOrBlank()) {
 						thumbUrls[key] = resolvedThumb

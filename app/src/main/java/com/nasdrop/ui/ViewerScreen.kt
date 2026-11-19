@@ -180,14 +180,14 @@ fun ImageViewer(
 			Size(maxWidth.roundToPx().coerceAtLeast(1), maxHeight.roundToPx().coerceAtLeast(1))
 		}
 
-		// 预热：进入看图/翻页时就把 当前±1 张缩略图提交给 Coil 预加载，避免预拉取几十兆原图抢带宽
+		// 预热：进入看图/翻页时把 当前±1 张的原图与缩略图提交给 Coil，翻页即刻秒出
 		val imageLoader = context.app.repo.imageLoader
 		val currentPage = pager.currentPage
 		LaunchedEffect(currentPage, targetSize) {
 			val center = currentPage.coerceIn(0, imageList.lastIndex)
 			for (i in (center - 1)..(center + 1)) {
 				val e = imageList.getOrNull(i) ?: continue
-				val u = thumbOf?.invoke(e.path) ?: urlOf(e.path) ?: continue
+				val u = urlOf(e.path) ?: continue
 				imageLoader.enqueue(
 					ImageRequest.Builder(context)
 						.data(u)
@@ -446,27 +446,22 @@ private fun ZoomableImage(
 	var dy by remember { mutableFloatStateOf(0f) }
 	val context = LocalContext.current
 
-	// 用户是否主动或手势触发了查看原图；若无缩略图则直接拉取原图
-	var isFullRequested by remember(url) { mutableStateOf(thumbUrl.isNullOrBlank()) }
-	var isFullLoading by remember(url) { mutableStateOf(false) }
+	// 点开默认立即拉取原图；原图就绪前以缩略图垫底秒开展示，并附带轻巧加载指示
+	var isFullLoading by remember(url) { mutableStateOf(true) }
 	var isFullLoaded by remember(url) { mutableStateOf(false) }
 	var fullLoadFailed by remember(url) { mutableStateOf(false) }
 	var retryKey by remember(url) { mutableIntStateOf(0) }
 
 	LaunchedEffect(scale) {
 		onZoomChanged(scale > 1.05f)
-		// 用户主动双指放大超过 1.2 倍时，自动无缝触发原图加载以呈现极致细节
-		if (scale > 1.2f && !isFullRequested) {
-			isFullRequested = true
-		}
 	}
 
-	// 每次 url / retryKey 变化重建请求
+	// 每次 url / retryKey 变化重建请求；支持重试与坏缓存穿透
 	val fullRequest = remember(url, retryKey, targetSize) {
 		ImageRequest.Builder(context)
 			.data(url)
 			.size(targetSize)
-			.crossfade(false)
+			.crossfade(true)
 			.memoryCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
 			.diskCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
 			.build()
@@ -480,7 +475,7 @@ private fun ZoomableImage(
 			},
 		contentAlignment = Alignment.Center,
 	) {
-		// 第 1 层：优先完整展示低带宽缩略图（原比例 Fit），秒开、零截断
+		// 第 1 层：优先完整展示低带宽缩略图（原比例 Fit，跟随缩放手势），保证进入即刻看清画面，绝不黑屏/白屏
 		if (!thumbUrl.isNullOrBlank() && !isFullLoaded) {
 			AsyncImage(
 				model = thumbUrl,
@@ -497,8 +492,8 @@ private fun ZoomableImage(
 			)
 		}
 
-		// 第 2 层：原图（在用户点击“查看原图”或双指放大时按需拉取）
-		if (!url.isNullOrBlank() && isFullRequested && !fullLoadFailed) {
+		// 第 2 层：高清原图（默认立即拉取，到位后自然淡入取代缩略图，提供极致清晰度）
+		if (!url.isNullOrBlank() && !fullLoadFailed) {
 			AsyncImage(
 				model = fullRequest,
 				contentDescription = name,
@@ -541,7 +536,6 @@ private fun ZoomableImage(
 									scale = 1f; dx = 0f; dy = 0f
 								} else {
 									scale = 2.5f
-									isFullRequested = true
 								}
 							},
 						)
@@ -549,87 +543,68 @@ private fun ZoomableImage(
 			)
 		}
 
-		// 默认只加载缩略图下的“查看原图”胶囊控制与加载进度指示器
-		if (!thumbUrl.isNullOrBlank() && !isFullLoaded) {
+		// 原图加载中状态：保留缩略图背景，底部悬浮轻盈胶囊指示加载动画
+		if (isFullLoading && !isFullLoaded) {
 			Surface(
-				shape = RoundedCornerShape(20.dp),
+				shape = RoundedCornerShape(16.dp),
 				color = Color.Black.copy(alpha = 0.65f),
-				border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
+				border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
 				modifier = Modifier
 					.align(Alignment.BottomCenter)
-					.padding(bottom = 92.dp)
-					.clickable(enabled = !isFullLoading) {
-						if (fullLoadFailed) {
-							fullLoadFailed = false
-							isFullLoading = true
-							retryKey++
-						} else if (!isFullRequested) {
-							isFullRequested = true
-						}
-					},
+					.padding(bottom = 92.dp),
 			) {
 				Row(
 					modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
 					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(7.dp),
+					horizontalArrangement = Arrangement.spacedBy(8.dp),
 				) {
-					if (isFullLoading) {
-						CircularProgressIndicator(
-							strokeWidth = 2.dp,
-							color = Color.White,
-							modifier = Modifier.size(13.dp),
-						)
-						Text(
-							text = "正在载入原图…",
-							fontSize = 12.sp,
-							fontWeight = FontWeight.Medium,
-							color = Color.White,
-						)
-					} else if (fullLoadFailed) {
-						Text(
-							text = "原图载入失败，点击重试",
-							fontSize = 12.sp,
-							fontWeight = FontWeight.Medium,
-							color = Color(0xFFFFB4AB),
-						)
-					} else {
-						Icon(
-							Icons.Rounded.HighQuality,
-							contentDescription = null,
-							tint = Color.White,
-							modifier = Modifier.size(15.dp),
-						)
-						Text(
-							text = if (sizeHuman.isNotBlank()) "查看原图 ($sizeHuman)" else "查看原图",
-							fontSize = 12.sp,
-							fontWeight = FontWeight.Medium,
-							color = Color.White,
-						)
-					}
+					CircularProgressIndicator(
+						strokeWidth = 2.dp,
+						color = Color.White,
+						modifier = Modifier.size(13.dp),
+					)
+					Text(
+						text = if (!thumbUrl.isNullOrBlank()) "正在载入高清原图…" else "正在加载图片…",
+						fontSize = 12.sp,
+						fontWeight = FontWeight.Medium,
+						color = Color.White,
+					)
 				}
 			}
 		}
 
-		// 无缩略图且直接拉原图时的全屏加载中或失败处理
-		if (thumbUrl.isNullOrBlank()) {
-			if (isFullLoading) {
+		// 原图加载失败时的处理
+		if (fullLoadFailed) {
+			if (!thumbUrl.isNullOrBlank()) {
+				// 若缩略图仍在显示，在底部提示失败并允许点击重试原图
 				Surface(
 					shape = RoundedCornerShape(16.dp),
-					color = Color.Black.copy(alpha = 0.65f),
+					color = Color.Black.copy(alpha = 0.7f),
+					border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
 					modifier = Modifier
 						.align(Alignment.BottomCenter)
-						.padding(bottom = 92.dp),
+						.padding(bottom = 92.dp)
+						.clickable {
+							fullLoadFailed = false
+							isFullLoading = true
+							retryKey++
+						},
 				) {
 					Row(
 						modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(8.dp),
+						horizontalArrangement = Arrangement.spacedBy(6.dp),
 					) {
-						CircularProgressIndicator(strokeWidth = 2.dp, color = Color.White, modifier = Modifier.size(13.dp))
-						Text(text = "正在加载图片…", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White)
+						Text(
+							text = "高清原图加载失败，点击重试",
+							fontSize = 12.sp,
+							fontWeight = FontWeight.Medium,
+							color = Color(0xFFFFB4AB),
+						)
 					}
 				}
-			} else if (fullLoadFailed) {
+			} else {
+				// 无缩略图且原图失败：居中大卡片重试
 				Column(
 					horizontalAlignment = Alignment.CenterHorizontally,
 					verticalArrangement = Arrangement.spacedBy(12.dp),

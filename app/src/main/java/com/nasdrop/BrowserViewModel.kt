@@ -822,7 +822,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 
 	fun imageAlbum(entry: DavEntry): Pair<List<DavEntry>, Int> {
-		val list = if (currentTab == MainTab.Photos) currentAlbumPhotos else entries.filter { !it.isDir && it.isImage }
+		val list = if (currentTab == MainTab.Photos) {
+			currentAlbumPhotos.sortedByDescending { it.modified }
+		} else {
+			filteredEntries.filter { !it.isDir && it.isImage }
+		}
 		val idx = list.indexOfFirst { it.path == entry.path }.coerceAtLeast(0)
 		return Pair(if (list.isEmpty()) listOf(entry) else list, idx)
 	}
