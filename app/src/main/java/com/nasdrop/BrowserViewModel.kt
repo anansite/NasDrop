@@ -542,7 +542,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		if (dir.isEmpty() && currentUrl != null && currentUrl.encodedPath != c.effectiveBase.encodedPath) {
 			val corrected = currentUrl.newBuilder().encodedPath(c.effectiveBase.encodedPath).build().toString()
 			viewModelScope.launch {
-				app.prefs.update { it.copy(baseUrl = corrected) }
+				val cur = app.prefs.current()
+				if (cur.baseUrl != corrected) {
+					app.prefs.save(cur.copy(baseUrl = corrected))
+				}
 			}
 		}
 		return fresh
