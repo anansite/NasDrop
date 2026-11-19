@@ -123,17 +123,29 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import android.content.ClipboardManager
 import android.content.ClipData
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.nasdrop.NasDb
 import com.nasdrop.DavEntry
+import com.nasdrop.DlnaDevice
+import com.nasdrop.DlnaManager
+import com.nasdrop.DlnaPlaybackState
 import com.nasdrop.app
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -1580,17 +1592,32 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 
 		// 无线投屏与串流直链中心底部抽屉
 		if (showCastSheet) {
+			val dlnaManager = remember { DlnaManager.getInstance(context) }
+			val dlnaDevices by dlnaManager.devices.collectAsState()
+			val isDlnaSearching by dlnaManager.isSearching.collectAsState()
+			val activeDlnaDevice by dlnaManager.activeDevice.collectAsState()
+			val dlnaPlaybackState by dlnaManager.playbackState.collectAsState()
+			val dlnaStatusMessage by dlnaManager.statusMessage.collectAsState()
+			val castScope = rememberCoroutineScope()
+
+			LaunchedEffect(Unit) {
+				dlnaManager.searchDevices()
+			}
+
 			ModalBottomSheet(
 				onDismissRequest = { showCastSheet = false },
 				containerColor = MaterialTheme.colorScheme.surface,
 			) {
+				val scrollState = rememberScrollState()
 				Column(
 					modifier = Modifier
 						.fillMaxWidth()
+						.verticalScroll(scrollState)
 						.padding(horizontal = 24.dp)
 						.padding(bottom = 36.dp),
 					verticalArrangement = Arrangement.spacedBy(16.dp),
 				) {
+					// 顶部标题栏 + 状态与关闭
 					Row(
 						modifier = Modifier.fillMaxWidth(),
 						verticalAlignment = Alignment.CenterVertically,
@@ -1614,14 +1641,227 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 									)
 								}
 							}
-							Text("无线投屏与串流中心", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+							Column {
+								Text("无线投屏与串流中心", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+								Text(
+									text = dlnaStatusMessage.ifBlank { "局域网 DLNA / UPnP 智能直投" },
+									style = MaterialTheme.typography.labelSmall,
+									color = MaterialTheme.colorScheme.onSurfaceVariant,
+								)
+							}
 						}
 						IconButton(onClick = { showCastSheet = false }) {
 							Icon(Icons.Rounded.Close, contentDescription = "关闭")
 						}
 					}
 
-					// 卡片 1：串流直链秒播（支持电视盒、PotPlayer、Kodi、VLC 秒播）
+					// 模块 1：投屏中状态与大屏播控卡片（如果有设备正在投屏）
+					if (activeDlnaDevice != null) {
+						Surface(
+							shape = RoundedCornerShape(16.dp),
+							color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+							border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
+							modifier = Modifier.fillMaxWidth(),
+						) {
+							Column(
+								modifier = Modifier.padding(16.dp),
+								verticalArrangement = Arrangement.spacedBy(10.dp),
+							) {
+								Row(
+									modifier = Modifier.fillMaxWidth(),
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.SpaceBetween,
+								) {
+									Row(
+										verticalAlignment = Alignment.CenterVertically,
+										horizontalArrangement = Arrangement.spacedBy(8.dp),
+									) {
+										Icon(Icons.Rounded.Tv, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+										Column {
+											Text(
+												text = activeDlnaDevice?.name ?: "已连接电视",
+												style = MaterialTheme.typography.titleSmall,
+												fontWeight = FontWeight.Bold,
+											)
+											Text(
+												text = when (dlnaPlaybackState) {
+													DlnaPlaybackState.CONNECTING -> "正在投屏连接中…"
+													DlnaPlaybackState.PLAYING -> "大屏正在播放中"
+													DlnaPlaybackState.PAUSED -> "大屏已暂停"
+													DlnaPlaybackState.ERROR -> "投屏异常"
+													else -> "已连接"
+												},
+												style = MaterialTheme.typography.labelSmall,
+												color = MaterialTheme.colorScheme.primary,
+											)
+										}
+									}
+
+									// 大屏播控按钮组
+									Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+										IconButton(
+											onClick = {
+												castScope.launch {
+													if (dlnaPlaybackState == DlnaPlaybackState.PLAYING) {
+														dlnaManager.pause()
+													} else {
+														dlnaManager.resume()
+													}
+												}
+											},
+											modifier = Modifier
+												.size(36.dp)
+												.background(MaterialTheme.colorScheme.primary, CircleShape),
+										) {
+											Icon(
+												imageVector = if (dlnaPlaybackState == DlnaPlaybackState.PLAYING) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+												contentDescription = "播放/暂停",
+												tint = MaterialTheme.colorScheme.onPrimary,
+												modifier = Modifier.size(20.dp),
+											)
+										}
+
+										IconButton(
+											onClick = {
+												castScope.launch {
+													dlnaManager.stop()
+												}
+											},
+											modifier = Modifier
+												.size(36.dp)
+												.background(MaterialTheme.colorScheme.errorContainer, CircleShape),
+										) {
+											Icon(
+												Icons.Rounded.Stop,
+												contentDescription = "退出投屏",
+												tint = MaterialTheme.colorScheme.onErrorContainer,
+												modifier = Modifier.size(20.dp),
+											)
+										}
+									}
+								}
+							}
+						}
+					}
+
+					// 模块 2：局域网 DLNA 电视直投专区
+					Surface(
+						shape = RoundedCornerShape(16.dp),
+						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+						border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+						modifier = Modifier.fillMaxWidth(),
+					) {
+						Column(
+							modifier = Modifier.padding(16.dp),
+							verticalArrangement = Arrangement.spacedBy(12.dp),
+						) {
+							Row(
+								modifier = Modifier.fillMaxWidth(),
+								verticalAlignment = Alignment.CenterVertically,
+								horizontalArrangement = Arrangement.SpaceBetween,
+							) {
+								Column {
+									Text("局域网电视设备 (DLNA 直投)", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+									Text("支持小米电视/华为/索尼/海信/电视盒子/投影仪", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+								}
+								TextButton(
+									onClick = { dlnaManager.searchDevices() },
+									enabled = !isDlnaSearching,
+								) {
+									Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+									Spacer(modifier = Modifier.width(4.dp))
+									Text(if (isDlnaSearching) "扫描中" else "刷新")
+								}
+							}
+
+							if (isDlnaSearching) {
+								LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+							}
+
+							if (dlnaDevices.isEmpty()) {
+								Column(
+									modifier = Modifier
+										.fillMaxWidth()
+										.padding(vertical = 12.dp),
+									horizontalAlignment = Alignment.CenterHorizontally,
+									verticalArrangement = Arrangement.spacedBy(6.dp),
+								) {
+									Text(
+										text = if (isDlnaSearching) "正在扫描局域网智能电视设备…" else "暂未发现局域网电视设备",
+										style = MaterialTheme.typography.bodySmall,
+										color = MaterialTheme.colorScheme.onSurfaceVariant,
+									)
+									if (!isDlnaSearching) {
+										Text(
+											text = "请确认电视或电视盒子已开机且已连接至同一 Wi-Fi",
+											style = MaterialTheme.typography.labelSmall,
+											color = MaterialTheme.colorScheme.outline,
+										)
+									}
+								}
+							} else {
+								Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+									dlnaDevices.forEach { device ->
+										val isCurrent = device.id == activeDlnaDevice?.id
+										Surface(
+											shape = RoundedCornerShape(12.dp),
+											color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface,
+											border = BorderStroke(1.dp, if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+											modifier = Modifier
+												.fillMaxWidth()
+												.clickable {
+													if (!url.isNullOrBlank()) {
+														castScope.launch {
+															dlnaManager.cast(device, url, entry.name)
+														}
+													} else {
+														Toast.makeText(context, "无法获取视频播放直链", Toast.LENGTH_SHORT).show()
+													}
+												},
+										) {
+											Row(
+												modifier = Modifier
+													.fillMaxWidth()
+													.padding(horizontal = 14.dp, vertical = 10.dp),
+												verticalAlignment = Alignment.CenterVertically,
+												horizontalArrangement = Arrangement.SpaceBetween,
+											) {
+												Row(
+													verticalAlignment = Alignment.CenterVertically,
+													horizontalArrangement = Arrangement.spacedBy(10.dp),
+												) {
+													Icon(
+														Icons.Rounded.Tv,
+														contentDescription = null,
+														tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+													)
+													Column {
+														Text(
+															text = device.name,
+															style = MaterialTheme.typography.bodyMedium,
+															fontWeight = FontWeight.Medium,
+														)
+														Text(
+															text = "${device.host} · DLNA 播放器",
+															style = MaterialTheme.typography.labelSmall,
+															color = MaterialTheme.colorScheme.onSurfaceVariant,
+														)
+													}
+												}
+												if (isCurrent) {
+													Text("已连接", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+												} else {
+													Text("点击投屏", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+
+					// 模块 3：串流直链秒播（支持电视盒、PotPlayer、Kodi、VLC 秒播）
 					Surface(
 						shape = RoundedCornerShape(16.dp),
 						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -1666,7 +1906,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						}
 					}
 
-					// 卡片 2：唤起本机第三方播放器或投屏助手
+					// 模块 4：唤起本机第三方播放器或投屏助手
 					Surface(
 						shape = RoundedCornerShape(16.dp),
 						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
