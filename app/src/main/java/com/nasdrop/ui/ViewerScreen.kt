@@ -45,7 +45,6 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.BrightnessMedium
 import androidx.compose.material.icons.rounded.FastForward
@@ -932,10 +931,10 @@ private fun setImmersiveFullscreen(activity: Activity?, enabled: Boolean) {
 	val window = activity?.window ?: return
 	val controller = WindowCompat.getInsetsController(window, window.decorView)
 	if (enabled) {
-		controller.hide(WindowInsetsCompat.Type.systemBars())
-		controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+		controller?.hide(WindowInsetsCompat.Type.systemBars())
+		controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 	} else {
-		controller.show(WindowInsetsCompat.Type.systemBars())
+		controller?.show(WindowInsetsCompat.Type.systemBars())
 	}
 }
 
@@ -949,8 +948,9 @@ private fun setImmersiveFullscreen(activity: Activity?, enabled: Boolean) {
  * - 沉浸式真全屏与无线投屏串流中心
  * 播放器配置沿用 Media3 的 UnstableApi，在此入口显式确认以满足 Android Lint。
  */
-@Composable
+@OptIn(ExperimentalMaterial3Api::class)
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
 fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 	val context = LocalContext.current
 	val activity = context as? Activity
@@ -1511,24 +1511,13 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 									lastInteractionTime = System.currentTimeMillis()
 								},
 							) {
-								Row(
+								Text(
+									text = "画幅 " + (resizeModes.firstOrNull { it.first == resizeMode }?.third ?: "FIT"),
+									color = OnMediaBackdrop,
+									fontSize = 12.sp,
+									fontWeight = FontWeight.Bold,
 									modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-									verticalAlignment = Alignment.CenterVertically,
-									horizontalArrangement = Arrangement.spacedBy(4.dp),
-								) {
-									Icon(
-										Icons.Rounded.AspectRatio,
-										contentDescription = "画幅比例",
-										tint = OnMediaBackdrop,
-										modifier = Modifier.size(14.dp)
-									)
-									Text(
-										text = resizeModes.firstOrNull { it.first == resizeMode }?.third ?: "FIT",
-										color = OnMediaBackdrop,
-										fontSize = 12.sp,
-										fontWeight = FontWeight.Bold,
-									)
-								}
+								)
 							}
 
 							// 倍速切换药丸
@@ -1661,8 +1650,8 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 							Button(
 								onClick = {
 									if (!url.isNullOrBlank()) {
-										val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-										cm.setPrimaryClip(ClipData.newPlainText("视频直链", url))
+										val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+										cm?.setPrimaryClip(ClipData.newPlainText("视频直链", url))
 										Toast.makeText(context, "✅ 直链已复制！可粘贴到 TV/PotPlayer/Kodi/VLC 极速秒播", Toast.LENGTH_LONG).show()
 										showCastSheet = false
 									}
