@@ -640,7 +640,7 @@ class WebDavClient(
 		// 见下面 putOnce 的注释。
 		fun newBody(written: java.util.concurrent.atomic.AtomicLong, checkCanceled: () -> Unit) = object : RequestBody() {
 			override fun contentType() = mimeType?.toMediaTypeOrNull()
-			override fun contentLength() = total
+			override fun contentLength() = if (total > 0) total else -1L
 			// 禁止 OkHttp 在响应丢失后悄悄重放大文件；仅由下面的显式策略决定重试。
 			override fun isOneShot() = true
 			override fun writeTo(sink: BufferedSink) {
@@ -662,17 +662,16 @@ class WebDavClient(
 						val now = System.currentTimeMillis()
 						if (now - lastReportTime >= 100L || (total > 0 && sent >= total)) {
 							lastReportTime = now
-							onProgress(sent, total)
+							onProgress(sent, if (total > 0) total else sent)
 						}
 					}
 				}
 				// 冲出末尾缓冲并向外汇报已完成物理发送
 				sink.flush()
 				checkCanceled()
-				onProgress(sent, total)
-				if (total <= 0 || sent >= total) {
-					if (bodySentOnce.compareAndSet(false, true)) onBodySent()
-				}
+				val finalTotal = if (total > 0) total else sent
+				onProgress(sent, finalTotal)
+				if (bodySentOnce.compareAndSet(false, true)) onBodySent()
 			}
 		}
 
@@ -953,9 +952,16 @@ internal object Query {
 				?.use { c ->
 					val i = c.getColumnIndex(OpenableColumns.SIZE)
 					if (i >= 0 && c.moveToFirst() && !c.isNull(i)) {
-						return c.getLong(i)
+						val s = c.getLong(i)
+						if (s > 0) return s
 					}
 				}
+		}
+		runCatching {
+			context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+				val s = pfd.statSize
+				if (s > 0) return s
+			}
 		}
 		return -1L
 	}

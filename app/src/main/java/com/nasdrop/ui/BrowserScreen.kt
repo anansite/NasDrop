@@ -2421,8 +2421,14 @@ private fun TransferCenterSheet(
 				"${tasks.count { it.status !in finishedStates }} 个进行中 · ${tasks.count { it.status == TransferStatus.COMPLETED }} 个完成 · ${tasks.count { it.status == TransferStatus.FAILED }} 个失败 · ${tasks.count { it.status == TransferStatus.CANCELLED }} 个取消",
 				style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
 			)
-			if (totalSpeedBps > 0) {
-				Text("当前总速率 ${formatSize(totalSpeedBps)}/s", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
+			val hasActiveRunning = tasks.any { it.status == TransferStatus.RUNNING || it.status == TransferStatus.CONFIRMING }
+			if (hasActiveRunning) {
+				Text(
+					if (totalSpeedBps > 0) "当前总速率 ${formatSize(totalSpeedBps)}/s" else "正在传输中…",
+					color = MaterialTheme.colorScheme.primary,
+					style = MaterialTheme.typography.bodySmall,
+					modifier = Modifier.padding(top = 8.dp),
+				)
 			}
 			LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
 				items(listOf("全部", "上传", "下载", "已完成").withIndex().toList()) { item ->
@@ -2476,8 +2482,13 @@ private fun TransferCenterSheet(
 										LinearProgressIndicator(progress = { task.progress }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
 									}
 								}
+								val speedDisplay = if (task.status == TransferStatus.RUNNING) {
+									if (task.speedStr != "--") " · ${task.speedStr}" else ""
+								} else if (task.status == TransferStatus.CONFIRMING) {
+									" · 服务端确认中…"
+								} else ""
 								Text(
-									"${formatSize(task.sentBytes)} / ${if (task.totalBytes > 0) formatSize(task.totalBytes) else "大小未知"}${if (task.status == TransferStatus.RUNNING && task.speedStr.isNotBlank()) " · ${task.speedStr}" else ""}",
+									"${formatSize(task.sentBytes)} / ${if (task.totalBytes > 0) formatSize(task.totalBytes) else "大小未知"}$speedDisplay",
 									style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp),
 								)
 								LazyRow {

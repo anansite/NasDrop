@@ -145,7 +145,6 @@ class UploadService : Service() {
 					}
 
 					var lastNotified = 0L
-					var probeJob: kotlinx.coroutines.Job? = null
 					try {
 						client.upload(
 							this@UploadService,
@@ -159,46 +158,24 @@ class UploadService : Service() {
 								}
 							},
 							onBodySent = {
-								// 已发送与服务端成功分别记录；列表立即可见，任务继续等待 PUT 响应。
+								// 全部字节已推送到底层 Socket；标记为等待服务端写入确认
 								Uploads.update(task.id) { it.copy(bodySent = true, total = if (it.total >= 0) it.total else it.sent) }
-								Log.i("UploadService", "发送结束，等待确认 batch=$batchId task=${task.id} elapsedMs=${System.currentTimeMillis() - startedAt}")
-								// 开启后台主动极速探活：若服务端响应超过 500ms，高频探活远端文件；存在即提前完成并释放挂起的连接
-								probeJob = scope.launch {
-									delay(500)
-									while (isActive) {
-										val current = Uploads.tasks.value.firstOrNull { it.id == task.id }
-										if (current == null || current.done || current.cancelled) break
-										try {
-											if (client.exists(entryPath)) {
-												Log.i("UploadService", "主动探活确认远端文件已就绪，提前收敛完成 batch=$batchId task=${task.id}")
-												Uploads.update(task.id) { it.copy(done = true, bodySent = true) }
-												// 远端存储已写入完毕，主动中断挂起的 PUT 响应，立即释放通道给下一任务
-												Uploads.clearCall(task.id, cancel = true)
-												break
-											}
-										} catch (_: Exception) {}
-										delay(800)
-									}
-								}
+								Log.i("UploadService", "发送结束，等待服务端持久化确认 batch=$batchId task=${task.id} elapsedMs=${System.currentTimeMillis() - startedAt}")
 							},
 							onCall = { call -> Uploads.registerCall(task.id, call) },
 						)
 						Uploads.update(task.id) { it.copy(done = true, bodySent = true) }
-						Log.i("UploadService", "服务端确认 batch=$batchId task=${task.id} elapsedMs=${System.currentTimeMillis() - startedAt}")
+						Log.i("UploadService", "服务端确认写入完成 batch=$batchId task=${task.id} elapsedMs=${System.currentTimeMillis() - startedAt}")
 					} catch (t: Exception) {
 						if (t is CancellationException) throw t
 						val cur = Uploads.tasks.value.firstOrNull { it.id == task.id }
 						if (cur?.cancelled == true) {
 							Log.i("UploadService", "上传已取消 batch=$batchId task=${task.id}")
-						} else if (cur?.done == true) {
-							// 已由主动探活提前标记为成功，忽略后置的超时或中断
-							Log.i("UploadService", "任务已通过主动探活完成，忽略后置连接异常 batch=$batchId task=${task.id}")
 						} else {
 							Uploads.update(task.id) { it.copy(done = true, error = t.message ?: t.javaClass.simpleName) }
 							Log.e("UploadService", "上传失败 batch=$batchId task=${task.id} dir=$dir", t)
 						}
 					} finally {
-						probeJob?.cancel()
 						Uploads.clearCall(task.id)
 					}
 				}

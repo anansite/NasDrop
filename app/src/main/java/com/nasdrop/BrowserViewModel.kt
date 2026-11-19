@@ -340,6 +340,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch {
 			val lastSentMap = mutableMapOf<String, Long>()
 			val lastTimeMap = mutableMapOf<String, Long>()
+			val speedMap = mutableMapOf<String, Long>()
 			val completedIds = mutableSetOf<String>()
 			combine(Uploads.tasks, app.prefs.settings) { list, settings -> list to settings.copy(lastDir = "") }
 				.collect { (list, configuration) ->
@@ -348,6 +349,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					observedConfiguration = configuration
 					if (previous != null) {
 						completedIds.clear()
+						speedMap.clear()
 						resetForConfigurationChange(previous.serverIdentity != configuration.serverIdentity)
 					}
 				}
@@ -355,11 +357,23 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				uploadTasks = list.filterNot { it.dismissed }.map { up ->
 					val prevSent = lastSentMap[up.id] ?: 0L
 					val prevTime = lastTimeMap[up.id] ?: now
-					val dt = (now - prevTime).coerceAtLeast(1)
-					val dSent = (up.sent - prevSent).coerceAtLeast(0)
-					val speed = if (up.done || up.bodySent || up.error != null) 0L else (dSent * 1000 / dt)
-					lastSentMap[up.id] = up.sent
-					lastTimeMap[up.id] = now
+					val dt = now - prevTime
+					val speed = if (up.done || up.bodySent || up.error != null) {
+						speedMap.remove(up.id)
+						0L
+					} else if (dt >= 300L) {
+						val dSent = (up.sent - prevSent).coerceAtLeast(0)
+						val instant = (dSent * 1000 / dt)
+						val old = speedMap[up.id] ?: instant
+						// 平滑移动平均，防止微小间隔抖动归零
+						val smoothed = ((old * 0.6) + (instant * 0.4)).toLong()
+						speedMap[up.id] = smoothed
+						lastSentMap[up.id] = up.sent
+						lastTimeMap[up.id] = now
+						smoothed
+					} else {
+						speedMap[up.id] ?: 0L
+					}
 
 					val status = when {
 						up.cancelled -> TransferStatus.CANCELLED
