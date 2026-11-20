@@ -14,7 +14,7 @@ def get_token():
 
 token = get_token()
 art_id = "14216040607"
-repo = "anansite/private_filemanager"
+repo = "anansite/NasDrop"
 dl_url = f"https://api.github.com/repos/{repo}/actions/artifacts/{art_id}/zip"
 
 class NoAuthRedirect(urllib.request.HTTPRedirectHandler):

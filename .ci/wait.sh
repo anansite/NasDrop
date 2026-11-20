@@ -4,7 +4,7 @@ TOKEN=$(printf "protocol=https\nhost=github.com\n\n" | git credential fill 2>/de
 i=0
 while [ $i -lt 60 ]; do
   curl -s -m 20 -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
-    "https://api.github.com/repos/anansite/private_filemanager/actions/runs?per_page=1" -o .ci/r.json
+    "https://api.github.com/repos/anansite/NasDrop/actions/runs?per_page=1" -o .ci/r.json
   OUT=$(python -c "
 import json
 d=json.load(open('.ci/r.json'))

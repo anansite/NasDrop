@@ -27,7 +27,7 @@ class NoAuthRedirect(urllib.request.HTTPRedirectHandler):
         return new_req
 
 token = get_token()
-repo = "anansite/private_filemanager"
+repo = "anansite/NasDrop"
 target_sha = get_local_sha()
 headers = {
     "Authorization": f"Bearer {token}",

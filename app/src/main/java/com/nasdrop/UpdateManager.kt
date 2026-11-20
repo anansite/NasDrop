@@ -34,14 +34,14 @@ data class ApkAsset(
 
 object UpdateManager {
 
-	private const val RELEASES_API = "https://api.github.com/repos/anansite/private_filemanager/releases/latest"
+	private const val RELEASES_API = "https://api.github.com/repos/anansite/NasDrop/releases/latest"
 
 	// 国内直连 api.github.com 常超时，按序尝试高质量镜像；全部失败才放弃。
 	private val API_CANDIDATES = listOf(
-		"https://gh-proxy.com/https://api.github.com/repos/anansite/private_filemanager/releases/latest",
-		"https://ghfast.top/https://api.github.com/repos/anansite/private_filemanager/releases/latest",
-		"https://ghproxy.net/https://api.github.com/repos/anansite/private_filemanager/releases/latest",
-		"https://api.github.com/repos/anansite/private_filemanager/releases/latest",
+		"https://gh-proxy.com/https://api.github.com/repos/anansite/NasDrop/releases/latest",
+		"https://ghfast.top/https://api.github.com/repos/anansite/NasDrop/releases/latest",
+		"https://ghproxy.net/https://api.github.com/repos/anansite/NasDrop/releases/latest",
+		"https://api.github.com/repos/anansite/NasDrop/releases/latest",
 	)
 
 	private val http = OkHttpClient.Builder()

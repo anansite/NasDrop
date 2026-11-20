@@ -37,7 +37,7 @@ app/src/main/java/com/nasdrop/
 
 ## 构建
 
-CI 已经配好，推代码就会出包（仓库：`https://github.com/anansite/private_filemanager`）：
+CI 已经配好，推代码就会出包（仓库：`https://github.com/anansite/NasDrop`）：
 
 - `main` 分支 push → Actions 里下载 `NasDrop-apk` artifact
 - 打 `v*` tag（如 `v0.1.0`）→ 自动发 Release 并附上 APK

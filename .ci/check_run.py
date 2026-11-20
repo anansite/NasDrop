@@ -7,7 +7,7 @@ for line in out.splitlines():
     if line.startswith("password="):
         token = line.split("=", 1)[1]
 
-req = urllib.request.Request("https://api.github.com/repos/anansite/private_filemanager/actions/runs?per_page=1", headers={
+req = urllib.request.Request("https://api.github.com/repos/anansite/NasDrop/actions/runs?per_page=1", headers={
     "Authorization": f"Bearer {token}",
     "Accept": "application/vnd.github+json"
 })

@@ -17,7 +17,7 @@ class NoAuthRedirect(urllib.request.HTTPRedirectHandler):
         return new_req
 
 token = get_token()
-repo = 'anansite/private_filemanager'
+repo = 'anansite/NasDrop'
 run_id = 43895053695
 headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'}
 
