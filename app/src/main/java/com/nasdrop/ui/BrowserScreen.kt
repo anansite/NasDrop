@@ -9,8 +9,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
@@ -1360,6 +1362,7 @@ private fun FilesTopBar(
 	onOpenSettings: () -> Unit,
 	onShowNetworkSheet: () -> Unit = {},
 ) {
+	var isSearchOpen by remember { mutableStateOf(false) }
 	var menuOpen by remember { mutableStateOf(false) }
 	val parts = remember(vm.path) { vm.path.trim('/').split('/').filter { it.isNotBlank() } }
 	Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
@@ -1395,6 +1398,9 @@ private fun FilesTopBar(
 					color = MaterialTheme.colorScheme.onSurfaceVariant,
 					maxLines = 1, overflow = TextOverflow.Ellipsis,
 				)
+			}
+			IconButton(onClick = { isSearchOpen = !isSearchOpen }, modifier = Modifier.size(40.dp)) {
+				Icon(Icons.Rounded.Search, contentDescription = "搜索", tint = if (isSearchOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
 			}
 			TransferButton(vm.activeTransferCount, onOpenTransferSheet)
 			Box {
@@ -1490,49 +1496,59 @@ private fun FilesTopBar(
 			}
 		}
 
-		// 夸克/网盘同款微阴影圆角常驻搜索栏
-		Surface(
-			shape = RoundedCornerShape(20.dp),
-			color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-			border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
-			modifier = Modifier
-				.fillMaxWidth()
-				.padding(horizontal = 14.dp, vertical = 3.dp),
+		// 按需展开搜索栏：平时零占位，点击右上角搜索图标时优雅展开
+		AnimatedVisibility(
+			visible = isSearchOpen,
+			enter = expandVertically() + fadeIn(),
+			exit = shrinkVertically() + fadeOut(),
 		) {
-			Row(
-				verticalAlignment = Alignment.CenterVertically,
-				modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+			Surface(
+				shape = RoundedCornerShape(20.dp),
+				color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+				border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 14.dp, vertical = 3.dp),
 			) {
-				Icon(
-					Icons.Rounded.Search,
-					contentDescription = null,
-					tint = MaterialTheme.colorScheme.onSurfaceVariant,
-					modifier = Modifier.size(16.dp),
-				)
-				Spacer(Modifier.width(8.dp))
-				BasicTextField(
-					value = vm.searchQuery,
-					onValueChange = { vm.searchQuery = it },
-					singleLine = true,
-					textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
-					modifier = Modifier.weight(1f),
-					decorationBox = { innerTextField ->
-						if (vm.searchQuery.isEmpty()) {
-							Text(
-								"搜索 NAS 内的文件与相册...",
-								style = MaterialTheme.typography.bodyMedium,
-								color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-							)
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+				) {
+					Icon(
+						Icons.Rounded.Search,
+						contentDescription = null,
+						tint = MaterialTheme.colorScheme.onSurfaceVariant,
+						modifier = Modifier.size(16.dp),
+					)
+					Spacer(Modifier.width(8.dp))
+					BasicTextField(
+						value = vm.searchQuery,
+						onValueChange = { vm.searchQuery = it },
+						singleLine = true,
+						textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+						modifier = Modifier.weight(1f),
+						decorationBox = { innerTextField ->
+							if (vm.searchQuery.isEmpty()) {
+								Text(
+									"搜索文件名...",
+									style = MaterialTheme.typography.bodyMedium,
+									color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+								)
+							}
+							innerTextField()
 						}
-						innerTextField()
-					}
-				)
-				if (vm.searchQuery.isNotEmpty()) {
+					)
 					IconButton(
-						onClick = { vm.searchQuery = "" },
+						onClick = {
+							if (vm.searchQuery.isNotEmpty()) {
+								vm.searchQuery = ""
+							} else {
+								isSearchOpen = false
+							}
+						},
 						modifier = Modifier.size(20.dp)
 					) {
-						Icon(Icons.Rounded.Close, contentDescription = "清空", modifier = Modifier.size(14.dp))
+						Icon(Icons.Rounded.Close, contentDescription = "关闭搜索", modifier = Modifier.size(14.dp))
 					}
 				}
 			}

@@ -112,7 +112,7 @@ for line in devs_out.splitlines():
         dev_ids.append(parts[0])
 
 print(f"Found active devices: {dev_ids}", flush=True)
-all_apks = [os.path.join("out", f) for f in os.listdir("out") if f.endswith(".apk")]
+all_apks = sorted([os.path.join("out", f) for f in os.listdir("out") if f.endswith(".apk")], key=os.path.getmtime, reverse=True)
 
 for dev in dev_ids:
     abi_res = subprocess.run([adb_path, "-s", dev, "shell", "getprop", "ro.product.cpu.abi"], capture_output=True, text=True)
