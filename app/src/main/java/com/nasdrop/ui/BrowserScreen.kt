@@ -1543,57 +1543,6 @@ private fun FilesTopBar(
 			selected = vm.selectedCategory,
 			onSelect = { vm.selectCategory(it) },
 		)
-				border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
-				modifier = Modifier
-					.fillMaxWidth()
-					.padding(horizontal = 14.dp, vertical = 4.dp),
-			) {
-				Row(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(horizontal = 10.dp, vertical = 7.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.SpaceBetween,
-				) {
-					Row(
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(8.dp),
-						modifier = Modifier.weight(1f),
-					) {
-						Text("🚀", fontSize = 14.sp)
-						Column {
-							Text(
-								"发现新版本 v${vm.latestUpdateInfo?.versionName}",
-								fontSize = 12.sp,
-								fontWeight = FontWeight.Bold,
-								color = MaterialTheme.colorScheme.onPrimaryContainer,
-							)
-							Text(
-								"国内镜像多线程高速加速",
-								fontSize = 10.sp,
-								color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
-							)
-						}
-					}
-					Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-						Button(
-							onClick = { vm.openUpdateDialog() },
-							shape = RoundedCornerShape(10.dp),
-							contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-							modifier = Modifier.height(28.dp),
-						) {
-							Text("升级", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-						}
-						IconButton(
-							onClick = { bannerDismissed = true },
-							modifier = Modifier.size(24.dp),
-						) {
-							Icon(Icons.Rounded.Close, contentDescription = "忽略", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
-						}
-					}
-				}
-			}
-		}
 
 		// 面包屑导航：仅在进入子目录时紧凑呈现，根目录无需多余占位整行
 		if (parts.isNotEmpty()) {
