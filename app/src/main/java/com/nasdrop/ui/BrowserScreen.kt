@@ -7,13 +7,16 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -35,6 +38,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -404,15 +408,6 @@ fun BrowserScreen(
 				}
 			}
 
-			// 多选状态信息条
-			if (vm.isMultiSelectMode) {
-				MultiSelectHeaderStrip(
-					selectedCount = vm.selectedEntries.size,
-					onSelectAll = { vm.selectAll(vm.currentTabEntries) },
-					onComplete = { vm.exitMultiSelect() },
-				)
-			}
-
 			// 主内容区域根据 Tab 呈现，并接入标准下拉刷新
 			Box(modifier = Modifier.weight(1f)) {
 				val mediaTab = vm.currentTab == MainTab.Photos || vm.currentTab == MainTab.Media
@@ -578,6 +573,22 @@ fun BrowserScreen(
 							)
 						}
 					}
+				}
+
+				// 多选状态信息条：悬浮在内容上方，完全避免内容列表因插入组件而发生任何高度抖动或位移
+				AnimatedVisibility(
+					visible = vm.isMultiSelectMode,
+					enter = fadeIn() + slideInVertically { -it },
+					exit = fadeOut() + slideOutVertically { -it },
+					modifier = Modifier
+						.align(Alignment.TopCenter)
+						.padding(top = 8.dp, start = 14.dp, end = 14.dp),
+				) {
+					MultiSelectHeaderStrip(
+						selectedCount = vm.selectedEntries.size,
+						onSelectAll = { vm.selectAll(vm.currentTabEntries) },
+						onComplete = { vm.exitMultiSelect() },
+					)
 				}
 			}
 		}
@@ -1732,16 +1743,25 @@ private fun MultiSelectHeaderStrip(
 	onComplete: () -> Unit,
 ) {
 	Surface(
-		shape = RoundedCornerShape(12.dp),
-		color = MaterialTheme.colorScheme.surface,
-		shadowElevation = 0.5.dp,
-		border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+		shape = RoundedCornerShape(22.dp),
+		color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+		shadowElevation = 8.dp,
+		tonalElevation = 4.dp,
+		border = BorderStroke(
+			1.dp,
+			Brush.verticalGradient(
+				listOf(
+					Color.White.copy(alpha = 0.5f),
+					MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+				)
+			)
+		),
 		modifier = Modifier
 			.fillMaxWidth()
-			.padding(horizontal = 14.dp, vertical = 4.dp),
+			.graphicsLayer { clip = true; shape = RoundedCornerShape(22.dp) },
 	) {
 		Row(
-			modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+			modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
 			verticalAlignment = Alignment.CenterVertically,
 			horizontalArrangement = Arrangement.SpaceBetween,
 		) {
@@ -1753,7 +1773,7 @@ private fun MultiSelectHeaderStrip(
 					color = MaterialTheme.colorScheme.onSurface,
 				)
 				Text(
-					text = "· 可长按滑动连选",
+					text = "· 可滑动连选",
 					fontSize = 11.sp,
 					color = MaterialTheme.colorScheme.onSurfaceVariant,
 				)
@@ -1789,16 +1809,27 @@ private fun BatchActionTray(
 	Box(
 		modifier = Modifier
 			.fillMaxWidth()
-			.padding(horizontal = 16.dp, vertical = 10.dp),
+			.navigationBarsPadding()
+			.padding(horizontal = 20.dp, vertical = 8.dp),
 		contentAlignment = Alignment.Center,
 	) {
 		Surface(
-			shape = RoundedCornerShape(26.dp),
-			color = MaterialTheme.colorScheme.surface,
+			shape = RoundedCornerShape(28.dp),
+			color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
 			shadowElevation = 14.dp,
 			tonalElevation = 6.dp,
-			border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-			modifier = Modifier.fillMaxWidth(),
+			border = BorderStroke(
+				1.dp,
+				Brush.verticalGradient(
+					listOf(
+						Color.White.copy(alpha = 0.55f),
+						MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+					)
+				)
+			),
+			modifier = Modifier
+				.fillMaxWidth()
+				.graphicsLayer { clip = true; shape = RoundedCornerShape(28.dp) },
 		) {
 			Row(
 				modifier = Modifier
@@ -1918,6 +1949,158 @@ private fun findGridItemKeyAt(state: LazyGridState, pointerX: Float, pointerY: F
 	}?.key
 }
 
+private fun findPhotoKeyAt(state: LazyGridState, pointerX: Float, pointerY: Float): String? {
+	val visibleItems = state.layoutInfo.visibleItemsInfo
+	if (visibleItems.isEmpty()) return null
+	val photoItems = visibleItems.filter { it.key is String }
+	if (photoItems.isEmpty()) return null
+	val px = pointerX.toInt()
+	val py = pointerY.toInt()
+	val hit = photoItems.firstOrNull { info ->
+		px in info.offset.x..(info.offset.x + info.size.width) &&
+		py in info.offset.y..(info.offset.y + info.size.height)
+	}
+	if (hit != null) return hit.key as? String
+	return photoItems.minByOrNull { info ->
+		val cx = info.offset.x + info.size.width / 2
+		val cy = info.offset.y + info.size.height / 2
+		val dx = (px - cx).toFloat()
+		val dy = (py - cy).toFloat()
+		dx * dx + dy * dy
+	}?.key as? String
+}
+
+/**
+ * 为相册瀑布流/时间轴赋能真正的流畅滑动多选 (支持长按连选、多选模式下直接滑动跨选、边界自动滚屏)
+ */
+@Composable
+private fun Modifier.dragSelectablePhotoGrid(
+	state: LazyGridState,
+	allPhotos: List<DavEntry>,
+	isMulti: Boolean,
+	selectedPaths: Set<String>,
+	onEnterMultiSelect: (DavEntry) -> Unit,
+	onUpdateSelectionPaths: (Set<String>) -> Unit,
+): Modifier {
+	val haptic = LocalHapticFeedback.current
+	val scope = rememberCoroutineScope()
+	val currentAllPhotos by rememberUpdatedState(allPhotos)
+	val currentIsMulti by rememberUpdatedState(isMulti)
+	val currentSelectedPaths by rememberUpdatedState(selectedPaths)
+	val currentOnEnterMultiSelect by rememberUpdatedState(onEnterMultiSelect)
+	val currentOnUpdateSelectionPaths by rememberUpdatedState(onUpdateSelectionPaths)
+
+	return this.pointerInput(Unit) {
+		awaitEachGesture {
+			val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+			val downPos = down.position
+			var dragStartIndex = -1
+			var dragCurrentIndex = -1
+			var baseSelection = emptySet<String>()
+			var isDragging = false
+			val touchSlop = viewConfiguration.touchSlop
+			val effectiveTimeout = if (currentIsMulti) 100L else 220L
+
+			var isTriggered = false
+			try {
+				withTimeout(effectiveTimeout) {
+					while (true) {
+						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+						val pointer = event.changes.firstOrNull { it.id == down.id }
+						if (pointer == null || !pointer.pressed) return@withTimeout
+						val diff = pointer.position - downPos
+						if (currentIsMulti && (kotlin.math.abs(diff.x) > touchSlop || diff.getDistance() > touchSlop)) {
+							isTriggered = true
+							return@withTimeout
+						}
+						if (!currentIsMulti && diff.getDistance() > touchSlop) {
+							return@withTimeout
+						}
+					}
+				}
+			} catch (e: TimeoutCancellationException) {
+				isTriggered = true
+			}
+
+			if (isTriggered) {
+				val hitKey = findPhotoKeyAt(state, downPos.x, downPos.y)
+				val hitIndex = if (hitKey != null) currentAllPhotos.indexOfFirst { it.path == hitKey } else -1
+				if (hitIndex in currentAllPhotos.indices) {
+					down.consume()
+					val entry = currentAllPhotos[hitIndex]
+					dragStartIndex = hitIndex
+					dragCurrentIndex = hitIndex
+					baseSelection = if (currentIsMulti) currentSelectedPaths else emptySet()
+					isDragging = true
+					haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+					if (!currentIsMulti) {
+						currentOnEnterMultiSelect(entry)
+					} else {
+						currentOnUpdateSelectionPaths(baseSelection + entry.path)
+					}
+				}
+			}
+
+			if (isDragging && dragStartIndex in currentAllPhotos.indices) {
+				var autoScrollJob: Job? = null
+				try {
+					while (true) {
+						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+						val pointer = event.changes.firstOrNull { it.id == down.id }
+						if (pointer == null || !pointer.pressed) {
+							pointer?.consume()
+							event.changes.forEach { it.consume() }
+							break
+						}
+						pointer.consume()
+						event.changes.forEach { it.consume() }
+
+						val curX = pointer.position.x
+						val curY = pointer.position.y
+						val vh = state.layoutInfo.viewportSize.height.toFloat()
+
+						if (curY < 140f) {
+							if (autoScrollJob?.isActive != true) {
+								autoScrollJob = scope.launch {
+									while (isActive) {
+										state.scrollBy(-32f)
+										delay(16)
+									}
+								}
+							}
+						} else if (vh > 0f && curY > vh - 140f) {
+							if (autoScrollJob?.isActive != true) {
+								autoScrollJob = scope.launch {
+									while (isActive) {
+										state.scrollBy(32f)
+										delay(16)
+									}
+								}
+							}
+						} else {
+							autoScrollJob?.cancel()
+							autoScrollJob = null
+						}
+
+						val hitKey = findPhotoKeyAt(state, curX, curY)
+						val hitIndex = if (hitKey != null) currentAllPhotos.indexOfFirst { it.path == hitKey } else -1
+						if (hitIndex in currentAllPhotos.indices && hitIndex != dragCurrentIndex) {
+							dragCurrentIndex = hitIndex
+							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(currentAllPhotos.indices)
+							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(currentAllPhotos.indices)
+							val rangePaths = currentAllPhotos.subList(start, end + 1).map { it.path }.toSet()
+							currentOnUpdateSelectionPaths(baseSelection + rangePaths)
+							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+						}
+					}
+				} finally {
+					autoScrollJob?.cancel()
+				}
+			}
+		}
+	}
+}
+
 /**
  * 为 LazyColumn 赋予流畅的滑动多选能力 (包含长按进入多选、顺势拖动连选、边界自动滚屏、震动反馈)
  */
@@ -1949,14 +2132,14 @@ private fun Modifier.dragSelectableList(
 			val isStartingFromCheckbox = currentIsMulti && (downPos.x > size.width * 0.60f)
 			val effectiveTimeout = when {
 				isStartingFromCheckbox -> 0L
-				currentIsMulti -> 160L
-				else -> 240L
+				currentIsMulti -> 100L
+				else -> 220L
 			}
 			val touchSlop = viewConfiguration.touchSlop
 
-			var isLongPress = false
+			var isTriggered = false
 			if (effectiveTimeout == 0L) {
-				isLongPress = true
+				isTriggered = true
 			} else {
 				try {
 					withTimeout(effectiveTimeout) {
@@ -1966,18 +2149,22 @@ private fun Modifier.dragSelectableList(
 							if (pointer == null || !pointer.pressed) {
 								return@withTimeout
 							}
-							val dist = (pointer.position - downPos).getDistance()
-							if (dist > touchSlop) {
+							val diff = pointer.position - downPos
+							if (currentIsMulti && (kotlin.math.abs(diff.x) > touchSlop || diff.getDistance() > touchSlop)) {
+								isTriggered = true
+								return@withTimeout
+							}
+							if (!currentIsMulti && diff.getDistance() > touchSlop) {
 								return@withTimeout
 							}
 						}
 					}
 				} catch (e: TimeoutCancellationException) {
-					isLongPress = true
+					isTriggered = true
 				}
 			}
 
-			if (isLongPress) {
+			if (isTriggered) {
 				down.consume()
 				val hitIndex = findItemIndexAt(state, downPos.y)
 				if (hitIndex != null && hitIndex in currentItems.indices) {
@@ -2084,14 +2271,14 @@ private fun Modifier.dragSelectableGrid(
 			val isStartingFromCheckbox = currentIsMulti && (downPos.x > size.width * 0.60f)
 			val effectiveTimeout = when {
 				isStartingFromCheckbox -> 0L
-				currentIsMulti -> 160L
-				else -> 240L
+				currentIsMulti -> 100L
+				else -> 220L
 			}
 			val touchSlop = viewConfiguration.touchSlop
 
-			var isLongPress = false
+			var isTriggered = false
 			if (effectiveTimeout == 0L) {
-				isLongPress = true
+				isTriggered = true
 			} else {
 				try {
 					withTimeout(effectiveTimeout) {
@@ -2101,18 +2288,22 @@ private fun Modifier.dragSelectableGrid(
 							if (pointer == null || !pointer.pressed) {
 								return@withTimeout
 							}
-							val dist = (pointer.position - downPos).getDistance()
-							if (dist > touchSlop) {
+							val diff = pointer.position - downPos
+							if (currentIsMulti && (kotlin.math.abs(diff.x) > touchSlop || diff.getDistance() > touchSlop)) {
+								isTriggered = true
+								return@withTimeout
+							}
+							if (!currentIsMulti && diff.getDistance() > touchSlop) {
 								return@withTimeout
 							}
 						}
 					}
 				} catch (e: TimeoutCancellationException) {
-					isLongPress = true
+					isTriggered = true
 				}
 			}
 
-			if (isLongPress) {
+			if (isTriggered) {
 				down.consume()
 				val hitIndex = findGridItemIndexAt(state, downPos.x, downPos.y)
 				if (hitIndex != null && hitIndex in currentItems.indices) {
@@ -2592,18 +2783,7 @@ private fun PhotoTimelineContent(
 	onThumbnailError: ((String) -> Unit)? = null,
 	onOpenImage: (DavEntry) -> Unit,
 ) {
-	val haptic = LocalHapticFeedback.current
-	val scope = rememberCoroutineScope()
 	val allPhotos = remember(groups) { groups.flatMap { it.items } }
-	val currentAllPhotos by rememberUpdatedState(allPhotos)
-	val currentIsMulti by rememberUpdatedState(isMulti)
-	val currentSelectedPaths by rememberUpdatedState(selectedPaths)
-	val currentOnEnterMultiSelect by rememberUpdatedState(onEnterMultiSelect)
-	val currentOnUpdateSelectionPaths by rememberUpdatedState(onUpdateSelectionPaths)
-	var dragStartIndex by remember { mutableIntStateOf(-1) }
-	var dragCurrentIndex by remember { mutableIntStateOf(-1) }
-	var baseSelection by remember { mutableStateOf<Set<String>>(emptySet()) }
-	var isDragging by remember { mutableStateOf(false) }
 
 	Column(modifier = Modifier.fillMaxSize()) {
 		// 1. 顶部子相册分类横滑条（高质感圆角胶囊）
@@ -2760,113 +2940,14 @@ private fun PhotoTimelineContent(
 				verticalArrangement = Arrangement.spacedBy(3.dp),
 				modifier = Modifier
 					.fillMaxSize()
-					.pointerInput(Unit) {
-						awaitEachGesture {
-							val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
-							val downPos = down.position
-							var dragStartIndex = -1
-							var dragCurrentIndex = -1
-							var baseSelection = emptySet<String>()
-							var isDragging = false
-							val effectiveTimeout = if (currentIsMulti) 160L else 240L
-							val touchSlop = viewConfiguration.touchSlop
-
-							var isLongPress = false
-							try {
-								withTimeout(effectiveTimeout) {
-									while (true) {
-										val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-										val pointer = event.changes.firstOrNull { it.id == down.id }
-										if (pointer == null || !pointer.pressed) {
-											return@withTimeout
-										}
-										val dist = (pointer.position - downPos).getDistance()
-										if (dist > touchSlop) {
-											return@withTimeout
-										}
-									}
-								}
-							} catch (e: TimeoutCancellationException) {
-								isLongPress = true
-							}
-
-							if (isLongPress) {
-								down.consume()
-								val hitKey = findGridItemKeyAt(state, downPos.x, downPos.y) as? String
-								val hitIndex = if (hitKey != null) currentAllPhotos.indexOfFirst { it.path == hitKey } else -1
-								if (hitIndex in currentAllPhotos.indices) {
-									val entry = currentAllPhotos[hitIndex]
-									dragStartIndex = hitIndex
-									dragCurrentIndex = hitIndex
-									baseSelection = if (currentIsMulti) currentSelectedPaths else emptySet()
-									isDragging = true
-									haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-									if (!currentIsMulti) {
-										currentOnEnterMultiSelect(entry)
-									} else {
-										currentOnUpdateSelectionPaths?.invoke(baseSelection + entry.path)
-									}
-								}
-							}
-
-							if (isDragging && dragStartIndex in currentAllPhotos.indices) {
-								var autoScrollJob: Job? = null
-								try {
-									while (true) {
-										val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-										val pointer = event.changes.firstOrNull { it.id == down.id }
-										if (pointer == null || !pointer.pressed) {
-											pointer?.consume()
-											event.changes.forEach { it.consume() }
-											break
-										}
-										pointer.consume()
-										event.changes.forEach { it.consume() }
-
-										val curX = pointer.position.x
-										val curY = pointer.position.y
-										val vh = state.layoutInfo.viewportSize.height.toFloat()
-
-										if (curY < 120f) {
-											if (autoScrollJob?.isActive != true) {
-												autoScrollJob = scope.launch {
-													while (isActive) {
-														state.scrollBy(-24f)
-														delay(16)
-													}
-												}
-											}
-										} else if (vh > 0f && curY > vh - 120f) {
-											if (autoScrollJob?.isActive != true) {
-												autoScrollJob = scope.launch {
-													while (isActive) {
-														state.scrollBy(24f)
-														delay(16)
-													}
-												}
-											}
-										} else {
-											autoScrollJob?.cancel()
-											autoScrollJob = null
-										}
-
-										val hitKey = findGridItemKeyAt(state, curX, curY) as? String
-										val hitIndex = if (hitKey != null) currentAllPhotos.indexOfFirst { it.path == hitKey } else -1
-										if (hitIndex in currentAllPhotos.indices && hitIndex != dragCurrentIndex) {
-											dragCurrentIndex = hitIndex
-											val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(currentAllPhotos.indices)
-											val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(currentAllPhotos.indices)
-											val rangePaths = currentAllPhotos.subList(start, end + 1).map { it.path }.toSet()
-											currentOnUpdateSelectionPaths?.invoke(baseSelection + rangePaths)
-											haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-										}
-									}
-								} finally {
-									autoScrollJob?.cancel()
-								}
-							}
-						}
-					},
+					.dragSelectablePhotoGrid(
+						state = state,
+						allPhotos = allPhotos,
+						isMulti = isMulti,
+						selectedPaths = selectedPaths,
+						onEnterMultiSelect = onEnterMultiSelect,
+						onUpdateSelectionPaths = { onUpdateSelectionPaths?.invoke(it) },
+					),
 			) {
 				groups.forEach { group ->
 					item(span = { GridItemSpan(3) }) {
@@ -2907,13 +2988,10 @@ private fun PhotoTimelineContent(
 
 					items(group.items, key = { it.path }) { item ->
 						val isSelected = selectedPaths.contains(item.path)
-						val cornerRadius = if (isMulti && isSelected) 8.dp else 4.dp
-						val borderStroke = if (isMulti && isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
 						Box(
 							modifier = Modifier
 								.aspectRatio(1f)
-								.clip(RoundedCornerShape(cornerRadius))
-								.then(if (borderStroke != null) Modifier.border(borderStroke, RoundedCornerShape(cornerRadius)) else Modifier)
+								.clip(RoundedCornerShape(6.dp))
 								.background(MaterialTheme.colorScheme.outlineVariant)
 								.combinedClickable(
 									onClick = {
@@ -2969,6 +3047,16 @@ private fun PhotoTimelineContent(
 								) {
 									FileIcon(category = FileCategory.Image, isDir = false, size = 32.dp)
 								}
+							}
+
+							// 多选选中时显示精致主题色边框与半透明遮罩
+							if (isMulti && isSelected) {
+								Box(
+									modifier = Modifier
+										.fillMaxSize()
+										.border(2.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
+										.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.20f))
+								)
 							}
 
 							// 仅在多选模式下显示右上角勾选框（日常沉浸全图，长按才浮现选框）
@@ -3407,7 +3495,7 @@ private fun TransferCenterSheet(
 		filtered.sortedWith(
 			compareBy<TransferTask> { task ->
 				when (task.status) {
-					TransferStatus.RUNNING -> 0     // 🚀 正在高速传输，绝对置顶！
+					TransferStatus.RUNNING -> 0     // 🚀 正在高速传输，绝对置顶第1位！
 					TransferStatus.CONFIRMING -> 1  // 🔄 正在落盘写入存储中
 					TransferStatus.QUEUED -> 2      // ⏳ 排队等待中
 					TransferStatus.PAUSED -> 3      // ⏸️ 已暂停
@@ -3415,10 +3503,7 @@ private fun TransferCenterSheet(
 					TransferStatus.CANCELLED -> 5   // ⏹️ 取消
 					TransferStatus.COMPLETED -> 6   // ✅ 已完成整齐沉底，排到最下面！
 				}
-			}.thenByDescending { task ->
-				if (task.status == TransferStatus.RUNNING) task.speedBytesPerSec // 速度越快排越前，爽感爆棚！
-				else task.lastUpdated
-			}
+			}.thenBy { it.id } // 关键：稳定任务顺序，绝不因为瞬时速度微调导致正在传输的任务互相交换位置抖动！
 		)
 	}
 	ModalBottomSheet(
@@ -3592,15 +3677,33 @@ private fun TransferCenterSheet(
 									LinearProgressIndicator(
 										progress = { 1f },
 										color = Color(0xFF2E7D32),
-										modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(4.dp).clip(RoundedCornerShape(2.dp)),
+										trackColor = Color(0xFF2E7D32).copy(alpha = 0.15f),
+										modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(5.dp).clip(RoundedCornerShape(2.5.dp)),
 									)
 								} else if (!terminal) {
+									val animProgress by animateFloatAsState(
+										targetValue = if (task.totalBytes > 0) task.progress.coerceIn(0.01f, 1f) else 0.05f,
+										animationSpec = tween(durationMillis = 300, easing = LinearEasing),
+										label = "task_progress_${task.id}"
+									)
 									if (task.status == TransferStatus.CONFIRMING) {
-										LinearProgressIndicator(progress = { 0.99f }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+										LinearProgressIndicator(
+											progress = { 0.99f },
+											color = MaterialTheme.colorScheme.primary,
+											modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(5.dp).clip(RoundedCornerShape(2.5.dp))
+										)
 									} else if (task.status == TransferStatus.RUNNING && task.totalBytes <= 0) {
-										LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+										LinearProgressIndicator(
+											color = MaterialTheme.colorScheme.primary,
+											modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(5.dp).clip(RoundedCornerShape(2.5.dp))
+										)
 									} else {
-										LinearProgressIndicator(progress = { task.progress }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+										LinearProgressIndicator(
+											progress = { animProgress },
+											color = MaterialTheme.colorScheme.primary,
+											trackColor = MaterialTheme.colorScheme.surfaceVariant,
+											modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(5.dp).clip(RoundedCornerShape(2.5.dp))
+										)
 									}
 								}
 								val speedDisplay = if (task.status == TransferStatus.RUNNING) {
@@ -4088,19 +4191,39 @@ private fun CommercialNavigationBar(
 	currentTab: MainTab,
 	onTabSelect: (MainTab) -> Unit,
 ) {
-	Surface(
-		color = MaterialTheme.colorScheme.surface,
-		shadowElevation = 8.dp,
+	Box(
 		modifier = Modifier
 			.fillMaxWidth()
-			.height(58.dp),
+			.navigationBarsPadding()
+			.padding(horizontal = 20.dp, vertical = 8.dp),
+		contentAlignment = Alignment.Center,
 	) {
-		Column {
-			HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f), thickness = 0.5.dp)
+		Surface(
+			shape = RoundedCornerShape(32.dp),
+			color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+			shadowElevation = 10.dp,
+			tonalElevation = 6.dp,
+			border = BorderStroke(
+				1.dp,
+				Brush.verticalGradient(
+					listOf(
+						Color.White.copy(alpha = 0.55f),
+						MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+					)
+				)
+			),
+			modifier = Modifier
+				.fillMaxWidth()
+				.height(64.dp)
+				.graphicsLayer {
+					clip = true
+					shape = RoundedCornerShape(32.dp)
+				},
+		) {
 			Row(
 				modifier = Modifier
 					.fillMaxSize()
-					.padding(horizontal = 16.dp, vertical = 4.dp),
+					.padding(horizontal = 10.dp, vertical = 6.dp),
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.SpaceEvenly,
 			) {
@@ -4114,8 +4237,8 @@ private fun CommercialNavigationBar(
 				)
 				CompactTabItem(
 					title = "相册",
-					activeIcon = Icons.Rounded.Image,
-					inactiveIcon = Icons.Rounded.PhotoLibrary,
+					activeIcon = Icons.Rounded.PhotoLibrary,
+					inactiveIcon = Icons.Rounded.Image,
 					selected = currentTab == MainTab.Photos,
 					onClick = { onTabSelect(MainTab.Photos) },
 					modifier = Modifier.weight(1f),
@@ -4144,44 +4267,58 @@ private fun CompactTabItem(
 ) {
 	val haptic = LocalHapticFeedback.current
 	val activeColor = MaterialTheme.colorScheme.primary
-	val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
-	val targetBg = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else Color.Transparent
-	val animatedBg by animateColorAsState(targetValue = targetBg, animationSpec = tween(200), label = "tab_bg")
-	val animatedColor by animateColorAsState(targetValue = if (selected) activeColor else inactiveColor, animationSpec = tween(200), label = "tab_color")
+	val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.70f)
+	val targetBg = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f) else Color.Transparent
+	val animatedBg by animateColorAsState(targetValue = targetBg, animationSpec = spring(stiffness = Spring.StiffnessMediumLow), label = "tab_bg")
+	val animatedColor by animateColorAsState(targetValue = if (selected) activeColor else inactiveColor, animationSpec = spring(stiffness = Spring.StiffnessMediumLow), label = "tab_color")
 
 	Box(
 		modifier = modifier.fillMaxHeight(),
 		contentAlignment = Alignment.Center,
 	) {
 		Surface(
-			shape = RoundedCornerShape(20.dp),
+			shape = RoundedCornerShape(24.dp),
 			color = animatedBg,
 			onClick = {
 				haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 				onClick()
 			},
 			modifier = Modifier
-				.fillMaxHeight(0.92f)
-				.widthIn(min = 68.dp, max = 100.dp),
+				.fillMaxHeight(0.88f)
+				.widthIn(min = 68.dp, max = 112.dp),
 		) {
-			Column(
-				modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+			Row(
+				modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
 				horizontalAlignment = Alignment.CenterHorizontally,
-				verticalArrangement = Arrangement.Center,
+				verticalAlignment = Alignment.CenterVertically,
 			) {
-				Icon(
-					imageVector = if (selected) activeIcon else inactiveIcon,
-					contentDescription = title,
-					tint = animatedColor,
-					modifier = Modifier.size(22.dp),
-				)
-				Spacer(Modifier.height(1.5.dp))
-				Text(
-					text = title,
-					fontSize = 10.5.sp,
-					fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-					color = animatedColor,
-				)
+				Box(
+					modifier = Modifier
+						.size(34.dp)
+						.clip(CircleShape)
+						.background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent),
+					contentAlignment = Alignment.Center,
+				) {
+					Icon(
+						imageVector = if (selected) activeIcon else inactiveIcon,
+						contentDescription = title,
+						tint = animatedColor,
+						modifier = Modifier.size(22.dp),
+					)
+				}
+				AnimatedVisibility(
+					visible = selected,
+					enter = fadeIn() + expandHorizontally(),
+					exit = fadeOut() + shrinkHorizontally(),
+				) {
+					Text(
+						text = title,
+						style = MaterialTheme.typography.labelMedium,
+						fontWeight = FontWeight.Bold,
+						color = animatedColor,
+						modifier = Modifier.padding(start = 6.dp),
+					)
+				}
 			}
 		}
 	}
