@@ -576,7 +576,7 @@ fun BrowserScreen(
 				}
 
 				// 多选状态信息条：悬浮在内容上方，完全避免内容列表因插入组件而发生任何高度抖动或位移
-				AnimatedVisibility(
+				androidx.compose.animation.AnimatedVisibility(
 					visible = vm.isMultiSelectMode,
 					enter = fadeIn() + slideInVertically { -it },
 					exit = fadeOut() + slideOutVertically { -it },
@@ -4289,7 +4289,7 @@ private fun CompactTabItem(
 		) {
 			Row(
 				modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-				horizontalAlignment = Alignment.CenterHorizontally,
+				horizontalArrangement = Arrangement.Center,
 				verticalAlignment = Alignment.CenterVertically,
 			) {
 				Box(
