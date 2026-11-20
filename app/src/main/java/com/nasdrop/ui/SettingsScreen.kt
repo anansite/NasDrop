@@ -410,26 +410,27 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						)
 
 						// 紧凑链路状态胶囊
-						Surface(
-							shape = RoundedCornerShape(12.dp),
-							color = statusBgColor,
-							onClick = { vm.reloadSettings() },
+						Box(
+							modifier = Modifier
+								.clip(RoundedCornerShape(6.dp))
+								.background(statusBgColor)
+								.clickable { vm.reloadSettings() }
+								.padding(horizontal = 6.dp, vertical = 2.dp),
 						) {
 							Row(
 								verticalAlignment = Alignment.CenterVertically,
-								modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-								horizontalArrangement = Arrangement.spacedBy(4.dp),
+								horizontalArrangement = Arrangement.spacedBy(3.dp),
 							) {
 								Box(
 									modifier = Modifier
-										.size(6.dp)
+										.size(4.dp)
 										.clip(CircleShape)
-										.background(statusDotColor)
+										.background(statusDotColor),
 								)
 								Text(
-									text = if (routeInfo.latencyMs > 0) "$statusLabel ${routeInfo.latencyMs}ms" else statusLabel,
-									fontSize = 11.sp,
-									fontWeight = FontWeight.SemiBold,
+									text = statusLabel,
+									fontSize = 10.sp,
+									fontWeight = FontWeight.Medium,
 									color = statusDotColor,
 								)
 							}

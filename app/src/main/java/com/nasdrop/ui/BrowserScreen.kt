@@ -177,9 +177,11 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.input.pointer.pointerInput
 import com.nasdrop.ViewMode
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -915,12 +917,11 @@ private fun CompactNetworkBadge(routeInfo: RouteInfo, onClick: () -> Unit) {
 			)
 		}
 		routeInfo.isDirect -> {
-			val text = if (routeInfo.latencyMs > 0) "直连 ${routeInfo.latencyMs}ms" else "直连"
 			Quadruple(
 				Color(0xFFE0F2F1),
 				Color(0xFF00695C),
 				Color(0xFF00897B),
-				text,
+				"直连",
 			)
 		}
 		routeInfo.isRelay -> {
@@ -959,25 +960,25 @@ private fun CompactNetworkBadge(routeInfo: RouteInfo, onClick: () -> Unit) {
 
 	Box(
 		modifier = Modifier
-			.clip(RoundedCornerShape(6.dp))
-			.background(dotColor.copy(alpha = 0.12f))
+			.clip(RoundedCornerShape(4.dp))
+			.background(dotColor.copy(alpha = 0.08f))
 			.clickable(onClick = onClick)
-			.padding(horizontal = 6.dp, vertical = 2.dp),
+			.padding(horizontal = 4.dp, vertical = 1.dp),
 	) {
 		Row(
 			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.spacedBy(3.dp),
+			horizontalArrangement = Arrangement.spacedBy(2.5.dp),
 		) {
 			Box(
 				modifier = Modifier
-					.size(4.dp)
+					.size(3.5.dp)
 					.clip(CircleShape)
 					.background(dotColor),
 			)
 			Text(
 				text = label,
-				fontSize = 10.sp,
-				fontWeight = FontWeight.Medium,
+				fontSize = 9.sp,
+				fontWeight = FontWeight.Normal,
 				color = dotColor,
 			)
 		}
@@ -992,7 +993,7 @@ private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
 				Color(0xFFE3F2FD),
 				Color(0xFF1565C0),
 				Color(0xFF1E88E5),
-				"正在连接…",
+				"连接中",
 			)
 		}
 		routeInfo.isLan -> {
@@ -1000,11 +1001,11 @@ private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
 				Color(0xFFE8F5E9),
 				Color(0xFF2E7D32),
 				Color(0xFF43A047),
-				"局域网直连",
+				"局域网",
 			)
 		}
 		routeInfo.isDirect -> {
-			val text = if (routeInfo.latencyMs > 0) "P2P直连 (${routeInfo.latencyMs}ms)" else "P2P直连"
+			val text = if (routeInfo.latencyMs > 0) "直连 ${routeInfo.latencyMs}ms" else "直连"
 			Quadruple(
 				Color(0xFFE0F2F1),
 				Color(0xFF00695C),
@@ -1017,7 +1018,7 @@ private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
 				Color(0xFFFFF3E0),
 				Color(0xFFE65100),
 				Color(0xFFFB8C00),
-				"中继代理",
+				"中继",
 			)
 		}
 		routeInfo.label.contains("等待登录") -> {
@@ -1025,7 +1026,7 @@ private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
 				Color(0xFFFFF8E1),
 				Color(0xFFF57F17),
 				Color(0xFFFBC02D),
-				"Tailscale 待登录",
+				"待登录",
 			)
 		}
 		routeInfo.label.contains("不可达") || routeInfo.label.contains("异常") || routeInfo.label.contains("失败") -> {
@@ -1041,32 +1042,32 @@ private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
 				Color(0xFFE3F2FD),
 				Color(0xFF1565C0),
 				Color(0xFF1E88E5),
-				routeInfo.label.ifBlank { "正在连接…" },
+				routeInfo.label.ifBlank { "连接中" },
 			)
 		}
 	}
 
-	Surface(
-		shape = RoundedCornerShape(20.dp),
-		color = bgColor,
-		shadowElevation = 1.dp,
-		onClick = onClick,
+	Box(
+		modifier = Modifier
+			.clip(RoundedCornerShape(6.dp))
+			.background(bgColor)
+			.clickable(onClick = onClick)
+			.padding(horizontal = 6.dp, vertical = 2.dp),
 	) {
 		Row(
-			modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
 			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.spacedBy(6.dp),
+			horizontalArrangement = Arrangement.spacedBy(4.dp),
 		) {
 			Box(
 				modifier = Modifier
-					.size(7.dp)
+					.size(4.dp)
 					.clip(CircleShape)
 					.background(dotColor),
 			)
 			Text(
 				text = label,
-				fontSize = 11.sp,
-				fontWeight = FontWeight.Bold,
+				fontSize = 10.sp,
+				fontWeight = FontWeight.Medium,
 				color = textColor,
 			)
 		}
@@ -1801,43 +1802,48 @@ private fun Modifier.dragSelectableList(
 	return this.pointerInput(Unit) {
 		awaitEachGesture {
 			val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
-			val downTime = System.currentTimeMillis()
 			val downPos = down.position
 			var dragStartIndex = -1
 			var dragCurrentIndex = -1
 			var baseSelection = emptySet<DavEntry>()
 			var isDragging = false
-			val longPressTimeout = minOf(viewConfiguration.longPressTimeoutMillis, 320L)
+			val longPressTimeout = 280L
 			val touchSlop = viewConfiguration.touchSlop
 
-			while (true) {
-				val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-				val pointer = event.changes.firstOrNull { it.id == down.id }
-				if (pointer == null || !pointer.pressed) {
-					break
-				}
-				val dist = (pointer.position - downPos).getDistance()
-				if (dist > touchSlop) {
-					break
-				}
-				if (System.currentTimeMillis() - downTime >= longPressTimeout) {
-					pointer.consume()
-					event.changes.forEach { it.consume() }
-					val hitIndex = findItemIndexAt(state, downPos.y)
-					if (hitIndex != null && hitIndex in currentItems.indices) {
-						val entry = currentItems[hitIndex]
-						dragStartIndex = hitIndex
-						dragCurrentIndex = hitIndex
-						baseSelection = if (currentIsMulti) currentSelectedEntries else emptySet()
-						isDragging = true
-						haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-						if (!currentIsMulti) {
-							currentOnEnterMultiSelect(entry)
-						} else {
-							currentOnUpdateSelection(baseSelection + entry)
+			var isLongPress = false
+			try {
+				withTimeout(longPressTimeout) {
+					while (true) {
+						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+						val pointer = event.changes.firstOrNull { it.id == down.id }
+						if (pointer == null || !pointer.pressed) {
+							return@withTimeout
+						}
+						val dist = (pointer.position - downPos).getDistance()
+						if (dist > touchSlop) {
+							return@withTimeout
 						}
 					}
-					break
+				}
+			} catch (e: TimeoutCancellationException) {
+				isLongPress = true
+			}
+
+			if (isLongPress) {
+				down.consume()
+				val hitIndex = findItemIndexAt(state, downPos.y)
+				if (hitIndex != null && hitIndex in currentItems.indices) {
+					val entry = currentItems[hitIndex]
+					dragStartIndex = hitIndex
+					dragCurrentIndex = hitIndex
+					baseSelection = if (currentIsMulti) currentSelectedEntries else emptySet()
+					isDragging = true
+					haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+					if (!currentIsMulti) {
+						currentOnEnterMultiSelect(entry)
+					} else {
+						currentOnUpdateSelection(baseSelection + entry)
+					}
 				}
 			}
 
@@ -1848,6 +1854,8 @@ private fun Modifier.dragSelectableList(
 						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
 						val pointer = event.changes.firstOrNull { it.id == down.id }
 						if (pointer == null || !pointer.pressed) {
+							pointer?.consume()
+							event.changes.forEach { it.consume() }
 							break
 						}
 						pointer.consume()
@@ -1860,7 +1868,7 @@ private fun Modifier.dragSelectableList(
 							if (autoScrollJob?.isActive != true) {
 								autoScrollJob = scope.launch {
 									while (isActive) {
-										state.scrollBy(-30f)
+										state.scrollBy(-24f)
 										delay(16)
 									}
 								}
@@ -1869,7 +1877,7 @@ private fun Modifier.dragSelectableList(
 							if (autoScrollJob?.isActive != true) {
 								autoScrollJob = scope.launch {
 									while (isActive) {
-										state.scrollBy(30f)
+										state.scrollBy(24f)
 										delay(16)
 									}
 								}
@@ -1920,43 +1928,48 @@ private fun Modifier.dragSelectableGrid(
 	return this.pointerInput(Unit) {
 		awaitEachGesture {
 			val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
-			val downTime = System.currentTimeMillis()
 			val downPos = down.position
 			var dragStartIndex = -1
 			var dragCurrentIndex = -1
 			var baseSelection = emptySet<DavEntry>()
 			var isDragging = false
-			val longPressTimeout = minOf(viewConfiguration.longPressTimeoutMillis, 320L)
+			val longPressTimeout = 280L
 			val touchSlop = viewConfiguration.touchSlop
 
-			while (true) {
-				val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-				val pointer = event.changes.firstOrNull { it.id == down.id }
-				if (pointer == null || !pointer.pressed) {
-					break
-				}
-				val dist = (pointer.position - downPos).getDistance()
-				if (dist > touchSlop) {
-					break
-				}
-				if (System.currentTimeMillis() - downTime >= longPressTimeout) {
-					pointer.consume()
-					event.changes.forEach { it.consume() }
-					val hitIndex = findGridItemIndexAt(state, downPos.x, downPos.y)
-					if (hitIndex != null && hitIndex in currentItems.indices) {
-						val entry = currentItems[hitIndex]
-						dragStartIndex = hitIndex
-						dragCurrentIndex = hitIndex
-						baseSelection = if (currentIsMulti) currentSelectedEntries else emptySet()
-						isDragging = true
-						haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-						if (!currentIsMulti) {
-							currentOnEnterMultiSelect(entry)
-						} else {
-							currentOnUpdateSelection(baseSelection + entry)
+			var isLongPress = false
+			try {
+				withTimeout(longPressTimeout) {
+					while (true) {
+						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+						val pointer = event.changes.firstOrNull { it.id == down.id }
+						if (pointer == null || !pointer.pressed) {
+							return@withTimeout
+						}
+						val dist = (pointer.position - downPos).getDistance()
+						if (dist > touchSlop) {
+							return@withTimeout
 						}
 					}
-					break
+				}
+			} catch (e: TimeoutCancellationException) {
+				isLongPress = true
+			}
+
+			if (isLongPress) {
+				down.consume()
+				val hitIndex = findGridItemIndexAt(state, downPos.x, downPos.y)
+				if (hitIndex != null && hitIndex in currentItems.indices) {
+					val entry = currentItems[hitIndex]
+					dragStartIndex = hitIndex
+					dragCurrentIndex = hitIndex
+					baseSelection = if (currentIsMulti) currentSelectedEntries else emptySet()
+					isDragging = true
+					haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+					if (!currentIsMulti) {
+						currentOnEnterMultiSelect(entry)
+					} else {
+						currentOnUpdateSelection(baseSelection + entry)
+					}
 				}
 			}
 
@@ -1967,6 +1980,8 @@ private fun Modifier.dragSelectableGrid(
 						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
 						val pointer = event.changes.firstOrNull { it.id == down.id }
 						if (pointer == null || !pointer.pressed) {
+							pointer?.consume()
+							event.changes.forEach { it.consume() }
 							break
 						}
 						pointer.consume()
@@ -1980,7 +1995,7 @@ private fun Modifier.dragSelectableGrid(
 							if (autoScrollJob?.isActive != true) {
 								autoScrollJob = scope.launch {
 									while (isActive) {
-										state.scrollBy(-30f)
+										state.scrollBy(-24f)
 										delay(16)
 									}
 								}
@@ -1989,7 +2004,7 @@ private fun Modifier.dragSelectableGrid(
 							if (autoScrollJob?.isActive != true) {
 								autoScrollJob = scope.launch {
 									while (isActive) {
-										state.scrollBy(30f)
+										state.scrollBy(24f)
 										delay(16)
 									}
 								}
@@ -2498,43 +2513,48 @@ private fun PhotoTimelineContent(
 					.pointerInput(Unit) {
 						awaitEachGesture {
 							val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
-							val downTime = System.currentTimeMillis()
 							val downPos = down.position
 							var dragStartIndex = -1
 							var dragCurrentIndex = -1
 							var baseSelection = emptySet<String>()
 							var isDragging = false
-							val longPressTimeout = minOf(viewConfiguration.longPressTimeoutMillis, 320L)
+							val longPressTimeout = 280L
 							val touchSlop = viewConfiguration.touchSlop
 
-							while (true) {
-								val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-								val pointer = event.changes.firstOrNull { it.id == down.id }
-								if (pointer == null || !pointer.pressed) {
-									break
-								}
-								val dist = (pointer.position - downPos).getDistance()
-								if (dist > touchSlop) {
-									break
-								}
-								if (System.currentTimeMillis() - downTime >= longPressTimeout) {
-									pointer.consume()
-									event.changes.forEach { it.consume() }
-									val hitIndex = findGridItemIndexAt(state, downPos.x, downPos.y)
-									if (hitIndex != null && hitIndex in currentAllPhotos.indices) {
-										val entry = currentAllPhotos[hitIndex]
-										dragStartIndex = hitIndex
-										dragCurrentIndex = hitIndex
-										baseSelection = if (currentIsMulti) currentSelectedPaths else emptySet()
-										isDragging = true
-										haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-										if (!currentIsMulti) {
-											currentOnEnterMultiSelect(entry)
-										} else {
-											currentOnUpdateSelectionPaths?.invoke(baseSelection + entry.path)
+							var isLongPress = false
+							try {
+								withTimeout(longPressTimeout) {
+									while (true) {
+										val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+										val pointer = event.changes.firstOrNull { it.id == down.id }
+										if (pointer == null || !pointer.pressed) {
+											return@withTimeout
+										}
+										val dist = (pointer.position - downPos).getDistance()
+										if (dist > touchSlop) {
+											return@withTimeout
 										}
 									}
-									break
+								}
+							} catch (e: TimeoutCancellationException) {
+								isLongPress = true
+							}
+
+							if (isLongPress) {
+								down.consume()
+								val hitIndex = findGridItemIndexAt(state, downPos.x, downPos.y)
+								if (hitIndex != null && hitIndex in currentAllPhotos.indices) {
+									val entry = currentAllPhotos[hitIndex]
+									dragStartIndex = hitIndex
+									dragCurrentIndex = hitIndex
+									baseSelection = if (currentIsMulti) currentSelectedPaths else emptySet()
+									isDragging = true
+									haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+									if (!currentIsMulti) {
+										currentOnEnterMultiSelect(entry)
+									} else {
+										currentOnUpdateSelectionPaths?.invoke(baseSelection + entry.path)
+									}
 								}
 							}
 
@@ -2545,6 +2565,8 @@ private fun PhotoTimelineContent(
 										val event = awaitPointerEvent(pass = PointerEventPass.Initial)
 										val pointer = event.changes.firstOrNull { it.id == down.id }
 										if (pointer == null || !pointer.pressed) {
+											pointer?.consume()
+											event.changes.forEach { it.consume() }
 											break
 										}
 										pointer.consume()
@@ -2558,7 +2580,7 @@ private fun PhotoTimelineContent(
 											if (autoScrollJob?.isActive != true) {
 												autoScrollJob = scope.launch {
 													while (isActive) {
-														state.scrollBy(-30f)
+														state.scrollBy(-24f)
 														delay(16)
 													}
 												}
@@ -2567,7 +2589,7 @@ private fun PhotoTimelineContent(
 											if (autoScrollJob?.isActive != true) {
 												autoScrollJob = scope.launch {
 													while (isActive) {
-														state.scrollBy(30f)
+														state.scrollBy(24f)
 														delay(16)
 													}
 												}
@@ -3303,8 +3325,8 @@ private fun NetworkManagerSheet(
 							.background(if (routeInfo.isLan || routeInfo.isDirect) Color(0xFF2E7D32) else Color(0xFFE65100))
 					)
 					Text(
-						text = if (routeInfo.isLan) "局域网直连" else if (routeInfo.isDirect) "极速直连 (${routeInfo.latencyMs}ms)" else "网络正常",
-						fontSize = 14.sp,
+						text = if (routeInfo.isLan) "局域网直连" else if (routeInfo.isDirect) "极速直连" else "网络正常",
+						fontSize = 13.sp,
 						fontWeight = FontWeight.Bold,
 						color = MaterialTheme.colorScheme.onSurface,
 					)
