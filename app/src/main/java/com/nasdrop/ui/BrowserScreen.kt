@@ -4299,7 +4299,7 @@ private fun CommercialNavigationBar(
 				CompactTabItem(
 					title = "影音",
 					activeIcon = Icons.Rounded.PlayCircle,
-					inactiveIcon = Icons.Rounded.PlayCircleOutline,
+					inactiveIcon = Icons.Rounded.PlayCircle,
 					selected = currentTab == MainTab.Media,
 					onClick = { onTabSelect(MainTab.Media) },
 					modifier = Modifier.weight(1f),
