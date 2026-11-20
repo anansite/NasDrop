@@ -24,6 +24,7 @@ class Prefs(private val context: Context) {
 		val hostname = stringPreferencesKey("hostname")
 		val authKey = stringPreferencesKey("auth_key")
 		val trustAllCerts = booleanPreferencesKey("trust_all_certs")
+		val themePalette = stringPreferencesKey("theme_palette")
 		val viewMode = stringPreferencesKey("view_mode")
 		val sortOrder = stringPreferencesKey("sort_order")
 	}
@@ -45,6 +46,7 @@ class Prefs(private val context: Context) {
 			it[Keys.hostname] = normalized.hostname
 			it[Keys.authKey] = normalized.authKey
 			it[Keys.trustAllCerts] = normalized.trustAllCerts
+			it[Keys.themePalette] = normalized.themePalette
 		}
 	}
 
@@ -114,6 +116,7 @@ class Prefs(private val context: Context) {
 			hostname = this[Keys.hostname] ?: "nasdrop-android",
 			authKey = this[Keys.authKey] ?: "",
 			trustAllCerts = this[Keys.trustAllCerts] ?: true,
+			themePalette = this[Keys.themePalette] ?: "AURORA",
 		)
 	}
 

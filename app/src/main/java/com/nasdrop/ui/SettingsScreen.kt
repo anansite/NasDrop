@@ -7,6 +7,7 @@ import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -164,124 +165,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 				.padding(horizontal = 16.dp, vertical = 8.dp),
 			verticalArrangement = Arrangement.spacedBy(14.dp),
 		) {
-			// ==================== 卡片 1: 版本检测与一键更新 ====================
-			Card(
-				shape = RoundedCornerShape(18.dp),
-				colors = CardDefaults.cardColors(
-					containerColor = if (vm.hasUpdate) colors.primaryContainer else colors.surface
-				),
-				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-				modifier = Modifier.fillMaxWidth(),
-			) {
-				Row(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(16.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.SpaceBetween,
-				) {
-					Row(
-						modifier = Modifier.weight(1f),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(12.dp),
-					) {
-						Box(
-							modifier = Modifier
-								.size(40.dp)
-								.clip(RoundedCornerShape(12.dp))
-								.background(
-									Brush.linearGradient(
-										colors = listOf(colors.primary, colors.tertiary)
-									)
-								),
-							contentAlignment = Alignment.Center,
-						) {
-							Icon(
-								imageVector = Icons.Rounded.CloudDownload,
-								contentDescription = null,
-								tint = colors.onPrimary,
-								modifier = Modifier.size(20.dp),
-							)
-						}
-
-						Column(modifier = Modifier.weight(1f)) {
-							Row(verticalAlignment = Alignment.CenterVertically) {
-								Text(
-									text = "当前版本 v${vm.currentVersionName}",
-									fontSize = 14.sp,
-									fontWeight = FontWeight.Bold,
-									color = colors.onSurface,
-									maxLines = 1,
-									overflow = TextOverflow.Ellipsis,
-								)
-								if (vm.hasUpdate) {
-									Spacer(modifier = Modifier.width(6.dp))
-									Surface(
-										shape = RoundedCornerShape(8.dp),
-										color = colors.error,
-									) {
-										Text(
-											text = "可升级至 v${vm.latestUpdateInfo?.versionName}",
-											fontSize = 9.sp,
-											fontWeight = FontWeight.ExtraBold,
-											color = colors.onPrimary,
-											modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-										)
-									}
-								}
-							}
-							Spacer(modifier = Modifier.height(2.dp))
-							Text(
-								text = if (vm.hasUpdate) "发现新版本，点击立即自动更新" else "当前已是最新版本，可随时检查更新",
-								fontSize = 11.sp,
-								color = colors.onSurfaceVariant,
-								maxLines = 1,
-								overflow = TextOverflow.Ellipsis,
-							)
-						}
-					}
-
-					Spacer(modifier = Modifier.width(8.dp))
-
-					Button(
-						enabled = !checkingUpdate && !saving,
-						onClick = {
-							if (vm.hasUpdate) {
-								vm.openUpdateDialog()
-							} else {
-								checkingUpdate = true
-								vm.checkForUpdates(silent = false) { has ->
-									checkingUpdate = false
-									if (!has) {
-										Toast.makeText(context, "当前已是最新版本", Toast.LENGTH_SHORT).show()
-									}
-								}
-							}
-						},
-						colors = ButtonDefaults.buttonColors(
-							containerColor = if (vm.hasUpdate) colors.primary else colors.outlineVariant,
-							contentColor = if (vm.hasUpdate) colors.onPrimary else colors.onSurfaceVariant,
-						),
-						modifier = Modifier.defaultMinSize(minWidth = 78.dp),
-						shape = RoundedCornerShape(16.dp),
-						contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-					) {
-						if (checkingUpdate) {
-							CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = colors.primary)
-						} else {
-							Text(
-								text = if (vm.hasUpdate) "立即更新" else "检查更新",
-								fontSize = 12.sp,
-								fontWeight = FontWeight.Bold,
-								maxLines = 1,
-								softWrap = false,
-							)
-						}
-					}
-				}
-			}
-
-			// ==================== 卡片 2: NAS 主机与品牌预设 ====================
+			// ==================== 卡片 1: NAS 主机与品牌预设 ====================
 			Card(
 				shape = RoundedCornerShape(18.dp),
 				colors = CardDefaults.cardColors(containerColor = colors.surface),
@@ -599,6 +483,179 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 					Spacer(modifier = Modifier.width(8.dp))
 				}
 				Text(if (testing) "正在测试…" else "测试连通性", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+			}
+
+			// ==================== 外观与全局统一配色方案 ====================
+			Card(
+				shape = RoundedCornerShape(18.dp),
+				colors = CardDefaults.cardColors(containerColor = colors.surface),
+				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+				modifier = Modifier.fillMaxWidth(),
+			) {
+				Column(modifier = Modifier.padding(16.dp)) {
+					Text(
+						text = "外观与配色方案",
+						fontSize = 14.sp,
+						fontWeight = FontWeight.Bold,
+						color = colors.onSurface,
+					)
+					Spacer(modifier = Modifier.height(4.dp))
+					Text(
+						text = "统一全局视觉基调，全应用各模块界面同步适配",
+						fontSize = 11.sp,
+						color = colors.onSurfaceVariant,
+					)
+					Spacer(modifier = Modifier.height(12.dp))
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.SpaceBetween,
+					) {
+						ThemePalette.entries.forEach { p ->
+							val isSelected = settings.themePalette.equals(p.id, ignoreCase = true)
+							Column(
+								horizontalAlignment = Alignment.CenterHorizontally,
+								modifier = Modifier
+									.clip(RoundedCornerShape(10.dp))
+									.clickable {
+										scope.launch {
+											prefs.save(settings.copy(themePalette = p.id))
+										}
+									}
+									.padding(6.dp),
+							) {
+								Box(
+									modifier = Modifier
+										.size(32.dp)
+										.clip(CircleShape)
+										.background(Color(p.primaryHex))
+										.then(
+											if (isSelected) Modifier.border(2.5.dp, colors.onSurface, CircleShape)
+											else Modifier
+										),
+									contentAlignment = Alignment.Center,
+								) {
+									if (isSelected) {
+										Text("✓", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+									}
+								}
+								Spacer(modifier = Modifier.height(4.dp))
+								Text(
+									text = p.title,
+									fontSize = 10.5.sp,
+									fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+									color = if (isSelected) colors.primary else colors.onSurfaceVariant,
+								)
+							}
+						}
+					}
+				}
+			}
+
+			// ==================== 极简沉底: 版本检测与一键更新 ====================
+			Card(
+				shape = RoundedCornerShape(16.dp),
+				colors = CardDefaults.cardColors(
+					containerColor = if (vm.hasUpdate) colors.primaryContainer.copy(alpha = 0.7f) else colors.surface
+				),
+				elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+				modifier = Modifier.fillMaxWidth(),
+			) {
+				Row(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(horizontal = 14.dp, vertical = 10.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.SpaceBetween,
+				) {
+					Row(
+						modifier = Modifier.weight(1f),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(10.dp),
+					) {
+						Box(
+							modifier = Modifier
+								.size(32.dp)
+								.clip(RoundedCornerShape(8.dp))
+								.background(colors.primary.copy(alpha = 0.12f)),
+							contentAlignment = Alignment.Center,
+						) {
+							Icon(
+								imageVector = Icons.Rounded.CloudDownload,
+								contentDescription = null,
+								tint = colors.primary,
+								modifier = Modifier.size(18.dp),
+							)
+						}
+
+						Column {
+							Row(verticalAlignment = Alignment.CenterVertically) {
+								Text(
+									text = "NasDrop v${vm.currentVersionName}",
+									fontSize = 13.sp,
+									fontWeight = FontWeight.Bold,
+									color = colors.onSurface,
+								)
+								if (vm.hasUpdate) {
+									Spacer(modifier = Modifier.width(6.dp))
+									Surface(
+										shape = RoundedCornerShape(6.dp),
+										color = colors.error,
+									) {
+										Text(
+											text = "可升级至 v${vm.latestUpdateInfo?.versionName}",
+											fontSize = 9.sp,
+											fontWeight = FontWeight.ExtraBold,
+											color = colors.onPrimary,
+											modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp),
+										)
+									}
+								}
+							}
+							Spacer(modifier = Modifier.height(1.dp))
+							Text(
+								text = if (vm.hasUpdate) "发现新版本，点击立即高速更新" else "已是最新版本 · 已开启国内加速",
+								fontSize = 10.5.sp,
+								color = colors.onSurfaceVariant,
+							)
+						}
+					}
+
+					Spacer(modifier = Modifier.width(8.dp))
+
+					Button(
+						enabled = !checkingUpdate && !saving,
+						onClick = {
+							if (vm.hasUpdate) {
+								vm.openUpdateDialog()
+							} else {
+								checkingUpdate = true
+								vm.checkForUpdates(silent = false) { has ->
+									checkingUpdate = false
+									if (!has) {
+										Toast.makeText(context, "当前已是最新版本", Toast.LENGTH_SHORT).show()
+									}
+								}
+							}
+						},
+						colors = ButtonDefaults.buttonColors(
+							containerColor = if (vm.hasUpdate) colors.primary else colors.outlineVariant.copy(alpha = 0.5f),
+							contentColor = if (vm.hasUpdate) colors.onPrimary else colors.onSurfaceVariant,
+						),
+						shape = RoundedCornerShape(12.dp),
+						contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+						modifier = Modifier.height(30.dp),
+					) {
+						if (checkingUpdate) {
+							CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = colors.primary)
+						} else {
+							Text(
+								text = if (vm.hasUpdate) "立即更新" else "检查更新",
+								fontSize = 11.5.sp,
+								fontWeight = FontWeight.Bold,
+							)
+						}
+					}
+				}
 			}
 
 			// 底部品牌与版本常驻标识

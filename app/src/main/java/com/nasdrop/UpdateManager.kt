@@ -8,7 +8,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -38,15 +40,17 @@ object UpdateManager {
 
 	// 国内直连 api.github.com 常超时，按序尝试高质量镜像；全部失败才放弃。
 	private val API_CANDIDATES = listOf(
-		"https://gh-proxy.com/https://api.github.com/repos/anansite/NasDrop/releases/latest",
-		"https://ghfast.top/https://api.github.com/repos/anansite/NasDrop/releases/latest",
 		"https://ghproxy.net/https://api.github.com/repos/anansite/NasDrop/releases/latest",
+		"https://ghfast.top/https://api.github.com/repos/anansite/NasDrop/releases/latest",
+		"https://mirror.ghproxy.com/https://api.github.com/repos/anansite/NasDrop/releases/latest",
+		"https://hub.gitmirror.com/https://api.github.com/repos/anansite/NasDrop/releases/latest",
+		"https://gh-proxy.com/https://api.github.com/repos/anansite/NasDrop/releases/latest",
 		"https://api.github.com/repos/anansite/NasDrop/releases/latest",
 	)
 
 	private val http = OkHttpClient.Builder()
-		.connectTimeout(15, TimeUnit.SECONDS)
-		.readTimeout(30, TimeUnit.SECONDS)
+		.connectTimeout(10, TimeUnit.SECONDS)
+		.readTimeout(20, TimeUnit.SECONDS)
 		.build()
 
 	// 大文件专用下载客户端：高容忍度、长读取超时、连接自动重试
@@ -132,16 +136,48 @@ object UpdateManager {
 
 		val candidateUrls = if (apkUrl.contains("github.com")) {
 			listOf(
-				"https://gh-proxy.com/$apkUrl",
-				"https://ghfast.top/$apkUrl",
-				"https://ghfile.com/$apkUrl",
 				"https://ghproxy.net/$apkUrl",
+				"https://ghfast.top/$apkUrl",
+				"https://mirror.ghproxy.com/$apkUrl",
+				"https://hub.gitmirror.com/$apkUrl",
+				"https://ghps.cc/$apkUrl",
+				"https://gh-proxy.com/$apkUrl",
 				apkUrl,
 			)
 		} else listOf(apkUrl)
 
+		// 多镜像并发竞速探测：优先挑选国内响应最快且可读的 CDN 源
+		val sortedUrls = if (candidateUrls.size > 1) {
+			val channel = kotlinx.coroutines.channels.Channel<String>(candidateUrls.size)
+			coroutineScope {
+				candidateUrls.forEach { u ->
+					launch(Dispatchers.IO) {
+						try {
+							val req = Request.Builder().url(u).head()
+								.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
+								.build()
+							downloadHttp.newCall(req).execute().use { resp ->
+								if (resp.isSuccessful && (resp.body?.contentLength() ?: 0L) > 1024 * 1024) {
+									channel.trySend(u)
+								}
+							}
+						} catch (_: Exception) {}
+					}
+				}
+			}
+			val fastest = mutableListOf<String>()
+			while (true) {
+				val res = channel.tryReceive().getOrNull() ?: break
+				if (!fastest.contains(res)) fastest.add(res)
+			}
+			if (fastest.isNotEmpty()) {
+				Log.i("UpdateManager", "Fastest mirror detected: ${fastest.first()}")
+				fastest + (candidateUrls - fastest.toSet())
+			} else candidateUrls
+		} else candidateUrls
+
 		var lastException: Exception? = null
-		for (url in candidateUrls) {
+		for (url in sortedUrls) {
 			try {
 				Log.i("UpdateManager", "Attempting download from mirror: $url")
 				val headReq = Request.Builder()
@@ -153,10 +189,10 @@ object UpdateManager {
 				val body = headResp.body ?: continue
 				val total = body.contentLength()
 
-				// 如果文件大于 4MB 且有明确长度，开启 3 线程并发分块下载加速（可跑满 4~10 MB/s）
+				// 如果文件大于 4MB 且有明确长度，开启 4 线程并发分块高速下载（可跑满 10~20 MB/s）
 				if (total > 4L * 1024 * 1024) {
 					try {
-						val numChunks = 3
+						val numChunks = 4
 						val chunkSize = (total + numChunks - 1) / numChunks
 						val downloadedAtomic = AtomicLong(0L)
 						var lastReportTime = System.currentTimeMillis()

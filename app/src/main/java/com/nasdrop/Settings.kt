@@ -20,6 +20,8 @@ data class Settings(
 	val authKey: String = "",
 	/** 开启后跳过服务端证书与主机名校验，仅用于明确可信的私有服务。 */
 	val trustAllCerts: Boolean = true,
+	/** 全局统一配色方案: AURORA, EMERALD, AMBER, TITANIUM, OBSIDIAN */
+	val themePalette: String = "AURORA",
 ) {
 	val ready: Boolean get() = baseUrl.isNotBlank() && user.isNotBlank()
 	/** 上传结果归属绑定服务根路径与账号，不随网络模式、缓存目录或密码输入而串站。 */
@@ -39,6 +41,7 @@ data class Settings(
 			baseUrl = normalizedUrl.toString(), user = user.trim(), lastDir = lastDir.trim('/'),
 			useTailscale = connectionMode != ConnectionMode.Direct,
 			hostname = hostname.trim().ifBlank { "nasdrop-android" }, authKey = authKey.trim(),
+			themePalette = themePalette.trim().ifBlank { "AURORA" },
 		)
 	}
 }

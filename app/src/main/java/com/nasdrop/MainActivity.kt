@@ -69,12 +69,13 @@ class MainActivity : ComponentActivity() {
 
 	@Composable
 	private fun App() {
-		NasDropTheme {
+		val app = applicationContext as NasDropApp
+		val vm: BrowserViewModel = viewModel(
+			factory = viewModelFactory { initializer { BrowserViewModel(app) } },
+		)
+		val settings by vm.settings.collectAsStateWithLifecycle()
+		NasDropTheme(palette = com.nasdrop.ui.ThemePalette.fromId(settings.themePalette)) {
 			val context = LocalContext.current
-			val app = applicationContext as NasDropApp
-			val vm: BrowserViewModel = viewModel(
-				factory = viewModelFactory { initializer { BrowserViewModel(app) } },
-			)
 			var route by remember { mutableStateOf<Route>(Route.Browser) }
 			LaunchedEffect(uploadDirectory) {
 				uploadDirectory?.let { dir ->

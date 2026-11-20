@@ -899,87 +899,65 @@ private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third:
 
 @Composable
 private fun CompactNetworkBadge(routeInfo: RouteInfo, onClick: () -> Unit) {
-	val (bgColor, textColor, dotColor, label) = when {
+	val (dotColor, label) = when {
 		routeInfo.isProbing -> {
-			Quadruple(
-				Color(0xFFE3F2FD),
-				Color(0xFF1565C0),
-				Color(0xFF1E88E5),
-				"连接中",
-			)
+			Color(0xFF3B82F6) to "连接中"
 		}
 		routeInfo.isLan -> {
-			Quadruple(
-				Color(0xFFE8F5E9),
-				Color(0xFF2E7D32),
-				Color(0xFF43A047),
-				"局域网",
-			)
+			val speed = if (routeInfo.latencyMs > 0) "局域网 · ${routeInfo.latencyMs}ms" else "局域网"
+			Color(0xFF10B981) to speed
 		}
 		routeInfo.isDirect -> {
-			Quadruple(
-				Color(0xFFE0F2F1),
-				Color(0xFF00695C),
-				Color(0xFF00897B),
-				"直连",
-			)
+			val speed = if (routeInfo.latencyMs > 0) "直连 · ${routeInfo.latencyMs}ms" else "直连"
+			Color(0xFF10B981) to speed
 		}
 		routeInfo.isRelay -> {
-			Quadruple(
-				Color(0xFFFFF3E0),
-				Color(0xFFE65100),
-				Color(0xFFFB8C00),
-				"中继",
-			)
+			val speed = if (routeInfo.latencyMs > 0) "中继 · ${routeInfo.latencyMs}ms" else "中继"
+			Color(0xFFF59E0B) to speed
 		}
 		routeInfo.label.contains("等待登录") -> {
-			Quadruple(
-				Color(0xFFFFF8E1),
-				Color(0xFFF57F17),
-				Color(0xFFFBC02D),
-				"待登录",
-			)
+			Color(0xFFF59E0B) to "待登录"
 		}
 		routeInfo.label.contains("不可达") || routeInfo.label.contains("异常") || routeInfo.label.contains("失败") -> {
-			Quadruple(
-				Color(0xFFFFEBEE),
-				Color(0xFFC62828),
-				Color(0xFFE53935),
-				"未连通",
-			)
+			Color(0xFFEF4444) to "未连通"
 		}
 		else -> {
-			Quadruple(
-				Color(0xFFE3F2FD),
-				Color(0xFF1565C0),
-				Color(0xFF1E88E5),
-				if (routeInfo.label.isNotBlank() && !routeInfo.label.contains("正在")) "连通中" else "连接中",
-			)
+			Color(0xFF3B82F6) to if (routeInfo.label.isNotBlank() && !routeInfo.label.contains("正在")) "连通中" else "连接中"
 		}
 	}
 
-	Box(
+	Surface(
+		shape = RoundedCornerShape(10.dp),
+		color = dotColor.copy(alpha = 0.09f),
 		modifier = Modifier
-			.clip(RoundedCornerShape(4.dp))
-			.background(dotColor.copy(alpha = 0.08f))
-			.clickable(onClick = onClick)
-			.padding(horizontal = 4.dp, vertical = 1.dp),
+			.clip(RoundedCornerShape(10.dp))
+			.clickable(onClick = onClick),
 	) {
 		Row(
+			modifier = Modifier.padding(horizontal = 5.5.dp, vertical = 2.dp),
 			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.spacedBy(2.5.dp),
+			horizontalArrangement = Arrangement.spacedBy(3.5.dp),
 		) {
-			Box(
-				modifier = Modifier
-					.size(3.5.dp)
-					.clip(CircleShape)
-					.background(dotColor),
-			)
+			Box(contentAlignment = Alignment.Center) {
+				Box(
+					modifier = Modifier
+						.size(8.dp)
+						.clip(CircleShape)
+						.background(dotColor.copy(alpha = 0.25f)),
+				)
+				Box(
+					modifier = Modifier
+						.size(5.dp)
+						.clip(CircleShape)
+						.background(dotColor),
+				)
+			}
 			Text(
 				text = label,
-				fontSize = 9.sp,
-				fontWeight = FontWeight.Normal,
+				fontSize = 10.sp,
+				fontWeight = FontWeight.Bold,
 				color = dotColor,
+				lineHeight = 12.sp,
 			)
 		}
 	}
@@ -1437,12 +1415,91 @@ private fun FilesTopBar(
 					IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
 						Icon(Icons.Rounded.MoreVert, contentDescription = "更多操作")
 					}
+					if (vm.hasUpdate) {
+						Box(
+							modifier = Modifier
+								.size(7.dp)
+								.clip(CircleShape)
+								.background(MaterialTheme.colorScheme.error)
+								.align(Alignment.TopEnd)
+								.padding(top = 4.dp, end = 4.dp),
+						)
+					}
 					DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
 						DropdownMenuItem(text = { Text("上传文件") }, onClick = { menuOpen = false; onUpload() })
 						DropdownMenuItem(text = { Text("新建文件夹") }, onClick = { menuOpen = false; onCreateFolder() })
 						DropdownMenuItem(text = { Text("多选文件") }, onClick = { menuOpen = false; onToggleMultiSelect() })
 						DropdownMenuItem(text = { Text("刷新") }, onClick = { menuOpen = false; vm.refresh() })
-						DropdownMenuItem(text = { Text("设置") }, onClick = { menuOpen = false; onOpenSettings() })
+						DropdownMenuItem(
+							text = {
+								Row(verticalAlignment = Alignment.CenterVertically) {
+									Text("设置")
+									if (vm.hasUpdate) {
+										Spacer(Modifier.width(6.dp))
+										Box(Modifier.size(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.error))
+									}
+								}
+							},
+							onClick = { menuOpen = false; onOpenSettings() },
+						)
+					}
+				}
+			}
+		}
+
+		// 🌟 自动感知新版本优雅浮动提示：不用手动点击检查，自动展示且可一键更新
+		var bannerDismissed by rememberSaveable { mutableStateOf(false) }
+		if (vm.hasUpdate && !bannerDismissed && vm.latestUpdateInfo != null) {
+			Surface(
+				shape = RoundedCornerShape(12.dp),
+				color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+				border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 14.dp, vertical = 4.dp),
+			) {
+				Row(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(horizontal = 10.dp, vertical = 7.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.SpaceBetween,
+				) {
+					Row(
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(8.dp),
+						modifier = Modifier.weight(1f),
+					) {
+						Text("🚀", fontSize = 14.sp)
+						Column {
+							Text(
+								"发现新版本 v${vm.latestUpdateInfo?.versionName}",
+								fontSize = 12.sp,
+								fontWeight = FontWeight.Bold,
+								color = MaterialTheme.colorScheme.onPrimaryContainer,
+							)
+							Text(
+								"国内镜像多线程高速加速",
+								fontSize = 10.sp,
+								color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+							)
+						}
+					}
+					Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+						Button(
+							onClick = { vm.openUpdateDialog() },
+							shape = RoundedCornerShape(10.dp),
+							contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+							modifier = Modifier.height(28.dp),
+						) {
+							Text("升级", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+						}
+						IconButton(
+							onClick = { bannerDismissed = true },
+							modifier = Modifier.size(24.dp),
+						) {
+							Icon(Icons.Rounded.Close, contentDescription = "忽略", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+						}
 					}
 				}
 			}
