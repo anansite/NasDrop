@@ -1520,6 +1520,18 @@ private fun FilesTopBar(
 			}
 			Spacer(Modifier.weight(1f))
 			IconButton(
+				onClick = onToggleMultiSelect,
+				modifier = Modifier.size(32.dp),
+			) {
+				Icon(
+					Icons.Rounded.Checklist,
+					contentDescription = "多选",
+					modifier = Modifier.size(18.dp),
+					tint = MaterialTheme.colorScheme.onSurfaceVariant,
+				)
+			}
+			Spacer(Modifier.width(4.dp))
+			IconButton(
 				onClick = onToggleViewMode,
 				modifier = Modifier.size(32.dp),
 			) {
@@ -1742,61 +1754,111 @@ private fun Modifier.dragSelectableList(
 	var isDragging by remember { mutableStateOf(false) }
 
 	return this.pointerInput(items, isMulti, selectedEntries) {
-		detectDragGesturesAfterLongPress(
-			onDragStart = { offset ->
-				val intY = offset.y.toInt()
-				val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-					intY in info.offset..(info.offset + info.size)
-				}
-				if (hit != null && hit.index in items.indices) {
-					val entry = items[hit.index]
-					dragStartIndex = hit.index
-					dragCurrentIndex = hit.index
-					baseSelection = if (isMulti) selectedEntries else emptySet()
-					isDragging = true
-					haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-					if (!isMulti) {
-						onEnterMultiSelect(entry)
-					} else {
-						onUpdateSelection(baseSelection + entry)
-					}
-				}
-			},
-			onDrag = { change, _ ->
-				if (isDragging && dragStartIndex in items.indices) {
-					change.consume()
-					val intY = change.position.y.toInt()
-					val vh = state.layoutInfo.viewportSize.height.toFloat()
-					if (change.position.y < 120f) {
-						scope.launch { state.scrollBy(-25f) }
-					} else if (vh > 0f && change.position.y > vh - 120f) {
-						scope.launch { state.scrollBy(25f) }
-					}
-
+		if (isMulti) {
+			detectDragGestures(
+				onDragStart = { offset ->
+					val intY = offset.y.toInt()
 					val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
 						intY in info.offset..(info.offset + info.size)
 					}
-					if (hit != null && hit.index in items.indices && hit.index != dragCurrentIndex) {
+					if (hit != null && hit.index in items.indices) {
+						val entry = items[hit.index]
+						dragStartIndex = hit.index
 						dragCurrentIndex = hit.index
-						val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
-						val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
-						val rangeSet = items.subList(start, end + 1).toSet()
-						onUpdateSelection(baseSelection + rangeSet)
+						baseSelection = selectedEntries
+						isDragging = true
+						onUpdateSelection(baseSelection + entry)
 						haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 					}
-				}
-			},
-			onDragEnd = {
-				isDragging = false
-				dragStartIndex = -1
-				dragCurrentIndex = -1
-			},
-			onDragCancel = {
-				isDragging = false
-				dragStartIndex = -1
-				dragCurrentIndex = -1
-			},
-		)
+				},
+				onDrag = { change, _ ->
+					if (isDragging && dragStartIndex in items.indices) {
+						change.consume()
+						val intY = change.position.y.toInt()
+						val vh = state.layoutInfo.viewportSize.height.toFloat()
+						if (change.position.y < 120f) {
+							scope.launch { state.scrollBy(-25f) }
+						} else if (vh > 0f && change.position.y > vh - 120f) {
+							scope.launch { state.scrollBy(25f) }
+						}
+
+						val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+							intY in info.offset..(info.offset + info.size)
+						}
+						if (hit != null && hit.index in items.indices && hit.index != dragCurrentIndex) {
+							dragCurrentIndex = hit.index
+							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
+							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
+							val rangeSet = items.subList(start, end + 1).toSet()
+							onUpdateSelection(baseSelection + rangeSet)
+							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+						}
+					}
+				},
+				onDragEnd = {
+					isDragging = false
+					dragStartIndex = -1
+					dragCurrentIndex = -1
+				},
+				onDragCancel = {
+					isDragging = false
+					dragStartIndex = -1
+					dragCurrentIndex = -1
+				},
+			)
+		} else {
+			detectDragGesturesAfterLongPress(
+				onDragStart = { offset ->
+					val intY = offset.y.toInt()
+					val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+						intY in info.offset..(info.offset + info.size)
+					}
+					if (hit != null && hit.index in items.indices) {
+						val entry = items[hit.index]
+						dragStartIndex = hit.index
+						dragCurrentIndex = hit.index
+						baseSelection = emptySet()
+						isDragging = true
+						haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+						onEnterMultiSelect(entry)
+					}
+				},
+				onDrag = { change, _ ->
+					if (isDragging && dragStartIndex in items.indices) {
+						change.consume()
+						val intY = change.position.y.toInt()
+						val vh = state.layoutInfo.viewportSize.height.toFloat()
+						if (change.position.y < 120f) {
+							scope.launch { state.scrollBy(-25f) }
+						} else if (vh > 0f && change.position.y > vh - 120f) {
+							scope.launch { state.scrollBy(25f) }
+						}
+
+						val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+							intY in info.offset..(info.offset + info.size)
+						}
+						if (hit != null && hit.index in items.indices && hit.index != dragCurrentIndex) {
+							dragCurrentIndex = hit.index
+							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
+							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
+							val rangeSet = items.subList(start, end + 1).toSet()
+							onUpdateSelection(baseSelection + rangeSet)
+							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+						}
+					}
+				},
+				onDragEnd = {
+					isDragging = false
+					dragStartIndex = -1
+					dragCurrentIndex = -1
+				},
+				onDragCancel = {
+					isDragging = false
+					dragStartIndex = -1
+					dragCurrentIndex = -1
+				},
+			)
+		}
 	}
 }
 
@@ -1820,65 +1882,119 @@ private fun Modifier.dragSelectableGrid(
 	var isDragging by remember { mutableStateOf(false) }
 
 	return this.pointerInput(items, isMulti, selectedEntries) {
-		detectDragGesturesAfterLongPress(
-			onDragStart = { offset ->
-				val px = offset.x.toInt()
-				val py = offset.y.toInt()
-				val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-					px in info.offset.x..(info.offset.x + info.size.width) &&
-					py in info.offset.y..(info.offset.y + info.size.height)
-				}
-				if (hit != null && hit.index in items.indices) {
-					val entry = items[hit.index]
-					dragStartIndex = hit.index
-					dragCurrentIndex = hit.index
-					baseSelection = if (isMulti) selectedEntries else emptySet()
-					isDragging = true
-					haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-					if (!isMulti) {
-						onEnterMultiSelect(entry)
-					} else {
-						onUpdateSelection(baseSelection + entry)
-					}
-				}
-			},
-			onDrag = { change, _ ->
-				if (isDragging && dragStartIndex in items.indices) {
-					change.consume()
-					val px = change.position.x.toInt()
-					val py = change.position.y.toInt()
-					val vh = state.layoutInfo.viewportSize.height.toFloat()
-					if (change.position.y < 120f) {
-						scope.launch { state.scrollBy(-25f) }
-					} else if (vh > 0f && change.position.y > vh - 120f) {
-						scope.launch { state.scrollBy(25f) }
-					}
-
+		if (isMulti) {
+			detectDragGestures(
+				onDragStart = { offset ->
+					val px = offset.x.toInt()
+					val py = offset.y.toInt()
 					val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
 						px in info.offset.x..(info.offset.x + info.size.width) &&
 						py in info.offset.y..(info.offset.y + info.size.height)
 					}
-					if (hit != null && hit.index in items.indices && hit.index != dragCurrentIndex) {
+					if (hit != null && hit.index in items.indices) {
+						val entry = items[hit.index]
+						dragStartIndex = hit.index
 						dragCurrentIndex = hit.index
-						val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
-						val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
-						val rangeSet = items.subList(start, end + 1).toSet()
-						onUpdateSelection(baseSelection + rangeSet)
+						baseSelection = selectedEntries
+						isDragging = true
+						onUpdateSelection(baseSelection + entry)
 						haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 					}
-				}
-			},
-			onDragEnd = {
-				isDragging = false
-				dragStartIndex = -1
-				dragCurrentIndex = -1
-			},
-			onDragCancel = {
-				isDragging = false
-				dragStartIndex = -1
-				dragCurrentIndex = -1
-			},
-		)
+				},
+				onDrag = { change, _ ->
+					if (isDragging && dragStartIndex in items.indices) {
+						change.consume()
+						val px = change.position.x.toInt()
+						val py = change.position.y.toInt()
+						val vh = state.layoutInfo.viewportSize.height.toFloat()
+						if (change.position.y < 120f) {
+							scope.launch { state.scrollBy(-25f) }
+						} else if (vh > 0f && change.position.y > vh - 120f) {
+							scope.launch { state.scrollBy(25f) }
+						}
+
+						val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+							px in info.offset.x..(info.offset.x + info.size.width) &&
+							py in info.offset.y..(info.offset.y + info.size.height)
+						}
+						if (hit != null && hit.index in items.indices && hit.index != dragCurrentIndex) {
+							dragCurrentIndex = hit.index
+							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
+							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
+							val rangeSet = items.subList(start, end + 1).toSet()
+							onUpdateSelection(baseSelection + rangeSet)
+							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+						}
+					}
+				},
+				onDragEnd = {
+					isDragging = false
+					dragStartIndex = -1
+					dragCurrentIndex = -1
+				},
+				onDragCancel = {
+					isDragging = false
+					dragStartIndex = -1
+					dragCurrentIndex = -1
+				},
+			)
+		} else {
+			detectDragGesturesAfterLongPress(
+				onDragStart = { offset ->
+					val px = offset.x.toInt()
+					val py = offset.y.toInt()
+					val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+						px in info.offset.x..(info.offset.x + info.size.width) &&
+						py in info.offset.y..(info.offset.y + info.size.height)
+					}
+					if (hit != null && hit.index in items.indices) {
+						val entry = items[hit.index]
+						dragStartIndex = hit.index
+						dragCurrentIndex = hit.index
+						baseSelection = emptySet()
+						isDragging = true
+						haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+						onEnterMultiSelect(entry)
+					}
+				},
+				onDrag = { change, _ ->
+					if (isDragging && dragStartIndex in items.indices) {
+						change.consume()
+						val px = change.position.x.toInt()
+						val py = change.position.y.toInt()
+						val vh = state.layoutInfo.viewportSize.height.toFloat()
+						if (change.position.y < 120f) {
+							scope.launch { state.scrollBy(-25f) }
+						} else if (vh > 0f && change.position.y > vh - 120f) {
+							scope.launch { state.scrollBy(25f) }
+						}
+
+						val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+							px in info.offset.x..(info.offset.x + info.size.width) &&
+							py in info.offset.y..(info.offset.y + info.size.height)
+						}
+						if (hit != null && hit.index in items.indices && hit.index != dragCurrentIndex) {
+							dragCurrentIndex = hit.index
+							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
+							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
+							val rangeSet = items.subList(start, end + 1).toSet()
+							onUpdateSelection(baseSelection + rangeSet)
+							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+						}
+					}
+				},
+				onDragEnd = {
+					isDragging = false
+					dragStartIndex = -1
+					dragCurrentIndex = -1
+				},
+				onDragCancel = {
+					isDragging = false
+					dragStartIndex = -1
+					dragCurrentIndex = -1
+				},
+			)
+		}
 	}
 }
 
@@ -1936,13 +2052,20 @@ private fun FileBrowserContent(
 						modifier = Modifier
 							.fillMaxWidth()
 							.background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-							.clickable {
-								if (isMulti) {
-									vm.toggleSelect(entry)
-								} else {
-									onOpenEntry(entry)
+							.combinedClickable(
+								onClick = {
+									if (isMulti) {
+										vm.toggleSelect(entry)
+									} else {
+										onOpenEntry(entry)
+									}
+								},
+								onLongClick = {
+									if (!isMulti) {
+										onLongClickEntry(entry)
+									}
 								}
-							}
+							)
 							.padding(horizontal = 14.dp, vertical = 7.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -2039,13 +2162,20 @@ private fun FileBrowserContent(
 						modifier = Modifier
 							.fillMaxWidth()
 							.background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-							.clickable {
-								if (isMulti) {
-									vm.toggleSelect(entry)
-								} else {
-									onOpenEntry(entry)
+							.combinedClickable(
+								onClick = {
+									if (isMulti) {
+										vm.toggleSelect(entry)
+									} else {
+										onOpenEntry(entry)
+									}
+								},
+								onLongClick = {
+									if (!isMulti) {
+										onLongClickEntry(entry)
+									}
 								}
-							}
+							)
 							.padding(horizontal = 14.dp, vertical = 8.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -2123,13 +2253,20 @@ private fun FileBrowserContent(
 						elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
 						modifier = Modifier
 							.fillMaxWidth()
-							.clickable {
-								if (isMulti) {
-									vm.toggleSelect(entry)
-								} else {
-									onOpenEntry(entry)
+							.combinedClickable(
+								onClick = {
+									if (isMulti) {
+										vm.toggleSelect(entry)
+									} else {
+										onOpenEntry(entry)
+									}
+								},
+								onLongClick = {
+									if (!isMulti) {
+										onLongClickEntry(entry)
+									}
 								}
-							},
+							),
 					) {
 						Column(
 							modifier = Modifier.padding(10.dp),
@@ -2356,44 +2493,11 @@ private fun PhotoTimelineContent(
 				modifier = Modifier
 					.fillMaxSize()
 					.pointerInput(allPhotos, isMulti, selectedPaths) {
-						detectDragGesturesAfterLongPress(
-							onDragStart = { offset ->
-								val px = offset.x.toInt()
-								val py = offset.y.toInt()
-								val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-									px in info.offset.x..(info.offset.x + info.size.width) &&
-									py in info.offset.y..(info.offset.y + info.size.height)
-								}
-								val hitPath = hit?.key as? String
-								if (hitPath != null && hitPath.startsWith("/")) {
-									val idx = allPhotos.indexOfFirst { it.path == hitPath }
-									if (idx >= 0) {
-										val entry = allPhotos[idx]
-										dragStartIndex = idx
-										dragCurrentIndex = idx
-										baseSelection = if (isMulti) selectedPaths else emptySet()
-										isDragging = true
-										haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-										if (!isMulti) {
-											onEnterMultiSelect(entry)
-										} else {
-											onUpdateSelectionPaths?.invoke(baseSelection + hitPath)
-										}
-									}
-								}
-							},
-							onDrag = { change, _ ->
-								if (isDragging && dragStartIndex in allPhotos.indices) {
-									change.consume()
-									val px = change.position.x.toInt()
-									val py = change.position.y.toInt()
-									val vh = state.layoutInfo.viewportSize.height.toFloat()
-									if (change.position.y < 120f) {
-										scope.launch { state.scrollBy(-25f) }
-									} else if (vh > 0f && change.position.y > vh - 120f) {
-										scope.launch { state.scrollBy(25f) }
-									}
-
+						if (isMulti) {
+							detectDragGestures(
+								onDragStart = { offset ->
+									val px = offset.x.toInt()
+									val py = offset.y.toInt()
 									val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
 										px in info.offset.x..(info.offset.x + info.size.width) &&
 										py in info.offset.y..(info.offset.y + info.size.height)
@@ -2401,28 +2505,123 @@ private fun PhotoTimelineContent(
 									val hitPath = hit?.key as? String
 									if (hitPath != null && hitPath.startsWith("/")) {
 										val idx = allPhotos.indexOfFirst { it.path == hitPath }
-										if (idx >= 0 && idx != dragCurrentIndex) {
+										if (idx >= 0) {
+											val entry = allPhotos[idx]
+											dragStartIndex = idx
 											dragCurrentIndex = idx
-											val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(allPhotos.indices)
-											val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(allPhotos.indices)
-											val rangePaths = allPhotos.subList(start, end + 1).map { it.path }.toSet()
-											onUpdateSelectionPaths?.invoke(baseSelection + rangePaths)
+											baseSelection = selectedPaths
+											isDragging = true
+											onUpdateSelectionPaths?.invoke(baseSelection + hitPath)
 											haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 										}
 									}
-								}
-							},
-							onDragEnd = {
-								isDragging = false
-								dragStartIndex = -1
-								dragCurrentIndex = -1
-							},
-							onDragCancel = {
-								isDragging = false
-								dragStartIndex = -1
-								dragCurrentIndex = -1
-							},
-						)
+								},
+								onDrag = { change, _ ->
+									if (isDragging && dragStartIndex in allPhotos.indices) {
+										change.consume()
+										val px = change.position.x.toInt()
+										val py = change.position.y.toInt()
+										val vh = state.layoutInfo.viewportSize.height.toFloat()
+										if (change.position.y < 120f) {
+											scope.launch { state.scrollBy(-25f) }
+										} else if (vh > 0f && change.position.y > vh - 120f) {
+											scope.launch { state.scrollBy(25f) }
+										}
+
+										val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+											px in info.offset.x..(info.offset.x + info.size.width) &&
+											py in info.offset.y..(info.offset.y + info.size.height)
+										}
+										val hitPath = hit?.key as? String
+										if (hitPath != null && hitPath.startsWith("/")) {
+											val idx = allPhotos.indexOfFirst { it.path == hitPath }
+											if (idx >= 0 && idx != dragCurrentIndex) {
+												dragCurrentIndex = idx
+												val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(allPhotos.indices)
+												val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(allPhotos.indices)
+												val rangePaths = allPhotos.subList(start, end + 1).map { it.path }.toSet()
+												onUpdateSelectionPaths?.invoke(baseSelection + rangePaths)
+												haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+											}
+										}
+									}
+								},
+								onDragEnd = {
+									isDragging = false
+									dragStartIndex = -1
+									dragCurrentIndex = -1
+								},
+								onDragCancel = {
+									isDragging = false
+									dragStartIndex = -1
+									dragCurrentIndex = -1
+								},
+							)
+						} else {
+							detectDragGesturesAfterLongPress(
+								onDragStart = { offset ->
+									val px = offset.x.toInt()
+									val py = offset.y.toInt()
+									val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+										px in info.offset.x..(info.offset.x + info.size.width) &&
+										py in info.offset.y..(info.offset.y + info.size.height)
+									}
+									val hitPath = hit?.key as? String
+									if (hitPath != null && hitPath.startsWith("/")) {
+										val idx = allPhotos.indexOfFirst { it.path == hitPath }
+										if (idx >= 0) {
+											val entry = allPhotos[idx]
+											dragStartIndex = idx
+											dragCurrentIndex = idx
+											baseSelection = emptySet()
+											isDragging = true
+											haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+											onEnterMultiSelect(entry)
+										}
+									}
+								},
+								onDrag = { change, _ ->
+									if (isDragging && dragStartIndex in allPhotos.indices) {
+										change.consume()
+										val px = change.position.x.toInt()
+										val py = change.position.y.toInt()
+										val vh = state.layoutInfo.viewportSize.height.toFloat()
+										if (change.position.y < 120f) {
+											scope.launch { state.scrollBy(-25f) }
+										} else if (vh > 0f && change.position.y > vh - 120f) {
+											scope.launch { state.scrollBy(25f) }
+										}
+
+										val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+											px in info.offset.x..(info.offset.x + info.size.width) &&
+											py in info.offset.y..(info.offset.y + info.size.height)
+										}
+										val hitPath = hit?.key as? String
+										if (hitPath != null && hitPath.startsWith("/")) {
+											val idx = allPhotos.indexOfFirst { it.path == hitPath }
+											if (idx >= 0 && idx != dragCurrentIndex) {
+												dragCurrentIndex = idx
+												val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(allPhotos.indices)
+												val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(allPhotos.indices)
+												val rangePaths = allPhotos.subList(start, end + 1).map { it.path }.toSet()
+												onUpdateSelectionPaths?.invoke(baseSelection + rangePaths)
+												haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+											}
+										}
+									}
+								},
+								onDragEnd = {
+									isDragging = false
+									dragStartIndex = -1
+									dragCurrentIndex = -1
+								},
+								onDragCancel = {
+									isDragging = false
+									dragStartIndex = -1
+									dragCurrentIndex = -1
+								},
+							)
+						}
 					},
 			) {
 				groups.forEach { group ->
@@ -2485,13 +2684,20 @@ private fun PhotoTimelineContent(
 								.clip(RoundedCornerShape(cornerRadius))
 								.then(if (borderStroke != null) Modifier.border(borderStroke, RoundedCornerShape(cornerRadius)) else Modifier)
 								.background(MaterialTheme.colorScheme.outlineVariant)
-								.clickable {
-									if (isMulti) {
-										onToggleSelect(item)
-									} else {
-										onOpenImage(item)
+								.combinedClickable(
+									onClick = {
+										if (isMulti) {
+											onToggleSelect(item)
+										} else {
+											onOpenImage(item)
+										}
+									},
+									onLongClick = {
+										if (!isMulti) {
+											onEnterMultiSelect(item)
+										}
 									}
-								},
+								),
 						) {
 							val thumbTarget = urlOf(item.path)
 							var thumbFailed by remember(item.path) { mutableStateOf(false) }
@@ -2674,13 +2880,20 @@ private fun MediaStreamContent(
 						elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
 						modifier = Modifier
 							.fillMaxWidth()
-							.clickable {
-								if (isMulti) {
-									onToggleSelect(video)
-								} else {
-									onOpenVideo(video)
+							.combinedClickable(
+								onClick = {
+									if (isMulti) {
+										onToggleSelect(video)
+									} else {
+										onOpenVideo(video)
+									}
+								},
+								onLongClick = {
+									if (!isMulti) {
+										onEnterMultiSelect(video)
+									}
 								}
-							},
+							),
 					) {
 						Column {
 							// 16:9 院线质感海报视窗：优先展示服务端缩略图（OpenList type=thumb，真图片），
@@ -3085,7 +3298,7 @@ private fun TransferCenterSheet(
 }
 
 /**
- * 智能网络管家抽屉
+ * 智能网络状态小抽屉（极简优雅，超轻量无遮挡）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -3101,113 +3314,81 @@ private fun NetworkManagerSheet(
 		onDismissRequest = onDismiss,
 		sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
 		containerColor = MaterialTheme.colorScheme.surface,
-		shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+		shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
 	) {
 		Column(
 			modifier = Modifier
 				.fillMaxWidth()
-				.padding(horizontal = 20.dp, vertical = 10.dp),
+				.padding(horizontal = 20.dp)
+				.padding(bottom = 28.dp),
 		) {
-			Text("网络连接与模式控制", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-			Spacer(modifier = Modifier.height(14.dp))
-
-			// 网络质量大卡片
-			Surface(
-				shape = RoundedCornerShape(16.dp),
-				color = MaterialTheme.colorScheme.surfaceVariant,
+			Row(
 				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.SpaceBetween,
 			) {
-				Column(modifier = Modifier.padding(14.dp)) {
-					HumanNetworkPill(routeInfo = routeInfo, onClick = {})
-					Spacer(modifier = Modifier.height(8.dp))
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(8.dp),
+				) {
+					CompactNetworkBadge(routeInfo = routeInfo, onClick = {})
 					Text(
-						text = when {
-							routeInfo.isLanDirect -> "当前通过本地局域网高速直连，物理延迟极低，跑满局域网最高带宽。"
-							routeInfo.isDirect && !routeInfo.isRelay -> "当前已建立端到端极速直连，直接与 NAS 服务器高速传输，不经过第三方中继。"
-							routeInfo.isRelay -> "当前通过远程中继线路连接。可点击下方「极速直连加速」尝试切换为高速端到端直连。"
-							else -> routeInfo.label.ifBlank { "当前正在检测网络链路状态…" }
-						},
-						fontSize = 12.sp,
+						text = if (routeInfo.isLan) "局域网直连" else if (routeInfo.isDirect) "极速直连" else "网络正常",
+						fontSize = 15.sp,
+						fontWeight = FontWeight.Bold,
 						color = MaterialTheme.colorScheme.onSurface,
-						lineHeight = 18.sp,
-					)
-					Spacer(modifier = Modifier.height(6.dp))
-					Text(
-						text = "工作模式：${currentMode.title}（${currentMode.desc}）",
-						fontSize = 11.sp,
-						color = MaterialTheme.colorScheme.primary,
-						fontWeight = FontWeight.Medium,
 					)
 				}
-			}
-
-			Spacer(modifier = Modifier.height(14.dp))
-
-			// 核心主操作：极速直连加速（优先促成高速端到端直连）
-			Button(
-				onClick = onTriggerPunch,
-				colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-				shape = RoundedCornerShape(14.dp),
-				modifier = Modifier
-					.fillMaxWidth()
-					.height(48.dp),
-			) {
-				Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
-				Spacer(modifier = Modifier.width(6.dp))
-				Text(
-					text = "⚡ 立即极速直连加速 (高速通道)",
-					fontWeight = FontWeight.Bold,
-					color = MaterialTheme.colorScheme.onPrimary,
-				)
-			}
-
-			Spacer(modifier = Modifier.height(10.dp))
-
-			// 模式切换辅助操作
-			if (currentMode != com.nasdrop.ConnectionMode.Direct) {
-				OutlinedButton(
-					onClick = { onSwitchMode(com.nasdrop.ConnectionMode.Direct) },
-					shape = RoundedCornerShape(14.dp),
-					modifier = Modifier
-						.fillMaxWidth()
-						.height(48.dp),
-				) {
-					Icon(Icons.Rounded.FlashOn, contentDescription = null)
-					Spacer(modifier = Modifier.width(6.dp))
-					Text("切换为【仅限局域网直连】", fontWeight = FontWeight.Bold)
+				Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+					Surface(
+						shape = RoundedCornerShape(12.dp),
+						color = MaterialTheme.colorScheme.surfaceVariant,
+						onClick = {
+							onTriggerPunch()
+							onDismiss()
+						},
+					) {
+						Row(
+							modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(4.dp),
+						) {
+							Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+							Text("刷新", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+						}
+					}
+					Surface(
+						shape = RoundedCornerShape(12.dp),
+						color = MaterialTheme.colorScheme.surfaceVariant,
+						onClick = {
+							onOpenSettings()
+							onDismiss()
+						},
+					) {
+						Row(
+							modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(4.dp),
+						) {
+							Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+							Text("设置", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+						}
+					}
 				}
-				Spacer(modifier = Modifier.height(10.dp))
-			} else {
-				Button(
-					onClick = { onSwitchMode(com.nasdrop.ConnectionMode.Auto) },
-					colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
-					shape = RoundedCornerShape(14.dp),
-					modifier = Modifier
-						.fillMaxWidth()
-						.height(48.dp),
-				) {
-					Icon(Icons.Rounded.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiary)
-					Spacer(modifier = Modifier.width(6.dp))
-					Text("切回【智能自动模式】(推荐)", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onTertiary)
-				}
-				Spacer(modifier = Modifier.height(10.dp))
 			}
 
-			Spacer(modifier = Modifier.height(10.dp))
-			Button(
-				onClick = onOpenSettings,
-				colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-				shape = RoundedCornerShape(14.dp),
-				modifier = Modifier
-					.fillMaxWidth()
-					.height(48.dp),
-			) {
-				Icon(Icons.Rounded.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-				Spacer(modifier = Modifier.width(6.dp))
-				Text("配置服务参数", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-			}
+			Spacer(modifier = Modifier.height(8.dp))
 
-			Spacer(modifier = Modifier.height(24.dp))
+			Text(
+				text = when {
+					routeInfo.isLanDirect -> "局域网高速传输，物理零延迟跑满带宽。"
+					routeInfo.isDirect && !routeInfo.isRelay -> "端到端极速直连，直连传输不经过中继。"
+					routeInfo.isRelay -> "当前远程中继传输，可点击「刷新」加速直连。"
+					else -> "网络链路检测正常。"
+				},
+				fontSize = 12.sp,
+				color = MaterialTheme.colorScheme.onSurfaceVariant,
+			)
 		}
 	}
 }

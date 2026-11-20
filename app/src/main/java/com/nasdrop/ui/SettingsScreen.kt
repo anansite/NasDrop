@@ -368,14 +368,14 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 				}
 			}
 
-			// ==================== 卡片 3: 直连与局域网传输 (极简夸克风格) ====================
+			// ==================== 卡片 3: 直连与局域网传输 (极简紧凑) ====================
 			Card(
 				shape = RoundedCornerShape(16.dp),
 				colors = CardDefaults.cardColors(containerColor = colors.surface),
 				elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
 				modifier = Modifier.fillMaxWidth(),
 			) {
-				Column(modifier = Modifier.padding(16.dp)) {
+				Column(modifier = Modifier.padding(14.dp)) {
 					val isLan = routeInfo.isLan || routeInfo.isLanDirect
 					val isDirect = routeInfo.isDirect && !routeInfo.isRelay
 					val statusDotColor = when {
@@ -402,29 +402,22 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.SpaceBetween,
 					) {
-						Column(modifier = Modifier.weight(1f)) {
-							Text(
-								text = "直连与局域网传输",
-								fontSize = 14.sp,
-								fontWeight = FontWeight.Bold,
-								color = colors.onSurface,
-							)
-							Text(
-								text = "优先本地局域网高速传输，物理低延迟跑满带宽",
-								fontSize = 11.sp,
-								color = colors.onSurfaceVariant,
-							)
-						}
+						Text(
+							text = "直连与局域网传输",
+							fontSize = 14.sp,
+							fontWeight = FontWeight.Bold,
+							color = colors.onSurface,
+						)
 
 						// 紧凑链路状态胶囊
 						Surface(
-							shape = RoundedCornerShape(14.dp),
+							shape = RoundedCornerShape(12.dp),
 							color = statusBgColor,
 							onClick = { vm.reloadSettings() },
 						) {
 							Row(
 								verticalAlignment = Alignment.CenterVertically,
-								modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+								modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
 								horizontalArrangement = Arrangement.spacedBy(4.dp),
 							) {
 								Box(
@@ -443,17 +436,9 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						}
 					}
 
-					Spacer(modifier = Modifier.height(12.dp))
+					Spacer(modifier = Modifier.height(10.dp))
 
 					// 模式选择：聚焦直连与智能模式
-					Text(
-						text = "传输模式偏好",
-						fontSize = 13.sp,
-						fontWeight = FontWeight.Bold,
-						color = colors.onSurface,
-					)
-					Spacer(modifier = Modifier.height(6.dp))
-
 					Row(
 						modifier = Modifier.fillMaxWidth(),
 						horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -473,21 +458,15 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 							modifier = Modifier.weight(1f),
 						)
 					}
-					Text(
-						text = if (connMode == ConnectionMode.Direct) "仅使用本地局域网或公网直接访问 WebDAV，杜绝任何中继代理" else "在局域网内自动锁定极速直连；网络变化时自适应连通",
-						style = MaterialTheme.typography.bodySmall,
-						color = colors.onSurfaceVariant,
-						modifier = Modifier.padding(top = 2.dp),
-					)
 
-					HorizontalDivider(color = colors.outlineVariant, thickness = 1.dp, modifier = Modifier.padding(vertical = 10.dp))
+					HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.4f), thickness = 0.5.dp, modifier = Modifier.padding(vertical = 8.dp))
 
 					// 信任自签 SSL 证书
 					SettingItemRow(
 						icon = Icons.Rounded.Security,
 						iconBg = colors.primary,
 						title = "放行自签 SSL 证书",
-						desc = "开启后跳过证书与主机名校验，仅用于可信私有服务",
+						desc = "仅用于可信私有 WebDAV 服务",
 						trailing = {
 							Switch(
 								checked = trustAll,
