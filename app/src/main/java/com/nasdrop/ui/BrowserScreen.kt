@@ -3004,6 +3004,7 @@ private fun PhotoTimelineContent(
 		}
 	}
 }
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
