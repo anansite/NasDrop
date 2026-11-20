@@ -2932,22 +2932,6 @@ private fun PhotoTimelineContent(
 									},
 								),
 						) {
-									onClick = {
-										if (isMulti) {
-											onToggleSelect(item)
-										} else {
-											onOpenImage(item)
-										}
-									},
-									onLongClick = {
-										if (!isMulti) {
-											onEnterMultiSelect(item)
-										} else {
-											onToggleSelect(item)
-										}
-									},
-								),
-						) {
 							val thumbTarget = urlOf(item.path)
 							var thumbFailed by remember(item.path) { mutableStateOf(false) }
 							var directFailed by remember(item.path) { mutableStateOf(false) }
@@ -3003,7 +2987,6 @@ private fun PhotoTimelineContent(
 			}
 		}
 	}
-}
 }
 
 @OptIn(ExperimentalFoundationApi::class)
