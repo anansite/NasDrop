@@ -173,8 +173,12 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.input.pointer.pointerInput
 import com.nasdrop.ViewMode
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -953,27 +957,28 @@ private fun CompactNetworkBadge(routeInfo: RouteInfo, onClick: () -> Unit) {
 		}
 	}
 
-	Surface(
-		shape = RoundedCornerShape(8.dp),
-		color = bgColor,
-		onClick = onClick,
+	Box(
+		modifier = Modifier
+			.clip(RoundedCornerShape(6.dp))
+			.background(dotColor.copy(alpha = 0.12f))
+			.clickable(onClick = onClick)
+			.padding(horizontal = 6.dp, vertical = 2.dp),
 	) {
 		Row(
-			modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp),
 			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.spacedBy(4.dp),
+			horizontalArrangement = Arrangement.spacedBy(3.dp),
 		) {
 			Box(
 				modifier = Modifier
-					.size(5.dp)
+					.size(4.dp)
 					.clip(CircleShape)
 					.background(dotColor),
 			)
 			Text(
 				text = label,
-				fontSize = 11.sp,
-				fontWeight = FontWeight.SemiBold,
-				color = textColor,
+				fontSize = 10.sp,
+				fontWeight = FontWeight.Medium,
+				color = dotColor,
 			)
 		}
 	}
@@ -1734,6 +1739,45 @@ private fun BrowserStatus(
 	}
 }
 
+private fun findItemIndexAt(state: LazyListState, pointerY: Float): Int? {
+	val visibleItems = state.layoutInfo.visibleItemsInfo
+	if (visibleItems.isEmpty()) return null
+	val targetY = pointerY.toInt()
+	val hit = visibleItems.firstOrNull { info ->
+		targetY in info.offset..(info.offset + info.size)
+	}
+	if (hit != null) return hit.index
+	val first = visibleItems.first()
+	val last = visibleItems.last()
+	return when {
+		targetY < first.offset -> first.index
+		targetY > last.offset + last.size -> last.index
+		else -> visibleItems.minByOrNull { info ->
+			val center = info.offset + info.size / 2
+			kotlin.math.abs(targetY - center)
+		}?.index
+	}
+}
+
+private fun findGridItemIndexAt(state: LazyGridState, pointerX: Float, pointerY: Float): Int? {
+	val visibleItems = state.layoutInfo.visibleItemsInfo
+	if (visibleItems.isEmpty()) return null
+	val px = pointerX.toInt()
+	val py = pointerY.toInt()
+	val hit = visibleItems.firstOrNull { info ->
+		px in info.offset.x..(info.offset.x + info.size.width) &&
+		py in info.offset.y..(info.offset.y + info.size.height)
+	}
+	if (hit != null) return hit.index
+	return visibleItems.minByOrNull { info ->
+		val cx = info.offset.x + info.size.width / 2
+		val cy = info.offset.y + info.size.height / 2
+		val dx = (px - cx).toFloat()
+		val dy = (py - cy).toFloat()
+		dx * dx + dy * dy
+	}?.index
+}
+
 /**
  * 为 LazyColumn 赋予流畅的滑动多选能力 (包含长按进入多选、顺势拖动连选、边界自动滚屏、震动反馈)
  */
@@ -1748,116 +1792,107 @@ private fun Modifier.dragSelectableList(
 ): Modifier {
 	val haptic = LocalHapticFeedback.current
 	val scope = rememberCoroutineScope()
-	var dragStartIndex by remember { mutableIntStateOf(-1) }
-	var dragCurrentIndex by remember { mutableIntStateOf(-1) }
-	var baseSelection by remember { mutableStateOf<Set<DavEntry>>(emptySet()) }
-	var isDragging by remember { mutableStateOf(false) }
+	val currentItems by rememberUpdatedState(items)
+	val currentIsMulti by rememberUpdatedState(isMulti)
+	val currentSelectedEntries by rememberUpdatedState(selectedEntries)
+	val currentOnEnterMultiSelect by rememberUpdatedState(onEnterMultiSelect)
+	val currentOnUpdateSelection by rememberUpdatedState(onUpdateSelection)
 
-	return this.pointerInput(items, isMulti, selectedEntries) {
-		if (isMulti) {
-			detectDragGestures(
-				onDragStart = { offset ->
-					val intY = offset.y.toInt()
-					val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-						intY in info.offset..(info.offset + info.size)
-					}
-					if (hit != null && hit.index in items.indices) {
-						val entry = items[hit.index]
-						dragStartIndex = hit.index
-						dragCurrentIndex = hit.index
-						baseSelection = selectedEntries
-						isDragging = true
-						onUpdateSelection(baseSelection + entry)
-						haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-					}
-				},
-				onDrag = { change, _ ->
-					if (isDragging && dragStartIndex in items.indices) {
-						change.consume()
-						val intY = change.position.y.toInt()
-						val vh = state.layoutInfo.viewportSize.height.toFloat()
-						if (change.position.y < 120f) {
-							scope.launch { state.scrollBy(-25f) }
-						} else if (vh > 0f && change.position.y > vh - 120f) {
-							scope.launch { state.scrollBy(25f) }
-						}
+	return this.pointerInput(Unit) {
+		awaitEachGesture {
+			val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+			val downTime = System.currentTimeMillis()
+			val downPos = down.position
+			var dragStartIndex = -1
+			var dragCurrentIndex = -1
+			var baseSelection = emptySet<DavEntry>()
+			var isDragging = false
+			val longPressTimeout = minOf(viewConfiguration.longPressTimeoutMillis, 320L)
+			val touchSlop = viewConfiguration.touchSlop
 
-						val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-							intY in info.offset..(info.offset + info.size)
-						}
-						if (hit != null && hit.index in items.indices && hit.index != dragCurrentIndex) {
-							dragCurrentIndex = hit.index
-							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
-							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
-							val rangeSet = items.subList(start, end + 1).toSet()
-							onUpdateSelection(baseSelection + rangeSet)
-							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-						}
-					}
-				},
-				onDragEnd = {
-					isDragging = false
-					dragStartIndex = -1
-					dragCurrentIndex = -1
-				},
-				onDragCancel = {
-					isDragging = false
-					dragStartIndex = -1
-					dragCurrentIndex = -1
-				},
-			)
-		} else {
-			detectDragGesturesAfterLongPress(
-				onDragStart = { offset ->
-					val intY = offset.y.toInt()
-					val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-						intY in info.offset..(info.offset + info.size)
-					}
-					if (hit != null && hit.index in items.indices) {
-						val entry = items[hit.index]
-						dragStartIndex = hit.index
-						dragCurrentIndex = hit.index
-						baseSelection = emptySet()
+			while (true) {
+				val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+				val pointer = event.changes.firstOrNull { it.id == down.id }
+				if (pointer == null || !pointer.pressed) {
+					break
+				}
+				val dist = (pointer.position - downPos).getDistance()
+				if (dist > touchSlop) {
+					break
+				}
+				if (System.currentTimeMillis() - downTime >= longPressTimeout) {
+					pointer.consume()
+					event.changes.forEach { it.consume() }
+					val hitIndex = findItemIndexAt(state, downPos.y)
+					if (hitIndex != null && hitIndex in currentItems.indices) {
+						val entry = currentItems[hitIndex]
+						dragStartIndex = hitIndex
+						dragCurrentIndex = hitIndex
+						baseSelection = if (currentIsMulti) currentSelectedEntries else emptySet()
 						isDragging = true
 						haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-						onEnterMultiSelect(entry)
+						if (!currentIsMulti) {
+							currentOnEnterMultiSelect(entry)
+						} else {
+							currentOnUpdateSelection(baseSelection + entry)
+						}
 					}
-				},
-				onDrag = { change, _ ->
-					if (isDragging && dragStartIndex in items.indices) {
-						change.consume()
-						val intY = change.position.y.toInt()
+					break
+				}
+			}
+
+			if (isDragging && dragStartIndex in currentItems.indices) {
+				var autoScrollJob: Job? = null
+				try {
+					while (true) {
+						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+						val pointer = event.changes.firstOrNull { it.id == down.id }
+						if (pointer == null || !pointer.pressed) {
+							break
+						}
+						pointer.consume()
+						event.changes.forEach { it.consume() }
+
+						val curY = pointer.position.y
 						val vh = state.layoutInfo.viewportSize.height.toFloat()
-						if (change.position.y < 120f) {
-							scope.launch { state.scrollBy(-25f) }
-						} else if (vh > 0f && change.position.y > vh - 120f) {
-							scope.launch { state.scrollBy(25f) }
+
+						if (curY < 120f) {
+							if (autoScrollJob?.isActive != true) {
+								autoScrollJob = scope.launch {
+									while (isActive) {
+										state.scrollBy(-30f)
+										delay(16)
+									}
+								}
+							}
+						} else if (vh > 0f && curY > vh - 120f) {
+							if (autoScrollJob?.isActive != true) {
+								autoScrollJob = scope.launch {
+									while (isActive) {
+										state.scrollBy(30f)
+										delay(16)
+									}
+								}
+							}
+						} else {
+							autoScrollJob?.cancel()
+							autoScrollJob = null
 						}
 
-						val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-							intY in info.offset..(info.offset + info.size)
-						}
-						if (hit != null && hit.index in items.indices && hit.index != dragCurrentIndex) {
-							dragCurrentIndex = hit.index
-							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
-							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
-							val rangeSet = items.subList(start, end + 1).toSet()
-							onUpdateSelection(baseSelection + rangeSet)
+						val hitIndex = findItemIndexAt(state, curY)
+						if (hitIndex != null && hitIndex in currentItems.indices && hitIndex != dragCurrentIndex) {
+							dragCurrentIndex = hitIndex
+							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(currentItems.indices)
+							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(currentItems.indices)
+							val rangeSet = currentItems.subList(start, end + 1).toSet()
+							currentOnUpdateSelection(baseSelection + rangeSet)
 							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 						}
 					}
-				},
-				onDragEnd = {
-					isDragging = false
-					dragStartIndex = -1
-					dragCurrentIndex = -1
-				},
-				onDragCancel = {
-					isDragging = false
-					dragStartIndex = -1
-					dragCurrentIndex = -1
-				},
-			)
+				} finally {
+					autoScrollJob?.cancel()
+				}
+			}
 		}
 	}
 }
@@ -1876,124 +1911,108 @@ private fun Modifier.dragSelectableGrid(
 ): Modifier {
 	val haptic = LocalHapticFeedback.current
 	val scope = rememberCoroutineScope()
-	var dragStartIndex by remember { mutableIntStateOf(-1) }
-	var dragCurrentIndex by remember { mutableIntStateOf(-1) }
-	var baseSelection by remember { mutableStateOf<Set<DavEntry>>(emptySet()) }
-	var isDragging by remember { mutableStateOf(false) }
+	val currentItems by rememberUpdatedState(items)
+	val currentIsMulti by rememberUpdatedState(isMulti)
+	val currentSelectedEntries by rememberUpdatedState(selectedEntries)
+	val currentOnEnterMultiSelect by rememberUpdatedState(onEnterMultiSelect)
+	val currentOnUpdateSelection by rememberUpdatedState(onUpdateSelection)
 
-	return this.pointerInput(items, isMulti, selectedEntries) {
-		if (isMulti) {
-			detectDragGestures(
-				onDragStart = { offset ->
-					val px = offset.x.toInt()
-					val py = offset.y.toInt()
-					val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-						px in info.offset.x..(info.offset.x + info.size.width) &&
-						py in info.offset.y..(info.offset.y + info.size.height)
-					}
-					if (hit != null && hit.index in items.indices) {
-						val entry = items[hit.index]
-						dragStartIndex = hit.index
-						dragCurrentIndex = hit.index
-						baseSelection = selectedEntries
-						isDragging = true
-						onUpdateSelection(baseSelection + entry)
-						haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-					}
-				},
-				onDrag = { change, _ ->
-					if (isDragging && dragStartIndex in items.indices) {
-						change.consume()
-						val px = change.position.x.toInt()
-						val py = change.position.y.toInt()
-						val vh = state.layoutInfo.viewportSize.height.toFloat()
-						if (change.position.y < 120f) {
-							scope.launch { state.scrollBy(-25f) }
-						} else if (vh > 0f && change.position.y > vh - 120f) {
-							scope.launch { state.scrollBy(25f) }
-						}
+	return this.pointerInput(Unit) {
+		awaitEachGesture {
+			val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+			val downTime = System.currentTimeMillis()
+			val downPos = down.position
+			var dragStartIndex = -1
+			var dragCurrentIndex = -1
+			var baseSelection = emptySet<DavEntry>()
+			var isDragging = false
+			val longPressTimeout = minOf(viewConfiguration.longPressTimeoutMillis, 320L)
+			val touchSlop = viewConfiguration.touchSlop
 
-						val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-							px in info.offset.x..(info.offset.x + info.size.width) &&
-							py in info.offset.y..(info.offset.y + info.size.height)
-						}
-						if (hit != null && hit.index in items.indices && hit.index != dragCurrentIndex) {
-							dragCurrentIndex = hit.index
-							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
-							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
-							val rangeSet = items.subList(start, end + 1).toSet()
-							onUpdateSelection(baseSelection + rangeSet)
-							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-						}
-					}
-				},
-				onDragEnd = {
-					isDragging = false
-					dragStartIndex = -1
-					dragCurrentIndex = -1
-				},
-				onDragCancel = {
-					isDragging = false
-					dragStartIndex = -1
-					dragCurrentIndex = -1
-				},
-			)
-		} else {
-			detectDragGesturesAfterLongPress(
-				onDragStart = { offset ->
-					val px = offset.x.toInt()
-					val py = offset.y.toInt()
-					val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-						px in info.offset.x..(info.offset.x + info.size.width) &&
-						py in info.offset.y..(info.offset.y + info.size.height)
-					}
-					if (hit != null && hit.index in items.indices) {
-						val entry = items[hit.index]
-						dragStartIndex = hit.index
-						dragCurrentIndex = hit.index
-						baseSelection = emptySet()
+			while (true) {
+				val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+				val pointer = event.changes.firstOrNull { it.id == down.id }
+				if (pointer == null || !pointer.pressed) {
+					break
+				}
+				val dist = (pointer.position - downPos).getDistance()
+				if (dist > touchSlop) {
+					break
+				}
+				if (System.currentTimeMillis() - downTime >= longPressTimeout) {
+					pointer.consume()
+					event.changes.forEach { it.consume() }
+					val hitIndex = findGridItemIndexAt(state, downPos.x, downPos.y)
+					if (hitIndex != null && hitIndex in currentItems.indices) {
+						val entry = currentItems[hitIndex]
+						dragStartIndex = hitIndex
+						dragCurrentIndex = hitIndex
+						baseSelection = if (currentIsMulti) currentSelectedEntries else emptySet()
 						isDragging = true
 						haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-						onEnterMultiSelect(entry)
+						if (!currentIsMulti) {
+							currentOnEnterMultiSelect(entry)
+						} else {
+							currentOnUpdateSelection(baseSelection + entry)
+						}
 					}
-				},
-				onDrag = { change, _ ->
-					if (isDragging && dragStartIndex in items.indices) {
-						change.consume()
-						val px = change.position.x.toInt()
-						val py = change.position.y.toInt()
+					break
+				}
+			}
+
+			if (isDragging && dragStartIndex in currentItems.indices) {
+				var autoScrollJob: Job? = null
+				try {
+					while (true) {
+						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+						val pointer = event.changes.firstOrNull { it.id == down.id }
+						if (pointer == null || !pointer.pressed) {
+							break
+						}
+						pointer.consume()
+						event.changes.forEach { it.consume() }
+
+						val curX = pointer.position.x
+						val curY = pointer.position.y
 						val vh = state.layoutInfo.viewportSize.height.toFloat()
-						if (change.position.y < 120f) {
-							scope.launch { state.scrollBy(-25f) }
-						} else if (vh > 0f && change.position.y > vh - 120f) {
-							scope.launch { state.scrollBy(25f) }
+
+						if (curY < 120f) {
+							if (autoScrollJob?.isActive != true) {
+								autoScrollJob = scope.launch {
+									while (isActive) {
+										state.scrollBy(-30f)
+										delay(16)
+									}
+								}
+							}
+						} else if (vh > 0f && curY > vh - 120f) {
+							if (autoScrollJob?.isActive != true) {
+								autoScrollJob = scope.launch {
+									while (isActive) {
+										state.scrollBy(30f)
+										delay(16)
+									}
+								}
+							}
+						} else {
+							autoScrollJob?.cancel()
+							autoScrollJob = null
 						}
 
-						val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-							px in info.offset.x..(info.offset.x + info.size.width) &&
-							py in info.offset.y..(info.offset.y + info.size.height)
-						}
-						if (hit != null && hit.index in items.indices && hit.index != dragCurrentIndex) {
-							dragCurrentIndex = hit.index
-							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
-							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(items.indices)
-							val rangeSet = items.subList(start, end + 1).toSet()
-							onUpdateSelection(baseSelection + rangeSet)
+						val hitIndex = findGridItemIndexAt(state, curX, curY)
+						if (hitIndex != null && hitIndex in currentItems.indices && hitIndex != dragCurrentIndex) {
+							dragCurrentIndex = hitIndex
+							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(currentItems.indices)
+							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(currentItems.indices)
+							val rangeSet = currentItems.subList(start, end + 1).toSet()
+							currentOnUpdateSelection(baseSelection + rangeSet)
 							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 						}
 					}
-				},
-				onDragEnd = {
-					isDragging = false
-					dragStartIndex = -1
-					dragCurrentIndex = -1
-				},
-				onDragCancel = {
-					isDragging = false
-					dragStartIndex = -1
-					dragCurrentIndex = -1
-				},
-			)
+				} finally {
+					autoScrollJob?.cancel()
+				}
+			}
 		}
 	}
 }
@@ -2052,20 +2071,13 @@ private fun FileBrowserContent(
 						modifier = Modifier
 							.fillMaxWidth()
 							.background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-							.combinedClickable(
-								onClick = {
-									if (isMulti) {
-										vm.toggleSelect(entry)
-									} else {
-										onOpenEntry(entry)
-									}
-								},
-								onLongClick = {
-									if (!isMulti) {
-										onLongClickEntry(entry)
-									}
+							.clickable {
+								if (isMulti) {
+									vm.toggleSelect(entry)
+								} else {
+									onOpenEntry(entry)
 								}
-							)
+							}
 							.padding(horizontal = 14.dp, vertical = 7.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -2162,20 +2174,13 @@ private fun FileBrowserContent(
 						modifier = Modifier
 							.fillMaxWidth()
 							.background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-							.combinedClickable(
-								onClick = {
-									if (isMulti) {
-										vm.toggleSelect(entry)
-									} else {
-										onOpenEntry(entry)
-									}
-								},
-								onLongClick = {
-									if (!isMulti) {
-										onLongClickEntry(entry)
-									}
+							.clickable {
+								if (isMulti) {
+									vm.toggleSelect(entry)
+								} else {
+									onOpenEntry(entry)
 								}
-							)
+							}
 							.padding(horizontal = 14.dp, vertical = 8.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -2253,20 +2258,13 @@ private fun FileBrowserContent(
 						elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
 						modifier = Modifier
 							.fillMaxWidth()
-							.combinedClickable(
-								onClick = {
-									if (isMulti) {
-										vm.toggleSelect(entry)
-									} else {
-										onOpenEntry(entry)
-									}
-								},
-								onLongClick = {
-									if (!isMulti) {
-										onLongClickEntry(entry)
-									}
+							.clickable {
+								if (isMulti) {
+									vm.toggleSelect(entry)
+								} else {
+									onOpenEntry(entry)
 								}
-							),
+							},
 					) {
 						Column(
 							modifier = Modifier.padding(10.dp),
@@ -2400,6 +2398,11 @@ private fun PhotoTimelineContent(
 	val haptic = LocalHapticFeedback.current
 	val scope = rememberCoroutineScope()
 	val allPhotos = remember(groups) { groups.flatMap { it.items } }
+	val currentAllPhotos by rememberUpdatedState(allPhotos)
+	val currentIsMulti by rememberUpdatedState(isMulti)
+	val currentSelectedPaths by rememberUpdatedState(selectedPaths)
+	val currentOnEnterMultiSelect by rememberUpdatedState(onEnterMultiSelect)
+	val currentOnUpdateSelectionPaths by rememberUpdatedState(onUpdateSelectionPaths)
 	var dragStartIndex by remember { mutableIntStateOf(-1) }
 	var dragCurrentIndex by remember { mutableIntStateOf(-1) }
 	var baseSelection by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -2492,135 +2495,102 @@ private fun PhotoTimelineContent(
 				verticalArrangement = Arrangement.spacedBy(3.dp),
 				modifier = Modifier
 					.fillMaxSize()
-					.pointerInput(allPhotos, isMulti, selectedPaths) {
-						if (isMulti) {
-							detectDragGestures(
-								onDragStart = { offset ->
-									val px = offset.x.toInt()
-									val py = offset.y.toInt()
-									val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-										px in info.offset.x..(info.offset.x + info.size.width) &&
-										py in info.offset.y..(info.offset.y + info.size.height)
+					.pointerInput(Unit) {
+						awaitEachGesture {
+							val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+							val downTime = System.currentTimeMillis()
+							val downPos = down.position
+							var dragStartIndex = -1
+							var dragCurrentIndex = -1
+							var baseSelection = emptySet<String>()
+							var isDragging = false
+							val longPressTimeout = minOf(viewConfiguration.longPressTimeoutMillis, 320L)
+							val touchSlop = viewConfiguration.touchSlop
+
+							while (true) {
+								val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+								val pointer = event.changes.firstOrNull { it.id == down.id }
+								if (pointer == null || !pointer.pressed) {
+									break
+								}
+								val dist = (pointer.position - downPos).getDistance()
+								if (dist > touchSlop) {
+									break
+								}
+								if (System.currentTimeMillis() - downTime >= longPressTimeout) {
+									pointer.consume()
+									event.changes.forEach { it.consume() }
+									val hitIndex = findGridItemIndexAt(state, downPos.x, downPos.y)
+									if (hitIndex != null && hitIndex in currentAllPhotos.indices) {
+										val entry = currentAllPhotos[hitIndex]
+										dragStartIndex = hitIndex
+										dragCurrentIndex = hitIndex
+										baseSelection = if (currentIsMulti) currentSelectedPaths else emptySet()
+										isDragging = true
+										haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+										if (!currentIsMulti) {
+											currentOnEnterMultiSelect(entry)
+										} else {
+											currentOnUpdateSelectionPaths?.invoke(baseSelection + entry.path)
+										}
 									}
-									val hitPath = hit?.key as? String
-									if (hitPath != null && hitPath.startsWith("/")) {
-										val idx = allPhotos.indexOfFirst { it.path == hitPath }
-										if (idx >= 0) {
-											val entry = allPhotos[idx]
-											dragStartIndex = idx
-											dragCurrentIndex = idx
-											baseSelection = selectedPaths
-											isDragging = true
-											onUpdateSelectionPaths?.invoke(baseSelection + hitPath)
+									break
+								}
+							}
+
+							if (isDragging && dragStartIndex in currentAllPhotos.indices) {
+								var autoScrollJob: Job? = null
+								try {
+									while (true) {
+										val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+										val pointer = event.changes.firstOrNull { it.id == down.id }
+										if (pointer == null || !pointer.pressed) {
+											break
+										}
+										pointer.consume()
+										event.changes.forEach { it.consume() }
+
+										val curX = pointer.position.x
+										val curY = pointer.position.y
+										val vh = state.layoutInfo.viewportSize.height.toFloat()
+
+										if (curY < 120f) {
+											if (autoScrollJob?.isActive != true) {
+												autoScrollJob = scope.launch {
+													while (isActive) {
+														state.scrollBy(-30f)
+														delay(16)
+													}
+												}
+											}
+										} else if (vh > 0f && curY > vh - 120f) {
+											if (autoScrollJob?.isActive != true) {
+												autoScrollJob = scope.launch {
+													while (isActive) {
+														state.scrollBy(30f)
+														delay(16)
+													}
+												}
+											}
+										} else {
+											autoScrollJob?.cancel()
+											autoScrollJob = null
+										}
+
+										val hitIndex = findGridItemIndexAt(state, curX, curY)
+										if (hitIndex != null && hitIndex in currentAllPhotos.indices && hitIndex != dragCurrentIndex) {
+											dragCurrentIndex = hitIndex
+											val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(currentAllPhotos.indices)
+											val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(currentAllPhotos.indices)
+											val rangePaths = currentAllPhotos.subList(start, end + 1).map { it.path }.toSet()
+											currentOnUpdateSelectionPaths?.invoke(baseSelection + rangePaths)
 											haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 										}
 									}
-								},
-								onDrag = { change, _ ->
-									if (isDragging && dragStartIndex in allPhotos.indices) {
-										change.consume()
-										val px = change.position.x.toInt()
-										val py = change.position.y.toInt()
-										val vh = state.layoutInfo.viewportSize.height.toFloat()
-										if (change.position.y < 120f) {
-											scope.launch { state.scrollBy(-25f) }
-										} else if (vh > 0f && change.position.y > vh - 120f) {
-											scope.launch { state.scrollBy(25f) }
-										}
-
-										val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-											px in info.offset.x..(info.offset.x + info.size.width) &&
-											py in info.offset.y..(info.offset.y + info.size.height)
-										}
-										val hitPath = hit?.key as? String
-										if (hitPath != null && hitPath.startsWith("/")) {
-											val idx = allPhotos.indexOfFirst { it.path == hitPath }
-											if (idx >= 0 && idx != dragCurrentIndex) {
-												dragCurrentIndex = idx
-												val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(allPhotos.indices)
-												val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(allPhotos.indices)
-												val rangePaths = allPhotos.subList(start, end + 1).map { it.path }.toSet()
-												onUpdateSelectionPaths?.invoke(baseSelection + rangePaths)
-												haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-											}
-										}
-									}
-								},
-								onDragEnd = {
-									isDragging = false
-									dragStartIndex = -1
-									dragCurrentIndex = -1
-								},
-								onDragCancel = {
-									isDragging = false
-									dragStartIndex = -1
-									dragCurrentIndex = -1
-								},
-							)
-						} else {
-							detectDragGesturesAfterLongPress(
-								onDragStart = { offset ->
-									val px = offset.x.toInt()
-									val py = offset.y.toInt()
-									val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-										px in info.offset.x..(info.offset.x + info.size.width) &&
-										py in info.offset.y..(info.offset.y + info.size.height)
-									}
-									val hitPath = hit?.key as? String
-									if (hitPath != null && hitPath.startsWith("/")) {
-										val idx = allPhotos.indexOfFirst { it.path == hitPath }
-										if (idx >= 0) {
-											val entry = allPhotos[idx]
-											dragStartIndex = idx
-											dragCurrentIndex = idx
-											baseSelection = emptySet()
-											isDragging = true
-											haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-											onEnterMultiSelect(entry)
-										}
-									}
-								},
-								onDrag = { change, _ ->
-									if (isDragging && dragStartIndex in allPhotos.indices) {
-										change.consume()
-										val px = change.position.x.toInt()
-										val py = change.position.y.toInt()
-										val vh = state.layoutInfo.viewportSize.height.toFloat()
-										if (change.position.y < 120f) {
-											scope.launch { state.scrollBy(-25f) }
-										} else if (vh > 0f && change.position.y > vh - 120f) {
-											scope.launch { state.scrollBy(25f) }
-										}
-
-										val hit = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-											px in info.offset.x..(info.offset.x + info.size.width) &&
-											py in info.offset.y..(info.offset.y + info.size.height)
-										}
-										val hitPath = hit?.key as? String
-										if (hitPath != null && hitPath.startsWith("/")) {
-											val idx = allPhotos.indexOfFirst { it.path == hitPath }
-											if (idx >= 0 && idx != dragCurrentIndex) {
-												dragCurrentIndex = idx
-												val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(allPhotos.indices)
-												val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(allPhotos.indices)
-												val rangePaths = allPhotos.subList(start, end + 1).map { it.path }.toSet()
-												onUpdateSelectionPaths?.invoke(baseSelection + rangePaths)
-												haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-											}
-										}
-									}
-								},
-								onDragEnd = {
-									isDragging = false
-									dragStartIndex = -1
-									dragCurrentIndex = -1
-								},
-								onDragCancel = {
-									isDragging = false
-									dragStartIndex = -1
-									dragCurrentIndex = -1
-								},
-							)
+								} finally {
+									autoScrollJob?.cancel()
+								}
+							}
 						}
 					},
 			) {
@@ -2684,20 +2654,13 @@ private fun PhotoTimelineContent(
 								.clip(RoundedCornerShape(cornerRadius))
 								.then(if (borderStroke != null) Modifier.border(borderStroke, RoundedCornerShape(cornerRadius)) else Modifier)
 								.background(MaterialTheme.colorScheme.outlineVariant)
-								.combinedClickable(
-									onClick = {
-										if (isMulti) {
-											onToggleSelect(item)
-										} else {
-											onOpenImage(item)
-										}
-									},
-									onLongClick = {
-										if (!isMulti) {
-											onEnterMultiSelect(item)
-										}
+								.clickable {
+									if (isMulti) {
+										onToggleSelect(item)
+									} else {
+										onOpenImage(item)
 									}
-								),
+								},
 						) {
 							val thumbTarget = urlOf(item.path)
 							var thumbFailed by remember(item.path) { mutableStateOf(false) }
@@ -2880,20 +2843,13 @@ private fun MediaStreamContent(
 						elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
 						modifier = Modifier
 							.fillMaxWidth()
-							.combinedClickable(
-								onClick = {
-									if (isMulti) {
-										onToggleSelect(video)
-									} else {
-										onOpenVideo(video)
-									}
-								},
-								onLongClick = {
-									if (!isMulti) {
-										onEnterMultiSelect(video)
-									}
+							.clickable {
+								if (isMulti) {
+									onToggleSelect(video)
+								} else {
+									onOpenVideo(video)
 								}
-							),
+							},
 					) {
 						Column {
 							// 16:9 院线质感海报视窗：优先展示服务端缩略图（OpenList type=thumb，真图片），
@@ -3314,13 +3270,22 @@ private fun NetworkManagerSheet(
 		onDismissRequest = onDismiss,
 		sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
 		containerColor = MaterialTheme.colorScheme.surface,
-		shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+		shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+		dragHandle = {
+			Box(
+				modifier = Modifier
+					.padding(top = 8.dp, bottom = 4.dp)
+					.size(width = 30.dp, height = 3.dp)
+					.clip(RoundedCornerShape(1.5.dp))
+					.background(MaterialTheme.colorScheme.outlineVariant)
+			)
+		}
 	) {
 		Column(
 			modifier = Modifier
 				.fillMaxWidth()
-				.padding(horizontal = 20.dp)
-				.padding(bottom = 28.dp),
+				.padding(horizontal = 16.dp)
+				.padding(bottom = 16.dp),
 		) {
 			Row(
 				modifier = Modifier.fillMaxWidth(),
@@ -3329,64 +3294,57 @@ private fun NetworkManagerSheet(
 			) {
 				Row(
 					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(8.dp),
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
 				) {
-					CompactNetworkBadge(routeInfo = routeInfo, onClick = {})
+					Box(
+						modifier = Modifier
+							.size(6.dp)
+							.clip(CircleShape)
+							.background(if (routeInfo.isLan || routeInfo.isDirect) Color(0xFF2E7D32) else Color(0xFFE65100))
+					)
 					Text(
-						text = if (routeInfo.isLan) "局域网直连" else if (routeInfo.isDirect) "极速直连" else "网络正常",
-						fontSize = 15.sp,
+						text = if (routeInfo.isLan) "局域网直连" else if (routeInfo.isDirect) "极速直连 (${routeInfo.latencyMs}ms)" else "网络正常",
+						fontSize = 14.sp,
 						fontWeight = FontWeight.Bold,
 						color = MaterialTheme.colorScheme.onSurface,
 					)
 				}
-				Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-					Surface(
-						shape = RoundedCornerShape(12.dp),
-						color = MaterialTheme.colorScheme.surfaceVariant,
+				Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+					TextButton(
 						onClick = {
 							onTriggerPunch()
 							onDismiss()
 						},
+						contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
 					) {
-						Row(
-							modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(4.dp),
-						) {
-							Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-							Text("刷新", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-						}
+						Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(13.dp))
+						Spacer(Modifier.width(2.dp))
+						Text("刷新", fontSize = 12.sp)
 					}
-					Surface(
-						shape = RoundedCornerShape(12.dp),
-						color = MaterialTheme.colorScheme.surfaceVariant,
+					TextButton(
 						onClick = {
 							onOpenSettings()
 							onDismiss()
 						},
+						contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
 					) {
-						Row(
-							modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(4.dp),
-						) {
-							Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-							Text("设置", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-						}
+						Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(13.dp))
+						Spacer(Modifier.width(2.dp))
+						Text("设置", fontSize = 12.sp)
 					}
 				}
 			}
 
-			Spacer(modifier = Modifier.height(8.dp))
+			Spacer(modifier = Modifier.height(4.dp))
 
 			Text(
 				text = when {
 					routeInfo.isLanDirect -> "局域网高速传输，物理零延迟跑满带宽。"
-					routeInfo.isDirect && !routeInfo.isRelay -> "端到端极速直连，直连传输不经过中继。"
-					routeInfo.isRelay -> "当前远程中继传输，可点击「刷新」加速直连。"
+					routeInfo.isDirect && !routeInfo.isRelay -> "端到端极速直连，不经过第三方中继。"
+					routeInfo.isRelay -> "当前远程中继传输，可点击「刷新」尝试直连。"
 					else -> "网络链路检测正常。"
 				},
-				fontSize = 12.sp,
+				fontSize = 11.sp,
 				color = MaterialTheme.colorScheme.onSurfaceVariant,
 			)
 		}
