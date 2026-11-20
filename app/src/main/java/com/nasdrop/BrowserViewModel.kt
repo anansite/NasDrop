@@ -404,6 +404,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						status = status,
 						error = up.error,
 						directory = up.dir,
+						lastUpdated = up.createdAt,
 					)
 				}
 				syncTransferTasks()

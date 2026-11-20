@@ -23,6 +23,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,8 +74,24 @@ fun UploadProgressScreen(count: Int, batchId: String, interrupted: Boolean = fal
 				modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
 			)
 
+			val sortedTasks = remember(tasks) {
+				tasks.sortedWith(
+					compareBy<UploadTask> { task ->
+						when {
+							task.started && !task.done -> 0   // 进行中置顶
+							task.bodySent && !task.done -> 1  // 写入存储中
+							!task.started && !task.done -> 2  // 排队等待中
+							task.error != null -> 3           // 失败
+							task.cancelled -> 4               // 取消
+							task.done -> 5                    // 完成排到最下面
+							else -> 6
+						}
+					}.thenByDescending { it.createdAt }
+				)
+			}
+
 			LazyColumn(Modifier.fillMaxSize()) {
-					items(tasks, key = { it.id }) { task -> TaskRow(task) }
+				items(sortedTasks, key = { it.id }) { task -> TaskRow(task) }
 			}
 		}
 	}

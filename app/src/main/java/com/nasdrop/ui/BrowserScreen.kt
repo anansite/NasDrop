@@ -6,9 +6,11 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -1897,6 +1899,25 @@ private fun findGridItemIndexAt(state: LazyGridState, pointerX: Float, pointerY:
 	}?.index
 }
 
+private fun findGridItemKeyAt(state: LazyGridState, pointerX: Float, pointerY: Float): Any? {
+	val visibleItems = state.layoutInfo.visibleItemsInfo
+	if (visibleItems.isEmpty()) return null
+	val px = pointerX.toInt()
+	val py = pointerY.toInt()
+	val hit = visibleItems.firstOrNull { info ->
+		px in info.offset.x..(info.offset.x + info.size.width) &&
+		py in info.offset.y..(info.offset.y + info.size.height)
+	}
+	if (hit != null) return hit.key
+	return visibleItems.minByOrNull { info ->
+		val cx = info.offset.x + info.size.width / 2
+		val cy = info.offset.y + info.size.height / 2
+		val dx = (px - cx).toFloat()
+		val dy = (py - cy).toFloat()
+		dx * dx + dy * dy
+	}?.key
+}
+
 /**
  * 为 LazyColumn 赋予流畅的滑动多选能力 (包含长按进入多选、顺势拖动连选、边界自动滚屏、震动反馈)
  */
@@ -2585,9 +2606,9 @@ private fun PhotoTimelineContent(
 	var isDragging by remember { mutableStateOf(false) }
 
 	Column(modifier = Modifier.fillMaxSize()) {
-		// 1. 顶部子相册分类横滑条（紧凑轻盈胶囊）
+		// 1. 顶部子相册分类横滑条（高质感圆角胶囊）
 		LazyRow(
-			contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+			contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
 			horizontalArrangement = Arrangement.spacedBy(8.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
@@ -2595,18 +2616,33 @@ private fun PhotoTimelineContent(
 			item {
 				val isAll = selectedAlbumPath.isBlank()
 				Surface(
-					shape = RoundedCornerShape(17.dp),
-					color = if (isAll) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surface,
-					shadowElevation = if (isAll) 2.dp else 1.dp,
+					shape = RoundedCornerShape(16.dp),
+					color = if (isAll) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+					border = BorderStroke(
+						1.dp,
+						if (isAll) Color.Transparent
+						else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+					),
+					shadowElevation = if (isAll) 2.dp else 0.dp,
 					onClick = { onSelectAlbum("") },
 				) {
 					Row(
-						modifier = Modifier.height(34.dp).padding(horizontal = 10.dp, vertical = 4.dp),
+						modifier = Modifier.height(32.dp).padding(horizontal = 12.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(5.dp),
+						horizontalArrangement = Arrangement.spacedBy(6.dp),
 					) {
-						Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, tint = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.secondary, modifier = Modifier.size(14.dp))
-						Text("全部照片", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface)
+						Icon(
+							Icons.Rounded.PhotoLibrary,
+							contentDescription = null,
+							tint = if (isAll) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+							modifier = Modifier.size(15.dp)
+						)
+						Text(
+							"全部照片",
+							fontSize = 12.sp,
+							fontWeight = if (isAll) FontWeight.Bold else FontWeight.Medium,
+							color = if (isAll) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+						)
 					}
 				}
 			}
@@ -2615,8 +2651,13 @@ private fun PhotoTimelineContent(
 			items(allAlbums) { album ->
 				val isSelected = selectedAlbumPath == album.path
 				Surface(
-					shape = RoundedCornerShape(17.dp),
-					color = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surfaceVariant,
+					shape = RoundedCornerShape(16.dp),
+					color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+					border = BorderStroke(
+						1.dp,
+						if (isSelected) Color.Transparent
+						else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+					),
 					shadowElevation = if (isSelected) 2.dp else 0.dp,
 					modifier = Modifier.combinedClickable(
 						onClick = { onSelectAlbum(album.path) },
@@ -2624,12 +2665,25 @@ private fun PhotoTimelineContent(
 					),
 				) {
 					Row(
-						modifier = Modifier.height(34.dp).padding(horizontal = 10.dp, vertical = 4.dp),
+						modifier = Modifier.height(32.dp).padding(horizontal = 12.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(5.dp),
+						horizontalArrangement = Arrangement.spacedBy(6.dp),
 					) {
-						Icon(Icons.Rounded.Folder, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.onSecondary else Color(0xFFFF9500), modifier = Modifier.size(14.dp))
-						Text(album.name, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (isSelected) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
+						Icon(
+							Icons.Rounded.Folder,
+							contentDescription = null,
+							tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+							modifier = Modifier.size(15.dp)
+						)
+						Text(
+							album.name,
+							fontSize = 12.sp,
+							fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+							color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+							modifier = Modifier.widthIn(max = 140.dp)
+						)
 					}
 				}
 			}
@@ -2637,19 +2691,54 @@ private fun PhotoTimelineContent(
 			// 尾部新建专属相册快捷胶囊
 			item {
 				Surface(
-					shape = RoundedCornerShape(17.dp),
-					color = MaterialTheme.colorScheme.secondaryContainer,
+					shape = RoundedCornerShape(16.dp),
+					color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+					border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
 					onClick = onCreateAlbum,
 				) {
 					Row(
-						modifier = Modifier.height(34.dp).padding(horizontal = 10.dp, vertical = 4.dp),
+						modifier = Modifier.height(32.dp).padding(horizontal = 10.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
-						Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(14.dp))
-						Text("新建相册", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+						Icon(
+							Icons.Rounded.Add,
+							contentDescription = null,
+							tint = MaterialTheme.colorScheme.primary,
+							modifier = Modifier.size(15.dp)
+						)
+						Text(
+							"新建相册",
+							fontSize = 12.sp,
+							fontWeight = FontWeight.SemiBold,
+							color = MaterialTheme.colorScheme.primary
+						)
 					}
 				}
+			}
+		}
+
+		if (selectedAlbumPath.isNotBlank()) {
+			val currentAlbum = allAlbums.firstOrNull { it.path == selectedAlbumPath }
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 16.dp, vertical = 2.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(
+					"当前相册：${currentAlbum?.name ?: "自定义相册"}",
+					style = MaterialTheme.typography.labelMedium,
+					fontWeight = FontWeight.Bold,
+					color = MaterialTheme.colorScheme.primary,
+				)
+				Spacer(Modifier.weight(1f))
+				Text(
+					"长按上方标签可删除相册",
+					style = MaterialTheme.typography.labelSmall,
+					fontSize = 11.sp,
+					color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+				)
 			}
 		}
 
@@ -2703,8 +2792,9 @@ private fun PhotoTimelineContent(
 
 							if (isLongPress) {
 								down.consume()
-								val hitIndex = findGridItemIndexAt(state, downPos.x, downPos.y)
-								if (hitIndex != null && hitIndex in currentAllPhotos.indices) {
+								val hitKey = findGridItemKeyAt(state, downPos.x, downPos.y) as? String
+								val hitIndex = if (hitKey != null) currentAllPhotos.indexOfFirst { it.path == hitKey } else -1
+								if (hitIndex in currentAllPhotos.indices) {
 									val entry = currentAllPhotos[hitIndex]
 									dragStartIndex = hitIndex
 									dragCurrentIndex = hitIndex
@@ -2760,8 +2850,9 @@ private fun PhotoTimelineContent(
 											autoScrollJob = null
 										}
 
-										val hitIndex = findGridItemIndexAt(state, curX, curY)
-										if (hitIndex != null && hitIndex in currentAllPhotos.indices && hitIndex != dragCurrentIndex) {
+										val hitKey = findGridItemKeyAt(state, curX, curY) as? String
+										val hitIndex = if (hitKey != null) currentAllPhotos.indexOfFirst { it.path == hitKey } else -1
+										if (hitIndex in currentAllPhotos.indices && hitIndex != dragCurrentIndex) {
 											dragCurrentIndex = hitIndex
 											val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(currentAllPhotos.indices)
 											val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(currentAllPhotos.indices)
@@ -2816,28 +2907,31 @@ private fun PhotoTimelineContent(
 
 					items(group.items, key = { it.path }) { item ->
 						val isSelected = selectedPaths.contains(item.path)
-						val targetScale = if (isMulti && isSelected) 0.88f else 1f
-						val scale by animateFloatAsState(
-							targetValue = targetScale,
-							animationSpec = spring(
-								dampingRatio = Spring.DampingRatioMediumBouncy,
-								stiffness = Spring.StiffnessLow,
-							),
-							label = "photo_scale",
-						)
-						val cornerRadius = if (isMulti && isSelected) 10.dp else 4.dp
-						val borderStroke = if (isMulti && isSelected) BorderStroke(2.5.dp, MaterialTheme.colorScheme.primary) else null
+						val cornerRadius = if (isMulti && isSelected) 8.dp else 4.dp
+						val borderStroke = if (isMulti && isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
 						Box(
 							modifier = Modifier
 								.aspectRatio(1f)
-								.graphicsLayer {
-									scaleX = scale
-									scaleY = scale
-								}
 								.clip(RoundedCornerShape(cornerRadius))
 								.then(if (borderStroke != null) Modifier.border(borderStroke, RoundedCornerShape(cornerRadius)) else Modifier)
 								.background(MaterialTheme.colorScheme.outlineVariant)
 								.combinedClickable(
+									onClick = {
+										if (isMulti) {
+											onToggleSelect(item)
+										} else {
+											onOpenImage(item)
+										}
+									},
+									onLongClick = {
+										if (!isMulti) {
+											onEnterMultiSelect(item)
+										} else {
+											onToggleSelect(item)
+										}
+									},
+								),
+						) {
 									onClick = {
 										if (isMulti) {
 											onToggleSelect(item)
@@ -2932,9 +3026,9 @@ private fun MediaStreamContent(
 	onOpenVideo: (DavEntry) -> Unit,
 ) {
 	Column(modifier = Modifier.fillMaxSize()) {
-		// 1. 顶部影集/影视分类横滑栏（紧凑轻盈胶囊）
+		// 1. 顶部影集/影视分类横滑栏（高质感圆角胶囊）
 		LazyRow(
-			contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+			contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
 			horizontalArrangement = Arrangement.spacedBy(8.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
@@ -2942,18 +3036,33 @@ private fun MediaStreamContent(
 			item {
 				val isAll = selectedMediaPath.isBlank()
 				Surface(
-					shape = RoundedCornerShape(17.dp),
-					color = if (isAll) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surface,
-					shadowElevation = if (isAll) 2.dp else 1.dp,
+					shape = RoundedCornerShape(16.dp),
+					color = if (isAll) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+					border = BorderStroke(
+						1.dp,
+						if (isAll) Color.Transparent
+						else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+					),
+					shadowElevation = if (isAll) 2.dp else 0.dp,
 					onClick = { onSelectMediaFolder("") },
 				) {
 					Row(
-						modifier = Modifier.height(34.dp).padding(horizontal = 10.dp, vertical = 4.dp),
+						modifier = Modifier.height(32.dp).padding(horizontal = 12.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(5.dp),
+						horizontalArrangement = Arrangement.spacedBy(6.dp),
 					) {
-						Icon(Icons.Rounded.VideoLibrary, contentDescription = null, tint = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.secondary, modifier = Modifier.size(14.dp))
-						Text("全部影视", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isAll) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface)
+						Icon(
+							Icons.Rounded.VideoLibrary,
+							contentDescription = null,
+							tint = if (isAll) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+							modifier = Modifier.size(15.dp)
+						)
+						Text(
+							"全部影视",
+							fontSize = 12.sp,
+							fontWeight = if (isAll) FontWeight.Bold else FontWeight.Medium,
+							color = if (isAll) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+						)
 					}
 				}
 			}
@@ -2962,8 +3071,13 @@ private fun MediaStreamContent(
 			items(allMediaFolders) { folder ->
 				val isSelected = selectedMediaPath == folder.path
 				Surface(
-					shape = RoundedCornerShape(17.dp),
-					color = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surfaceVariant,
+					shape = RoundedCornerShape(16.dp),
+					color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+					border = BorderStroke(
+						1.dp,
+						if (isSelected) Color.Transparent
+						else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+					),
 					shadowElevation = if (isSelected) 2.dp else 0.dp,
 					modifier = Modifier.combinedClickable(
 						onClick = { onSelectMediaFolder(folder.path) },
@@ -2971,12 +3085,25 @@ private fun MediaStreamContent(
 					),
 				) {
 					Row(
-						modifier = Modifier.height(34.dp).padding(horizontal = 10.dp, vertical = 4.dp),
+						modifier = Modifier.height(32.dp).padding(horizontal = 12.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(5.dp),
+						horizontalArrangement = Arrangement.spacedBy(6.dp),
 					) {
-						Icon(Icons.Rounded.Folder, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.onSecondary else Color(0xFFFF9500), modifier = Modifier.size(14.dp))
-						Text(folder.name, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (isSelected) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
+						Icon(
+							Icons.Rounded.Folder,
+							contentDescription = null,
+							tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+							modifier = Modifier.size(15.dp)
+						)
+						Text(
+							folder.name,
+							fontSize = 12.sp,
+							fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+							color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+							modifier = Modifier.widthIn(max = 140.dp)
+						)
 					}
 				}
 			}
@@ -2984,19 +3111,54 @@ private fun MediaStreamContent(
 			// 尾部新建影集快捷胶囊
 			item {
 				Surface(
-					shape = RoundedCornerShape(17.dp),
-					color = MaterialTheme.colorScheme.secondaryContainer,
+					shape = RoundedCornerShape(16.dp),
+					color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+					border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
 					onClick = onCreateMediaFolder,
 				) {
 					Row(
-						modifier = Modifier.height(34.dp).padding(horizontal = 10.dp, vertical = 4.dp),
+						modifier = Modifier.height(32.dp).padding(horizontal = 10.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
-						Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(14.dp))
-						Text("新建影集", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+						Icon(
+							Icons.Rounded.Add,
+							contentDescription = null,
+							tint = MaterialTheme.colorScheme.primary,
+							modifier = Modifier.size(15.dp)
+						)
+						Text(
+							"新建影集",
+							fontSize = 12.sp,
+							fontWeight = FontWeight.SemiBold,
+							color = MaterialTheme.colorScheme.primary
+						)
 					}
 				}
+			}
+		}
+
+		if (selectedMediaPath.isNotBlank()) {
+			val currentFolder = allMediaFolders.firstOrNull { it.path == selectedMediaPath }
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 16.dp, vertical = 2.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(
+					"当前影集：${currentFolder?.name ?: "自定义影集"}",
+					style = MaterialTheme.typography.labelMedium,
+					fontWeight = FontWeight.Bold,
+					color = MaterialTheme.colorScheme.primary,
+				)
+				Spacer(Modifier.weight(1f))
+				Text(
+					"长按上方标签可删除影集",
+					style = MaterialTheme.typography.labelSmall,
+					fontSize = 11.sp,
+					color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+				)
 			}
 		}
 
@@ -3211,19 +3373,29 @@ private fun TransferCenterSheet(
 	val hasActiveRunning = runningTasks.isNotEmpty()
 	val isAllCompleted = totalCount > 0 && tasks.all { it.status == TransferStatus.COMPLETED }
 
-	// 平滑单调总进度算法：杜绝因新入队任务探测 totalBytes 引起的除数突变与来回乱跳
+	// 平滑且准确的总进度算法：按所有任务综合计算，杜绝单文件完成后总进度假跳 99%
 	val rawBatchProgress = run {
 		if (isAllCompleted) return@run 1f
 		if (totalCount == 0) return@run 0f
-		val knownByteTasks = tasks.filter { it.totalBytes > 0 }
-		if (knownByteTasks.isNotEmpty()) {
-			val sent = knownByteTasks.sumOf { if (it.status == TransferStatus.COMPLETED) it.totalBytes else it.sentBytes }
-			val total = knownByteTasks.sumOf { it.totalBytes }
-			if (total > 0) (sent.toFloat() / total).coerceIn(0f, 0.99f)
-			else (completedCount.toFloat() / totalCount).coerceIn(0f, 0.99f)
-		} else {
-			(completedCount.toFloat() / totalCount).coerceIn(0f, 0.99f)
+		var totalTaskProgress = 0f
+		for (task in tasks) {
+			val p = when (task.status) {
+				TransferStatus.COMPLETED -> 1f
+				TransferStatus.CONFIRMING -> 0.98f
+				TransferStatus.RUNNING -> {
+					if (task.totalBytes > 0) (task.sentBytes.toFloat() / task.totalBytes).coerceIn(0f, 0.95f)
+					else 0.05f
+				}
+				TransferStatus.QUEUED -> 0f
+				TransferStatus.PAUSED -> {
+					if (task.totalBytes > 0) (task.sentBytes.toFloat() / task.totalBytes).coerceIn(0f, 0.95f)
+					else 0f
+				}
+				TransferStatus.FAILED, TransferStatus.CANCELLED -> 0f
+			}
+			totalTaskProgress += p
 		}
+		(totalTaskProgress / totalCount).coerceIn(0f, if (isAllCompleted) 1f else 0.99f)
 	}
 
 	var maxBatchProgress by remember(totalCount) { mutableFloatStateOf(0f) }
@@ -3238,7 +3410,7 @@ private fun TransferCenterSheet(
 		label = "batch_progress"
 	)
 
-	// 任务排布：正在高速传输的任务绝对置顶（按实时速率降序，速度越快越靠前，极致爽感），完成项整齐沉底
+	// 任务排布：进行中的任务严格排在最上面（按实时速率降序，速度越快越靠前），完成项整齐排到最下面
 	val visibleTasks = remember(tasks, filter) {
 		val filtered = tasks.filter {
 			when (filter) {
@@ -3257,7 +3429,7 @@ private fun TransferCenterSheet(
 					TransferStatus.PAUSED -> 3      // ⏸️ 已暂停
 					TransferStatus.FAILED -> 4      // ❌ 失败
 					TransferStatus.CANCELLED -> 5   // ⏹️ 取消
-					TransferStatus.COMPLETED -> 6   // ✅ 已完成沉底
+					TransferStatus.COMPLETED -> 6   // ✅ 已完成整齐沉底，排到最下面！
 				}
 			}.thenByDescending { task ->
 				if (task.status == TransferStatus.RUNNING) task.speedBytesPerSec // 速度越快排越前，爽感爆棚！
@@ -3937,31 +4109,37 @@ private fun CommercialNavigationBar(
 		shadowElevation = 8.dp,
 		modifier = Modifier
 			.fillMaxWidth()
-			.height(50.dp),
+			.height(58.dp),
 	) {
 		Column {
-			HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 0.5.dp)
+			HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f), thickness = 0.5.dp)
 			Row(
-				modifier = Modifier.fillMaxSize(),
+				modifier = Modifier
+					.fillMaxSize()
+					.padding(horizontal = 16.dp, vertical = 4.dp),
 				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.SpaceEvenly,
 			) {
 				CompactTabItem(
 					title = "文件",
-					icon = Icons.Rounded.FolderOpen,
+					activeIcon = Icons.Rounded.Folder,
+					inactiveIcon = Icons.Rounded.FolderOpen,
 					selected = currentTab == MainTab.Files,
 					onClick = { onTabSelect(MainTab.Files) },
 					modifier = Modifier.weight(1f),
 				)
 				CompactTabItem(
 					title = "相册",
-					icon = Icons.Rounded.PhotoLibrary,
+					activeIcon = Icons.Rounded.Image,
+					inactiveIcon = Icons.Rounded.PhotoLibrary,
 					selected = currentTab == MainTab.Photos,
 					onClick = { onTabSelect(MainTab.Photos) },
 					modifier = Modifier.weight(1f),
 				)
 				CompactTabItem(
 					title = "影音",
-					icon = Icons.Rounded.VideoLibrary,
+					activeIcon = Icons.Rounded.PlayCircle,
+					inactiveIcon = Icons.Rounded.Movie,
 					selected = currentTab == MainTab.Media,
 					onClick = { onTabSelect(MainTab.Media) },
 					modifier = Modifier.weight(1f),
@@ -3974,33 +4152,54 @@ private fun CommercialNavigationBar(
 @Composable
 private fun CompactTabItem(
 	title: String,
-	icon: ImageVector,
+	activeIcon: ImageVector,
+	inactiveIcon: ImageVector,
 	selected: Boolean,
 	onClick: () -> Unit,
 	modifier: Modifier = Modifier,
 ) {
-	val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-	Column(
-		modifier = modifier
-			.fillMaxHeight()
-			.clickable(onClick = onClick)
-			.padding(vertical = 5.dp),
-		horizontalAlignment = Alignment.CenterHorizontally,
-		// 图标与文字垂直居中且紧贴，去掉多余留白
-		verticalArrangement = Arrangement.Center,
+	val haptic = LocalHapticFeedback.current
+	val activeColor = MaterialTheme.colorScheme.primary
+	val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+	val targetBg = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else Color.Transparent
+	val animatedBg by animateColorAsState(targetValue = targetBg, animationSpec = tween(200), label = "tab_bg")
+	val animatedColor by animateColorAsState(targetValue = if (selected) activeColor else inactiveColor, animationSpec = tween(200), label = "tab_color")
+
+	Box(
+		modifier = modifier.fillMaxHeight(),
+		contentAlignment = Alignment.Center,
 	) {
-		Icon(
-			imageVector = icon,
-			contentDescription = title,
-			tint = color,
-			modifier = Modifier.size(19.dp),
-		)
-		Text(
-			text = title,
-			fontSize = 10.sp,
-			fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-			color = color,
-		)
+		Surface(
+			shape = RoundedCornerShape(20.dp),
+			color = animatedBg,
+			onClick = {
+				haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+				onClick()
+			},
+			modifier = Modifier
+				.fillMaxHeight(0.92f)
+				.widthIn(min = 68.dp, max = 100.dp),
+		) {
+			Column(
+				modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+				horizontalAlignment = Alignment.CenterHorizontally,
+				verticalArrangement = Arrangement.Center,
+			) {
+				Icon(
+					imageVector = if (selected) activeIcon else inactiveIcon,
+					contentDescription = title,
+					tint = animatedColor,
+					modifier = Modifier.size(22.dp),
+				)
+				Spacer(Modifier.height(1.5.dp))
+				Text(
+					text = title,
+					fontSize = 10.5.sp,
+					fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+					color = animatedColor,
+				)
+			}
+		}
 	}
 }
 
