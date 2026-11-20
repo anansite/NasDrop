@@ -4432,10 +4432,11 @@ private fun DraggableUploadFab(
 		val fabSizeDp = 52.dp
 		val fabSizePx = with(density) { fabSizeDp.toPx() }
 		val marginPx = with(density) { 16.dp.toPx() }
+		val bottomMarginPx = with(density) { 92.dp.toPx() }
 
-		// 默认吸附在可视区右下角：距离右边缘 16dp，距离底部 16dp
+		// 默认吸附在可视区右下角：距离右边缘 16dp，距离底部（高于悬浮毛玻璃底栏）92dp
 		var offsetX by remember(boxWidthPx) { mutableFloatStateOf((boxWidthPx - fabSizePx - marginPx).coerceAtLeast(0f)) }
-		var offsetY by remember(boxHeightPx) { mutableFloatStateOf((boxHeightPx - fabSizePx - marginPx).coerceAtLeast(0f)) }
+		var offsetY by remember(boxHeightPx) { mutableFloatStateOf((boxHeightPx - fabSizePx - bottomMarginPx).coerceAtLeast(0f)) }
 		var isDragging by remember { mutableStateOf(false) }
 
 		val (bgColor, icon, label) = when (currentTab) {
@@ -4452,7 +4453,7 @@ private fun DraggableUploadFab(
 			modifier = Modifier
 				.offset {
 					val curX = offsetX.coerceIn(marginPx, (boxWidthPx - fabSizePx - marginPx).coerceAtLeast(marginPx))
-					val curY = offsetY.coerceIn(marginPx, (boxHeightPx - fabSizePx - marginPx).coerceAtLeast(marginPx))
+					val curY = offsetY.coerceIn(marginPx, (boxHeightPx - fabSizePx - bottomMarginPx).coerceAtLeast(marginPx))
 					IntOffset(curX.roundToInt(), curY.roundToInt())
 				}
 				.size(fabSizeDp)
@@ -4468,7 +4469,7 @@ private fun DraggableUploadFab(
 						onDrag = { change, dragAmount ->
 							change.consume()
 							offsetX = (offsetX + dragAmount.x).coerceIn(marginPx, boxWidthPx - fabSizePx - marginPx)
-							offsetY = (offsetY + dragAmount.y).coerceIn(marginPx, boxHeightPx - fabSizePx - marginPx)
+							offsetY = (offsetY + dragAmount.y).coerceIn(marginPx, boxHeightPx - fabSizePx - bottomMarginPx)
 						}
 					)
 				}
