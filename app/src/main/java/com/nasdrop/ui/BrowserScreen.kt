@@ -1807,26 +1807,35 @@ private fun Modifier.dragSelectableList(
 			var dragCurrentIndex = -1
 			var baseSelection = emptySet<DavEntry>()
 			var isDragging = false
-			val longPressTimeout = 280L
+			val isStartingFromCheckbox = currentIsMulti && (downPos.x > size.width * 0.60f)
+			val effectiveTimeout = when {
+				isStartingFromCheckbox -> 0L
+				currentIsMulti -> 160L
+				else -> 240L
+			}
 			val touchSlop = viewConfiguration.touchSlop
 
 			var isLongPress = false
-			try {
-				withTimeout(longPressTimeout) {
-					while (true) {
-						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-						val pointer = event.changes.firstOrNull { it.id == down.id }
-						if (pointer == null || !pointer.pressed) {
-							return@withTimeout
-						}
-						val dist = (pointer.position - downPos).getDistance()
-						if (dist > touchSlop) {
-							return@withTimeout
+			if (effectiveTimeout == 0L) {
+				isLongPress = true
+			} else {
+				try {
+					withTimeout(effectiveTimeout) {
+						while (true) {
+							val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+							val pointer = event.changes.firstOrNull { it.id == down.id }
+							if (pointer == null || !pointer.pressed) {
+								return@withTimeout
+							}
+							val dist = (pointer.position - downPos).getDistance()
+							if (dist > touchSlop) {
+								return@withTimeout
+							}
 						}
 					}
+				} catch (e: TimeoutCancellationException) {
+					isLongPress = true
 				}
-			} catch (e: TimeoutCancellationException) {
-				isLongPress = true
 			}
 
 			if (isLongPress) {
@@ -1933,26 +1942,35 @@ private fun Modifier.dragSelectableGrid(
 			var dragCurrentIndex = -1
 			var baseSelection = emptySet<DavEntry>()
 			var isDragging = false
-			val longPressTimeout = 280L
+			val isStartingFromCheckbox = currentIsMulti && (downPos.x > size.width * 0.60f)
+			val effectiveTimeout = when {
+				isStartingFromCheckbox -> 0L
+				currentIsMulti -> 160L
+				else -> 240L
+			}
 			val touchSlop = viewConfiguration.touchSlop
 
 			var isLongPress = false
-			try {
-				withTimeout(longPressTimeout) {
-					while (true) {
-						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-						val pointer = event.changes.firstOrNull { it.id == down.id }
-						if (pointer == null || !pointer.pressed) {
-							return@withTimeout
-						}
-						val dist = (pointer.position - downPos).getDistance()
-						if (dist > touchSlop) {
-							return@withTimeout
+			if (effectiveTimeout == 0L) {
+				isLongPress = true
+			} else {
+				try {
+					withTimeout(effectiveTimeout) {
+						while (true) {
+							val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+							val pointer = event.changes.firstOrNull { it.id == down.id }
+							if (pointer == null || !pointer.pressed) {
+								return@withTimeout
+							}
+							val dist = (pointer.position - downPos).getDistance()
+							if (dist > touchSlop) {
+								return@withTimeout
+							}
 						}
 					}
+				} catch (e: TimeoutCancellationException) {
+					isLongPress = true
 				}
-			} catch (e: TimeoutCancellationException) {
-				isLongPress = true
 			}
 
 			if (isLongPress) {
@@ -2545,12 +2563,12 @@ private fun PhotoTimelineContent(
 							var dragCurrentIndex = -1
 							var baseSelection = emptySet<String>()
 							var isDragging = false
-							val longPressTimeout = 280L
+							val effectiveTimeout = if (currentIsMulti) 160L else 240L
 							val touchSlop = viewConfiguration.touchSlop
 
 							var isLongPress = false
 							try {
-								withTimeout(longPressTimeout) {
+								withTimeout(effectiveTimeout) {
 									while (true) {
 										val event = awaitPointerEvent(pass = PointerEventPass.Initial)
 										val pointer = event.changes.firstOrNull { it.id == down.id }
