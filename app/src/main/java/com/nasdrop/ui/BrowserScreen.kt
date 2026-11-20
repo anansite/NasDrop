@@ -2086,13 +2086,22 @@ private fun FileBrowserContent(
 						modifier = Modifier
 							.fillMaxWidth()
 							.background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-							.clickable {
-								if (isMulti) {
-									vm.toggleSelect(entry)
-								} else {
-									onOpenEntry(entry)
-								}
-							}
+							.combinedClickable(
+								onClick = {
+									if (isMulti) {
+										vm.toggleSelect(entry)
+									} else {
+										onOpenEntry(entry)
+									}
+								},
+								onLongClick = {
+									if (!isMulti) {
+										vm.enterMultiSelect(entry)
+									} else {
+										vm.toggleSelect(entry)
+									}
+								},
+							)
 							.padding(horizontal = 14.dp, vertical = 7.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -2189,13 +2198,22 @@ private fun FileBrowserContent(
 						modifier = Modifier
 							.fillMaxWidth()
 							.background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-							.clickable {
-								if (isMulti) {
-									vm.toggleSelect(entry)
-								} else {
-									onOpenEntry(entry)
-								}
-							}
+							.combinedClickable(
+								onClick = {
+									if (isMulti) {
+										vm.toggleSelect(entry)
+									} else {
+										onOpenEntry(entry)
+									}
+								},
+								onLongClick = {
+									if (!isMulti) {
+										vm.enterMultiSelect(entry)
+									} else {
+										vm.toggleSelect(entry)
+									}
+								},
+							)
 							.padding(horizontal = 14.dp, vertical = 8.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -2273,13 +2291,22 @@ private fun FileBrowserContent(
 						elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
 						modifier = Modifier
 							.fillMaxWidth()
-							.clickable {
-								if (isMulti) {
-									vm.toggleSelect(entry)
-								} else {
-									onOpenEntry(entry)
-								}
-							},
+							.combinedClickable(
+								onClick = {
+									if (isMulti) {
+										vm.toggleSelect(entry)
+									} else {
+										onOpenEntry(entry)
+									}
+								},
+								onLongClick = {
+									if (!isMulti) {
+										vm.enterMultiSelect(entry)
+									} else {
+										vm.toggleSelect(entry)
+									}
+								},
+							),
 					) {
 						Column(
 							modifier = Modifier.padding(10.dp),
@@ -2676,13 +2703,22 @@ private fun PhotoTimelineContent(
 								.clip(RoundedCornerShape(cornerRadius))
 								.then(if (borderStroke != null) Modifier.border(borderStroke, RoundedCornerShape(cornerRadius)) else Modifier)
 								.background(MaterialTheme.colorScheme.outlineVariant)
-								.clickable {
-									if (isMulti) {
-										onToggleSelect(item)
-									} else {
-										onOpenImage(item)
-									}
-								},
+								.combinedClickable(
+									onClick = {
+										if (isMulti) {
+											onToggleSelect(item)
+										} else {
+											onOpenImage(item)
+										}
+									},
+									onLongClick = {
+										if (!isMulti) {
+											onEnterMultiSelect(item)
+										} else {
+											onToggleSelect(item)
+										}
+									},
+								),
 						) {
 							val thumbTarget = urlOf(item.path)
 							var thumbFailed by remember(item.path) { mutableStateOf(false) }
