@@ -2201,12 +2201,13 @@ private fun FileBrowserContent(
 
 	when (vm.viewMode) {
 		ViewMode.Cards -> {
-			// 夸克/网盘风格微圆角卡片流：质感卡片、轻微边框、舒适留白、拖动手势多选
+			// 纯净极简列表：白底、细致缩进分割线、长按滑动多选（无卡片边框包围）
 			LazyColumn(
 				state = vm.fileListState,
 				contentPadding = PaddingValues(top = 4.dp, bottom = 80.dp),
 				modifier = Modifier
 					.fillMaxSize()
+					.background(MaterialTheme.colorScheme.surface)
 					.dragSelectableList(
 						state = vm.fileListState,
 						items = items,
@@ -2218,18 +2219,10 @@ private fun FileBrowserContent(
 			) {
 				items(items, key = { it.path }) { entry ->
 					val isSelected = vm.selectedEntries.contains(entry)
-					Surface(
-						shape = RoundedCornerShape(14.dp),
-						color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else MaterialTheme.colorScheme.surface,
-						border = BorderStroke(
-							1.dp,
-							if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-							else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
-						),
-						shadowElevation = if (isSelected) 2.dp else 0.5.dp,
+					Row(
 						modifier = Modifier
 							.fillMaxWidth()
-							.padding(horizontal = 12.dp, vertical = 3.5.dp)
+							.background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
 							.combinedClickable(
 								onClick = {
 									if (isMulti) {
@@ -2245,60 +2238,60 @@ private fun FileBrowserContent(
 										vm.toggleSelect(entry)
 									}
 								},
-							),
-					) {
-						Row(
-							modifier = Modifier
-								.fillMaxWidth()
-								.padding(horizontal = 12.dp, vertical = 9.dp),
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(12.dp),
-						) {
-							FileThumbnail(
-								entry = entry,
-								urlOf = { vm.thumbnailUrlFor(it) },
-								directUrlOf = { vm.directUrlFor(it) },
-								onThumbnailError = { vm.markThumbnailFailed(it) },
-								size = 42.dp,
-								customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null,
 							)
+							.padding(horizontal = 14.dp, vertical = 7.5.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(12.dp),
+					) {
+						FileThumbnail(
+							entry = entry,
+							urlOf = { vm.thumbnailUrlFor(it) },
+							directUrlOf = { vm.directUrlFor(it) },
+							onThumbnailError = { vm.markThumbnailFailed(it) },
+							size = 42.dp,
+							customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null,
+						)
 
-							Column(modifier = Modifier.weight(1f)) {
-								Text(
-									text = entry.name,
-									fontSize = 13.5.sp,
-									fontWeight = FontWeight.SemiBold,
-									color = MaterialTheme.colorScheme.onSurface,
-									maxLines = 1,
-									overflow = TextOverflow.Ellipsis,
-								)
-								Spacer(modifier = Modifier.height(2.dp))
-								Text(
-									text = formatMeta(entry),
-									fontSize = 11.sp,
-									color = MaterialTheme.colorScheme.onSurfaceVariant,
-									maxLines = 1,
-									overflow = TextOverflow.Ellipsis,
-								)
-							}
+						Column(modifier = Modifier.weight(1f)) {
+							Text(
+								text = entry.name,
+								fontSize = 14.sp,
+								fontWeight = FontWeight.Medium,
+								color = MaterialTheme.colorScheme.onSurface,
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
+							)
+							Spacer(modifier = Modifier.height(2.dp))
+							Text(
+								text = formatMeta(entry),
+								fontSize = 11.5.sp,
+								color = MaterialTheme.colorScheme.onSurfaceVariant,
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
+							)
+						}
 
-							if (isMulti) {
-								SelectCheckbox(isSelected = isSelected)
-							} else {
-								IconButton(
-									onClick = { onOpenAction(entry) },
-									modifier = Modifier.size(36.dp),
-								) {
-									Icon(
-										Icons.Rounded.MoreVert,
-										contentDescription = "更多",
-										tint = MaterialTheme.colorScheme.onSurfaceVariant,
-										modifier = Modifier.size(18.dp),
-									)
-								}
+						if (isMulti) {
+							SelectCheckbox(isSelected = isSelected)
+						} else {
+							IconButton(
+								onClick = { onOpenAction(entry) },
+								modifier = Modifier.size(40.dp),
+							) {
+								Icon(
+									Icons.Rounded.MoreVert,
+									contentDescription = "更多",
+									tint = MaterialTheme.colorScheme.onSurfaceVariant,
+									modifier = Modifier.size(18.dp),
+								)
 							}
 						}
 					}
+					HorizontalDivider(
+						color = MaterialTheme.colorScheme.surfaceVariant,
+						thickness = 0.5.dp,
+						modifier = Modifier.padding(start = 68.dp),
+					)
 				}
 
 				item {
