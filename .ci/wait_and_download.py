@@ -112,9 +112,23 @@ for line in devs_out.splitlines():
         dev_ids.append(parts[0])
 
 print(f"Found active devices: {dev_ids}", flush=True)
+all_apks = [os.path.join("out", f) for f in os.listdir("out") if f.endswith(".apk")]
+
 for dev in dev_ids:
-    print(f"Installing {latest_apk} to device {dev}...", flush=True)
-    install_res = subprocess.run([adb_path, "-s", dev, "install", "-r", latest_apk], capture_output=True, text=True)
+    abi_res = subprocess.run([adb_path, "-s", dev, "shell", "getprop", "ro.product.cpu.abi"], capture_output=True, text=True)
+    dev_abi = abi_res.stdout.strip()
+    print(f"Device {dev} ABI: {dev_abi}", flush=True)
+
+    matching_apk = None
+    for apk in all_apks:
+        if dev_abi and dev_abi in apk:
+            matching_apk = apk
+            break
+    if not matching_apk:
+        matching_apk = latest_apk
+
+    print(f"Installing {matching_apk} to device {dev}...", flush=True)
+    install_res = subprocess.run([adb_path, "-s", dev, "install", "-r", matching_apk], capture_output=True, text=True)
     print(f"Install on {dev}:", install_res.stdout, install_res.stderr, flush=True)
     subprocess.run([adb_path, "-s", dev, "shell", "am", "force-stop", "com.nasdrop"], check=False)
     subprocess.run([adb_path, "-s", dev, "shell", "am", "start", "-n", "com.nasdrop/.MainActivity"], check=False)

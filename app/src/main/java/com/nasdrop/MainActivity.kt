@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
 		val vm: BrowserViewModel = viewModel(
 			factory = viewModelFactory { initializer { BrowserViewModel(app) } },
 		)
-		val settings by vm.settings.collectAsStateWithLifecycle()
+		val settings by vm.settings.collectAsStateWithLifecycle(initialValue = Settings())
 		NasDropTheme(palette = com.nasdrop.ui.ThemePalette.fromId(settings.themePalette)) {
 			val context = LocalContext.current
 			var route by remember { mutableStateOf<Route>(Route.Browser) }

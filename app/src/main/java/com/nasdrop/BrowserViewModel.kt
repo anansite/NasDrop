@@ -154,6 +154,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		private set
 
 	val routeInfo: StateFlow<RouteInfo> = app.repo.routeInfo
+	val settings: kotlinx.coroutines.flow.Flow<Settings> = app.prefs.settings
 
 	val currentVersionName: String
 		get() = runCatching {

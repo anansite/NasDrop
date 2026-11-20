@@ -65,6 +65,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 	var hostname by remember { mutableStateOf(Settings().hostname) }
 	var authKey by remember { mutableStateOf("") }
 	var trustAll by remember { mutableStateOf(Settings().trustAllCerts) }
+	var currentPalette by remember { mutableStateOf(Settings().themePalette) }
 
 	var testing by remember { mutableStateOf(false) }
 	var logs by remember { mutableStateOf<String?>(null) }
@@ -98,6 +99,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 		hostname = s.hostname
 		authKey = s.authKey
 		trustAll = s.trustAllCerts
+		currentPalette = s.themePalette
 		loaded = true
 		calculateCacheSize()
 	}
@@ -425,6 +427,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						hostname = hostname.ifBlank { "nasdrop-android" },
 						authKey = authKey.trim(),
 						trustAllCerts = trustAll,
+						themePalette = currentPalette,
 					)
 					save(s)
 				},
@@ -511,14 +514,16 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						horizontalArrangement = Arrangement.SpaceBetween,
 					) {
 						ThemePalette.entries.forEach { p ->
-							val isSelected = settings.themePalette.equals(p.id, ignoreCase = true)
+							val isSelected = currentPalette.equals(p.id, ignoreCase = true)
 							Column(
 								horizontalAlignment = Alignment.CenterHorizontally,
 								modifier = Modifier
 									.clip(RoundedCornerShape(10.dp))
 									.clickable {
+										currentPalette = p.id
 										scope.launch {
-											prefs.save(settings.copy(themePalette = p.id))
+											val cur = app.prefs.current()
+											app.prefs.save(cur.copy(themePalette = p.id))
 										}
 									}
 									.padding(6.dp),
