@@ -283,124 +283,90 @@ fun BrowserScreen(
 
 	Scaffold(
 		containerColor = MaterialTheme.colorScheme.background,
-		bottomBar = {
-			if (mode == BrowserMode.Pick) {
-				PickBar(
-					path = vm.path,
-					lastDir = lastDir,
-					onCreateFolder = { activeCreateType = CreateDialogType.Folder },
-					onConfirm = {
-						vm.rememberDir(vm.path)
-						onConfirm(vm.path)
-					},
-				)
-			} else if (vm.isMultiSelectMode) {
-				// 多选批量操作浮动托盘
-				BatchActionTray(
-					selectedCount = vm.selectedEntries.size,
-					onDownload = {
-						vm.batchDownload(context) {
-							Toast.makeText(context, "已将选中文件加入下载队列", Toast.LENGTH_SHORT).show()
-							showTransferSheet = true
-						}
-					},
-					onMove = {
-						showBatchMoveSheet = true
-					},
-					onDelete = {
-						showBatchDeleteConfirm = true
-					},
-					onCancel = { vm.exitMultiSelect() },
-				)
-			} else {
-				// 保留文件、相册、影音三个主入口。
-				CommercialNavigationBar(
-					currentTab = vm.currentTab,
-					onTabSelect = { tab ->
-						vm.currentTab = tab
-						if (tab == MainTab.Photos || tab == MainTab.Media) {
-							vm.ensureMediaScanned()
-						}
-					},
-				)
-			}
-		},
+		bottomBar = {},
 		floatingActionButton = {},
 	) { innerPadding ->
-		Column(
+		Box(
 			modifier = Modifier
 				.fillMaxSize()
-				.padding(innerPadding),
+				.padding(top = innerPadding.calculateTopPadding()),
 		) {
-			// 各 Tab 专属顶栏：文件 Tab 仅需 2 行极简流线型；相册/影音支持专属新建与上传；服务与设置专职运维
-			when (vm.currentTab) {
-				MainTab.Files -> {
-					FilesTopBar(
-						vm = vm,
-						onUpload = { filePicker.launch(arrayOf("*/*")) },
-						onOpenTransferSheet = { showTransferSheet = true },
-						onToggleViewMode = { vm.cycleViewMode() },
-						onToggleMultiSelect = {
-							if (vm.isMultiSelectMode) vm.exitMultiSelect()
-							else vm.enterMultiSelect()
-						},
-						onCreateFolder = { activeCreateType = CreateDialogType.Folder },
-						onNavigate = { vm.open(it) },
-						onUp = { vm.up() },
-						routeInfo = routeInfo,
-						onOpenSettings = onOpenSettings,
-						onShowNetworkSheet = { showNetSheet = true },
-					)
-				}
+			Column(
+				modifier = Modifier.fillMaxSize(),
+			) {
+				// 各 Tab 专属顶栏：文件 Tab 仅需 2 行极简流线型；相册/影音支持专属新建与上传；服务与设置专职运维
+				when (vm.currentTab) {
+					MainTab.Files -> {
+						FilesTopBar(
+							vm = vm,
+							onUpload = { filePicker.launch(arrayOf("*/*")) },
+							onOpenTransferSheet = { showTransferSheet = true },
+							onToggleViewMode = { vm.cycleViewMode() },
+							onToggleMultiSelect = {
+								if (vm.isMultiSelectMode) vm.exitMultiSelect()
+								else vm.enterMultiSelect()
+							},
+							onCreateFolder = { activeCreateType = CreateDialogType.Folder },
+							onNavigate = { vm.open(it) },
+							onUp = { vm.up() },
+							routeInfo = routeInfo,
+							onOpenSettings = onOpenSettings,
+							onShowNetworkSheet = { showNetSheet = true },
+						)
+					}
 
-				MainTab.Photos -> {
-					PhotosTopBar(
-						count = vm.currentAlbumPhotos.size,
-						selectedAlbumName = vm.selectedAlbumPath.substringAfterLast('/'),
-						activeTransferCount = vm.activeTransferCount,
-						onUploadPhoto = { photoPicker.launch(arrayOf("image/*")) },
-						onUpAlbum = { vm.upAlbum() },
-						onCreateAlbum = { activeCreateType = CreateDialogType.Album },
-						onDeleteCurrentAlbum = {
-							val cur = vm.allAlbumFolders.find { it.path == vm.selectedAlbumPath }
-							if (cur != null) activeFolderForDelete = Pair(cur, true)
-						},
-						onOpenTransferSheet = { showTransferSheet = true },
-						routeInfo = routeInfo,
-						onOpenSettings = onOpenSettings,
-						onShowNetworkSheet = { showNetSheet = true },
-					)
-				}
+					MainTab.Photos -> {
+						PhotosTopBar(
+							count = vm.currentAlbumPhotos.size,
+							selectedAlbumName = vm.selectedAlbumPath.substringAfterLast('/'),
+							activeTransferCount = vm.activeTransferCount,
+							hasUpdate = vm.hasUpdate,
+							onOpenUpdateDialog = { vm.openUpdateDialog() },
+							onUploadPhoto = { photoPicker.launch(arrayOf("image/*")) },
+							onUpAlbum = { vm.upAlbum() },
+							onCreateAlbum = { activeCreateType = CreateDialogType.Album },
+							onDeleteCurrentAlbum = {
+								val cur = vm.allAlbumFolders.find { it.path == vm.selectedAlbumPath }
+								if (cur != null) activeFolderForDelete = Pair(cur, true)
+							},
+							onOpenTransferSheet = { showTransferSheet = true },
+							routeInfo = routeInfo,
+							onOpenSettings = onOpenSettings,
+							onShowNetworkSheet = { showNetSheet = true },
+						)
+					}
 
-				MainTab.Media -> {
-					MediaTopBar(
-						count = vm.currentMediaVideos.size,
-						selectedMediaName = vm.selectedMediaPath.substringAfterLast('/'),
-						activeTransferCount = vm.activeTransferCount,
-						onUploadVideo = { videoPicker.launch(arrayOf("video/*")) },
-						onUpMedia = { vm.upMedia() },
-						onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
-						onDeleteCurrentMedia = {
-							val cur = vm.allMediaFolders.find { it.path == vm.selectedMediaPath }
-							if (cur != null) activeFolderForDelete = Pair(cur, false)
-						},
-						onOpenTransferSheet = { showTransferSheet = true },
-						routeInfo = routeInfo,
-						onOpenSettings = onOpenSettings,
-						onShowNetworkSheet = { showNetSheet = true },
-					)
-				}
+					MainTab.Media -> {
+						MediaTopBar(
+							count = vm.currentMediaVideos.size,
+							selectedMediaName = vm.selectedMediaPath.substringAfterLast('/'),
+							activeTransferCount = vm.activeTransferCount,
+							hasUpdate = vm.hasUpdate,
+							onOpenUpdateDialog = { vm.openUpdateDialog() },
+							onUploadVideo = { videoPicker.launch(arrayOf("video/*")) },
+							onUpMedia = { vm.upMedia() },
+							onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
+							onDeleteCurrentMedia = {
+								val cur = vm.allMediaFolders.find { it.path == vm.selectedMediaPath }
+								if (cur != null) activeFolderForDelete = Pair(cur, false)
+							},
+							onOpenTransferSheet = { showTransferSheet = true },
+							routeInfo = routeInfo,
+							onOpenSettings = onOpenSettings,
+							onShowNetworkSheet = { showNetSheet = true },
+						)
+					}
 
-				MainTab.Me -> {
-					NetworkTopBar(
-						routeInfo = routeInfo,
-						versionName = vm.currentVersionName,
-						hasUpdate = vm.hasUpdate,
-						onOpenUpdateDialog = { vm.openUpdateDialog() },
-						onOpenSettings = onOpenSettings,
-					)
+					MainTab.Me -> {
+						NetworkTopBar(
+							routeInfo = routeInfo,
+							versionName = vm.currentVersionName,
+							hasUpdate = vm.hasUpdate,
+							onOpenUpdateDialog = { vm.openUpdateDialog() },
+							onOpenSettings = onOpenSettings,
+						)
+					}
 				}
-			}
 
 			LaunchedEffect(vm.currentTab) {
 				if (vm.currentTab == MainTab.Photos || vm.currentTab == MainTab.Media) {
@@ -538,7 +504,7 @@ fun BrowserScreen(
 					exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
 					modifier = Modifier
 						.align(Alignment.BottomCenter)
-						.padding(bottom = if (vm.isMultiSelectMode) 88.dp else 16.dp),
+						.padding(bottom = 84.dp),
 				) {
 					Surface(
 						shape = RoundedCornerShape(24.dp),
@@ -592,7 +558,55 @@ fun BrowserScreen(
 				}
 			}
 		}
+
+		// 底部悬浮毛玻璃 Dock 栏 / 批量操作栏 / 选择确认栏
+		// 真正绝对悬浮于屏幕最下方，背后的照片、文件和影音列表在滑动时可透过半透明毛玻璃优雅穿透显示
+		Box(
+			modifier = Modifier
+				.align(Alignment.BottomCenter)
+				.fillMaxWidth(),
+		) {
+			if (mode == BrowserMode.Pick) {
+				PickBar(
+					path = vm.path,
+					lastDir = lastDir,
+					onCreateFolder = { activeCreateType = CreateDialogType.Folder },
+					onConfirm = {
+						vm.rememberDir(vm.path)
+						onConfirm(vm.path)
+					},
+				)
+			} else if (vm.isMultiSelectMode) {
+				BatchActionTray(
+					selectedCount = vm.selectedEntries.size,
+					onDownload = {
+						vm.batchDownload(context) {
+							Toast.makeText(context, "已将选中文件加入下载队列", Toast.LENGTH_SHORT).show()
+							showTransferSheet = true
+						}
+					},
+					onMove = {
+						showBatchMoveSheet = true
+					},
+					onDelete = {
+						showBatchDeleteConfirm = true
+					},
+					onCancel = { vm.exitMultiSelect() },
+				)
+			} else {
+				CommercialNavigationBar(
+					currentTab = vm.currentTab,
+					onTabSelect = { tab ->
+						vm.currentTab = tab
+						if (tab == MainTab.Photos || tab == MainTab.Media) {
+							vm.ensureMediaScanned()
+						}
+					},
+				)
+			}
+		}
 	}
+}
 
 	// ==================== 抽屉与对话框组件 ====================
 	// 确认窗口只在发现同名冲突时预览有限文件名，无冲突时后台平滑起传，彻底消除弹窗闪烁
@@ -1176,6 +1190,8 @@ private fun CollectionTopBar(
 	subtitle: String,
 	isInside: Boolean,
 	activeTransferCount: Int,
+	hasUpdate: Boolean = false,
+	onOpenUpdateDialog: (() -> Unit)? = null,
 	onUp: () -> Unit,
 	onUpload: () -> Unit,
 	onCreate: () -> Unit,
@@ -1217,17 +1233,69 @@ private fun CollectionTopBar(
 				}
 			}
 			TransferButton(activeTransferCount, onTransfer)
+			if (hasUpdate && onOpenUpdateDialog != null) {
+				IconButton(onClick = onOpenUpdateDialog, modifier = Modifier.size(40.dp)) {
+					Box(contentAlignment = Alignment.Center) {
+						Icon(
+							imageVector = Icons.Rounded.CloudDownload,
+							contentDescription = "发现新版本",
+							tint = MaterialTheme.colorScheme.primary,
+							modifier = Modifier.size(22.dp)
+						)
+						Box(
+							modifier = Modifier
+								.size(8.dp)
+								.clip(CircleShape)
+								.background(MaterialTheme.colorScheme.error)
+								.align(Alignment.TopEnd)
+						)
+					}
+				}
+			}
 			Box {
 				IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
 					Icon(Icons.Rounded.MoreVert, contentDescription = "更多操作")
 				}
+				if (hasUpdate) {
+					Box(
+						modifier = Modifier
+							.size(7.dp)
+							.clip(CircleShape)
+							.background(MaterialTheme.colorScheme.error)
+							.align(Alignment.TopEnd)
+							.padding(top = 4.dp, end = 4.dp),
+					)
+				}
 				DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+					if (hasUpdate && onOpenUpdateDialog != null) {
+						DropdownMenuItem(
+							text = {
+								Row(verticalAlignment = Alignment.CenterVertically) {
+									Icon(Icons.Rounded.CloudDownload, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+									Spacer(Modifier.width(8.dp))
+									Text("发现新版本", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+								}
+							},
+							onClick = { menuOpen = false; onOpenUpdateDialog() }
+						)
+					}
 					DropdownMenuItem(text = { Text("上传文件") }, onClick = { menuOpen = false; onUpload() })
 					DropdownMenuItem(text = { Text("新建文件夹") }, onClick = { menuOpen = false; onCreate() })
 					if (isInside && onDelete != null) {
 						DropdownMenuItem(text = { Text("删除当前文件夹", color = MaterialTheme.colorScheme.error) }, onClick = { menuOpen = false; onDelete() })
 					}
-					DropdownMenuItem(text = { Text("设置") }, onClick = { menuOpen = false; onSettings() })
+					DropdownMenuItem(
+						text = {
+							Row(verticalAlignment = Alignment.CenterVertically) {
+								Text("设置")
+								if (hasUpdate) {
+									Spacer(Modifier.width(6.dp))
+									Box(Modifier.size(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.error))
+								}
+							}
+						},
+						onClick = { menuOpen = false; onSettings() },
+					)
 				}
 			}
 		}
@@ -1252,6 +1320,8 @@ private fun PhotosTopBar(
 	count: Int,
 	selectedAlbumName: String,
 	activeTransferCount: Int = 0,
+	hasUpdate: Boolean = false,
+	onOpenUpdateDialog: (() -> Unit)? = null,
 	onUploadPhoto: () -> Unit,
 	onUpAlbum: () -> Unit,
 	onCreateAlbum: () -> Unit,
@@ -1266,6 +1336,8 @@ private fun PhotosTopBar(
 		subtitle = if (selectedAlbumName.isBlank()) "$count 张照片" else "相册 · $count 张照片",
 		isInside = selectedAlbumName.isNotBlank(),
 		activeTransferCount = activeTransferCount,
+		hasUpdate = hasUpdate,
+		onOpenUpdateDialog = onOpenUpdateDialog,
 		onUp = onUpAlbum, onUpload = onUploadPhoto, onCreate = onCreateAlbum,
 		onDelete = onDeleteCurrentAlbum, onTransfer = onOpenTransferSheet, onSettings = onOpenSettings,
 		routeInfo = routeInfo, onShowNetworkSheet = onShowNetworkSheet,
@@ -1277,6 +1349,8 @@ private fun MediaTopBar(
 	count: Int,
 	selectedMediaName: String,
 	activeTransferCount: Int = 0,
+	hasUpdate: Boolean = false,
+	onOpenUpdateDialog: (() -> Unit)? = null,
 	onUploadVideo: () -> Unit,
 	onUpMedia: () -> Unit,
 	onCreateMediaFolder: () -> Unit,
@@ -1291,6 +1365,8 @@ private fun MediaTopBar(
 		subtitle = if (selectedMediaName.isBlank()) "$count 个视频" else "影集 · $count 个视频",
 		isInside = selectedMediaName.isNotBlank(),
 		activeTransferCount = activeTransferCount,
+		hasUpdate = hasUpdate,
+		onOpenUpdateDialog = onOpenUpdateDialog,
 		onUp = onUpMedia, onUpload = onUploadVideo, onCreate = onCreateMediaFolder,
 		onDelete = onDeleteCurrentMedia, onTransfer = onOpenTransferSheet, onSettings = onOpenSettings,
 		routeInfo = routeInfo, onShowNetworkSheet = onShowNetworkSheet,
@@ -1416,6 +1492,28 @@ private fun FilesTopBar(
 				Icon(Icons.Rounded.Search, contentDescription = "搜索", tint = if (isSearchOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
 			}
 			TransferButton(vm.activeTransferCount, onOpenTransferSheet)
+			if (vm.hasUpdate) {
+				IconButton(
+					onClick = { vm.openUpdateDialog() },
+					modifier = Modifier.size(40.dp)
+				) {
+					Box(contentAlignment = Alignment.Center) {
+						Icon(
+							imageVector = Icons.Rounded.CloudDownload,
+							contentDescription = "发现新版本",
+							tint = MaterialTheme.colorScheme.primary,
+							modifier = Modifier.size(22.dp)
+						)
+						Box(
+							modifier = Modifier
+								.size(8.dp)
+								.clip(CircleShape)
+								.background(MaterialTheme.colorScheme.error)
+								.align(Alignment.TopEnd)
+						)
+					}
+				}
+			}
 			Box {
 				IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
 					Icon(Icons.Rounded.MoreVert, contentDescription = "更多操作")
@@ -1431,6 +1529,18 @@ private fun FilesTopBar(
 					)
 				}
 				DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+					if (vm.hasUpdate) {
+						DropdownMenuItem(
+							text = {
+								Row(verticalAlignment = Alignment.CenterVertically) {
+									Icon(Icons.Rounded.CloudDownload, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+									Spacer(Modifier.width(8.dp))
+									Text("发现新版本", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+								}
+							},
+							onClick = { menuOpen = false; vm.openUpdateDialog() }
+						)
+					}
 					DropdownMenuItem(text = { Text("上传文件") }, onClick = { menuOpen = false; onUpload() })
 					DropdownMenuItem(text = { Text("新建文件夹") }, onClick = { menuOpen = false; onCreateFolder() })
 					DropdownMenuItem(text = { Text("多选文件") }, onClick = { menuOpen = false; onToggleMultiSelect() })
@@ -1447,64 +1557,6 @@ private fun FilesTopBar(
 						},
 						onClick = { menuOpen = false; onOpenSettings() },
 					)
-				}
-			}
-		}
-
-		// 🌟 自动感知新版本优雅浮动提示：不用手动点击检查，自动展示且可一键更新
-		var bannerDismissed by rememberSaveable { mutableStateOf(false) }
-		if (vm.hasUpdate && !bannerDismissed && vm.latestUpdateInfo != null) {
-			Surface(
-				shape = RoundedCornerShape(12.dp),
-				color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
-				border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
-				modifier = Modifier
-					.fillMaxWidth()
-					.padding(horizontal = 14.dp, vertical = 3.dp),
-			) {
-				Row(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(horizontal = 12.dp, vertical = 7.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.SpaceBetween,
-				) {
-					Row(
-						verticalAlignment = Alignment.CenterVertically,
-						modifier = Modifier.weight(1f),
-						horizontalArrangement = Arrangement.spacedBy(8.dp),
-					) {
-						Text("🚀", fontSize = 14.sp)
-						Column {
-							Text(
-								"发现新版本 ${vm.latestUpdateInfo?.versionName}",
-								fontSize = 12.5.sp,
-								fontWeight = FontWeight.Bold,
-								color = MaterialTheme.colorScheme.onPrimaryContainer,
-							)
-							Text(
-								"国内镜像竞速加速 · 4 线程分块并发",
-								fontSize = 10.5.sp,
-								color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
-							)
-						}
-					}
-					Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-						Button(
-							onClick = { vm.showUpdateDialog = true },
-							contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-							modifier = Modifier.height(28.dp),
-							shape = RoundedCornerShape(14.dp),
-						) {
-							Text("升级", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-						}
-						IconButton(
-							onClick = { bannerDismissed = true },
-							modifier = Modifier.size(24.dp),
-						) {
-							Icon(Icons.Rounded.Close, contentDescription = "忽略", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f))
-						}
-					}
 				}
 			}
 		}
@@ -1815,15 +1867,15 @@ private fun BatchActionTray(
 	) {
 		Surface(
 			shape = RoundedCornerShape(28.dp),
-			color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-			shadowElevation = 14.dp,
-			tonalElevation = 6.dp,
+			color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+			shadowElevation = 12.dp,
+			tonalElevation = 0.dp,
 			border = BorderStroke(
 				1.dp,
 				Brush.verticalGradient(
 					listOf(
-						Color.White.copy(alpha = 0.55f),
-						MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+						Color.White.copy(alpha = 0.60f),
+						MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
 					)
 				)
 			),
@@ -2416,7 +2468,7 @@ private fun FileBrowserContent(
 			// 纯净极简列表：白底、细致缩进分割线、长按滑动多选（无卡片边框包围）
 			LazyColumn(
 				state = vm.fileListState,
-				contentPadding = PaddingValues(top = 4.dp, bottom = 80.dp),
+				contentPadding = PaddingValues(top = 4.dp, bottom = 88.dp),
 				modifier = Modifier
 					.fillMaxSize()
 					.background(MaterialTheme.colorScheme.surface)
@@ -2526,6 +2578,7 @@ private fun FileBrowserContent(
 		ViewMode.Compact -> {
 			LazyColumn(
 				state = vm.fileCompactState,
+				contentPadding = PaddingValues(top = 4.dp, bottom = 88.dp),
 				modifier = Modifier
 					.fillMaxSize()
 					.background(MaterialTheme.colorScheme.surface)
@@ -2615,7 +2668,7 @@ private fun FileBrowserContent(
 			LazyVerticalGrid(
 				state = vm.fileGridState,
 				columns = GridCells.Fixed(2),
-				contentPadding = PaddingValues(14.dp),
+				contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 88.dp),
 				horizontalArrangement = Arrangement.spacedBy(10.dp),
 				verticalArrangement = Arrangement.spacedBy(10.dp),
 				modifier = Modifier
@@ -2935,7 +2988,7 @@ private fun PhotoTimelineContent(
 			LazyVerticalGrid(
 				state = state,
 				columns = GridCells.Fixed(3),
-				contentPadding = PaddingValues(4.dp),
+				contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 88.dp),
 				horizontalArrangement = Arrangement.spacedBy(3.dp),
 				verticalArrangement = Arrangement.spacedBy(3.dp),
 				modifier = Modifier
@@ -3247,7 +3300,7 @@ private fun MediaStreamContent(
 			LazyVerticalGrid(
 				state = state,
 				columns = GridCells.Fixed(2),
-				contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+				contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 88.dp),
 				horizontalArrangement = Arrangement.spacedBy(10.dp),
 				verticalArrangement = Arrangement.spacedBy(10.dp),
 				modifier = Modifier
@@ -4162,7 +4215,7 @@ private fun NetworkIntelligenceConsole(
 	logs: String,
 ) {
 	Column(
-		Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+		Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 88.dp),
 		verticalArrangement = Arrangement.spacedBy(16.dp),
 	) {
 		Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
@@ -4200,15 +4253,15 @@ private fun CommercialNavigationBar(
 	) {
 		Surface(
 			shape = RoundedCornerShape(32.dp),
-			color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+			color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
 			shadowElevation = 10.dp,
-			tonalElevation = 6.dp,
+			tonalElevation = 0.dp,
 			border = BorderStroke(
 				1.dp,
 				Brush.verticalGradient(
 					listOf(
-						Color.White.copy(alpha = 0.55f),
-						MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+						Color.White.copy(alpha = 0.65f),
+						MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
 					)
 				)
 			),
@@ -4230,7 +4283,7 @@ private fun CommercialNavigationBar(
 				CompactTabItem(
 					title = "文件",
 					activeIcon = Icons.Rounded.Folder,
-					inactiveIcon = Icons.Rounded.FolderOpen,
+					inactiveIcon = Icons.Rounded.Folder,
 					selected = currentTab == MainTab.Files,
 					onClick = { onTabSelect(MainTab.Files) },
 					modifier = Modifier.weight(1f),
@@ -4238,7 +4291,7 @@ private fun CommercialNavigationBar(
 				CompactTabItem(
 					title = "相册",
 					activeIcon = Icons.Rounded.PhotoLibrary,
-					inactiveIcon = Icons.Rounded.Image,
+					inactiveIcon = Icons.Rounded.PhotoLibrary,
 					selected = currentTab == MainTab.Photos,
 					onClick = { onTabSelect(MainTab.Photos) },
 					modifier = Modifier.weight(1f),
@@ -4246,7 +4299,7 @@ private fun CommercialNavigationBar(
 				CompactTabItem(
 					title = "影音",
 					activeIcon = Icons.Rounded.PlayCircle,
-					inactiveIcon = Icons.Rounded.Movie,
+					inactiveIcon = Icons.Rounded.PlayCircleOutline,
 					selected = currentTab == MainTab.Media,
 					onClick = { onTabSelect(MainTab.Media) },
 					modifier = Modifier.weight(1f),
@@ -4268,7 +4321,7 @@ private fun CompactTabItem(
 	val haptic = LocalHapticFeedback.current
 	val activeColor = MaterialTheme.colorScheme.primary
 	val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.70f)
-	val targetBg = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f) else Color.Transparent
+	val targetBg = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f) else Color.Transparent
 	val animatedBg by animateColorAsState(targetValue = targetBg, animationSpec = spring(stiffness = Spring.StiffnessMediumLow), label = "tab_bg")
 	val animatedColor by animateColorAsState(targetValue = if (selected) activeColor else inactiveColor, animationSpec = spring(stiffness = Spring.StiffnessMediumLow), label = "tab_color")
 
@@ -4277,15 +4330,15 @@ private fun CompactTabItem(
 		contentAlignment = Alignment.Center,
 	) {
 		Surface(
-			shape = RoundedCornerShape(24.dp),
+			shape = RoundedCornerShape(22.dp),
 			color = animatedBg,
 			onClick = {
 				haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 				onClick()
 			},
 			modifier = Modifier
-				.fillMaxHeight(0.88f)
-				.widthIn(min = 68.dp, max = 112.dp),
+				.fillMaxHeight(0.85f)
+				.widthIn(min = 64.dp, max = 112.dp),
 		) {
 			Row(
 				modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -4294,9 +4347,9 @@ private fun CompactTabItem(
 			) {
 				Box(
 					modifier = Modifier
-						.size(34.dp)
+						.size(32.dp)
 						.clip(CircleShape)
-						.background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent),
+						.background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent),
 					contentAlignment = Alignment.Center,
 				) {
 					Icon(
