@@ -214,8 +214,8 @@ object UpdateManager {
 										.header("Range", "bytes=$start-$end")
 										.build()
 									val chunkResp = downloadHttp.newCall(chunkReq).execute()
-									if (chunkResp.code != 206 && chunkResp.code != 200) {
-										throw IllegalStateException("Chunk $index HTTP ${chunkResp.code}")
+									if (chunkResp.code != 206) {
+										throw IllegalStateException("Server returned HTTP ${chunkResp.code} instead of 206 Partial Content")
 									}
 									val chunkBody = chunkResp.body ?: throw IllegalStateException("Chunk $index body empty")
 									chunkBody.byteStream().use { stream ->
