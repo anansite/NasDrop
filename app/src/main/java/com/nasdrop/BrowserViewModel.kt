@@ -805,47 +805,34 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		thumbRevision++
 	}
 
-	/** 看图器退出时，平滑对齐当前浏览的照片，防止滚动位置跳回顶部 */
+	/** 记录进入大图查看器时的初始图片，退出时若未翻页则保持原位置绝对不动 */
+	var viewerInitialEntry: DavEntry? = null
+
+	/** 看图器退出且翻页到新图片时，平滑对齐当前浏览的照片 */
 	fun syncViewerPosition(entry: DavEntry) {
 		viewModelScope.launch {
+			kotlinx.coroutines.delay(60)
 			if (currentTab == MainTab.Photos) {
-				var index = 0
+				var targetIndex = 0
 				for (g in photoTimelineGroups) {
-					index++ // 标题项占 1 个 span
+					targetIndex++ // 标题项占 1 个 span
 					val itemIdx = g.items.indexOfFirst { it.path == entry.path }
 					if (itemIdx != -1) {
-						index += itemIdx
-						val visible = photoGridState.layoutInfo.visibleItemsInfo
-						if (visible.none { it.index == index }) {
-							photoGridState.scrollToItem((index - 1).coerceAtLeast(0))
-						}
+						targetIndex += itemIdx
+						val scrollPos = (targetIndex - 3).coerceAtLeast(0)
+						photoGridState.scrollToItem(scrollPos)
 						break
 					} else {
-						index += g.items.size
+						targetIndex += g.items.size
 					}
 				}
 			} else if (currentTab == MainTab.Files) {
 				val idx = filteredEntries.indexOfFirst { it.path == entry.path }
 				if (idx != -1) {
 					when (viewMode) {
-						ViewMode.Cards -> {
-							val visible = fileListState.layoutInfo.visibleItemsInfo
-							if (visible.none { it.index == idx }) {
-								fileListState.scrollToItem((idx - 1).coerceAtLeast(0))
-							}
-						}
-						ViewMode.Compact -> {
-							val visible = fileCompactState.layoutInfo.visibleItemsInfo
-							if (visible.none { it.index == idx }) {
-								fileCompactState.scrollToItem((idx - 1).coerceAtLeast(0))
-							}
-						}
-						ViewMode.Grid -> {
-							val visible = fileGridState.layoutInfo.visibleItemsInfo
-							if (visible.none { it.index == idx }) {
-								fileGridState.scrollToItem((idx - 1).coerceAtLeast(0))
-							}
-						}
+						ViewMode.Cards -> fileListState.scrollToItem((idx - 1).coerceAtLeast(0))
+						ViewMode.Compact -> fileCompactState.scrollToItem((idx - 2).coerceAtLeast(0))
+						ViewMode.Grid -> fileGridState.scrollToItem((idx - 3).coerceAtLeast(0))
 					}
 				}
 			}

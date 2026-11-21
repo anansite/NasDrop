@@ -152,6 +152,7 @@ class MainActivity : ComponentActivity() {
 						vm = vm,
 						mode = BrowserMode.Browse,
 						onOpenImage = { entry ->
+							vm.viewerInitialEntry = entry
 							val (album, index) = vm.imageAlbum(entry)
 							route = Route.Images(album, index)
 						},
@@ -175,9 +176,10 @@ class MainActivity : ComponentActivity() {
 						urlOf = { vm.directUrlFor(it) },
 						thumbOf = { vm.serverThumbUrlFor(it) },
 						onBack = { currentEntry ->
-							if (currentEntry != null) {
+							if (currentEntry != null && currentEntry.path != vm.viewerInitialEntry?.path) {
 								vm.syncViewerPosition(currentEntry)
 							}
+							vm.viewerInitialEntry = null
 							route = Route.Browser
 						},
 						onSaveToGallery = { entry, cb -> vm.saveImageToGallery(entry, cb) },
