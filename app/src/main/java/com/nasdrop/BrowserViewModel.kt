@@ -983,7 +983,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	fun imageAlbum(entry: DavEntry): Pair<List<DavEntry>, Int> {
 		val list = if (currentTab == MainTab.Photos) {
-			currentAlbumPhotos.sortedByDescending { it.modified }
+			// 严格与相册时间流网格中视觉可见的先后顺序完全一致
+			photoTimelineGroups.flatMap { it.items }
 		} else {
 			filteredEntries.filter { !it.isDir && it.isImage }
 		}
