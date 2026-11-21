@@ -2070,6 +2070,7 @@ private fun findPhotoKeyAt(state: LazyGridState, pointerX: Float, pointerY: Floa
  * - 84dp 宽域动态边界自动滚屏，且滚屏每一帧按当前手指停留位置实时拾取新滚入的项目并伴有触觉反馈；
  * - 支持右侧时间轴擦洗条避让。
  */
+@JvmName("dragSelectableGridKeys")
 @Composable
 private fun Modifier.dragSelectableGrid(
 	state: LazyGridState,
@@ -2221,6 +2222,7 @@ private fun Modifier.dragSelectableGrid(
 /**
  * DavEntry 列表适配重载
  */
+@JvmName("dragSelectableGridEntries")
 @Composable
 private fun Modifier.dragSelectableGrid(
 	state: LazyGridState,
