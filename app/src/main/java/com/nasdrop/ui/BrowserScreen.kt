@@ -465,6 +465,7 @@ fun BrowserScreen(
 								MediaStreamContent(
 									state = vm.mediaGridState,
 									videos = vm.currentMediaVideos,
+									groups = vm.mediaTimelineGroups,
 									allMediaFolders = vm.allMediaFolders,
 									selectedMediaPath = vm.selectedMediaPath,
 									isMulti = vm.isMultiSelectMode,
@@ -3252,12 +3253,23 @@ private fun TimelineDateScrubber(
 		list
 	}
 
-	// 智能提取时间轴刻度（月份、年份等里程碑，最多展示5~6个，避免重复与重叠）
+	// 智能提取时间轴刻度（月份在上面，所属年份在底部收尾；按倒序时间流分布）
 	val milestones = remember(groups) {
 		val result = mutableListOf<ScrubberMilestone>()
 		val total = groups.size
-		val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR).toString()
-		var lastYear = ""
+
+		// 预先定位每个年份在倒序列表中的最底端组（即该年最早的一组）
+		val yearBottomIndices = mutableMapOf<String, Int>()
+		for (i in groups.indices) {
+			val title = groups[i].dateTitle
+			if (title.contains("-")) {
+				val y = title.split("-").getOrNull(0) ?: ""
+				if (y.isNotEmpty()) {
+					yearBottomIndices[y] = i
+				}
+			}
+		}
+
 		var lastMonth = ""
 		var hasRecent = false
 
@@ -3278,10 +3290,8 @@ private fun TimelineDateScrubber(
 					val y = parts.getOrNull(0) ?: ""
 					val m = parts.getOrNull(1)?.toIntOrNull()?.toString() ?: parts.getOrNull(1) ?: ""
 					if (y.isNotEmpty()) {
-						if (y != lastYear) {
-							lastYear = y
-							lastMonth = m
-							// 换年时：明确标注年代（如 "26年"、"25年"），消除年代认知断层
+						// 倒序时间轴：各月份在上方，而所属年份标在该年最底部的收尾组上
+						if (i == yearBottomIndices[y]) {
 							"${y.takeLast(2)}年"
 						} else if (m.isNotEmpty() && m != lastMonth) {
 							lastMonth = m
@@ -3477,6 +3487,7 @@ private fun TimelineDateScrubber(
 private fun MediaStreamContent(
 	state: LazyGridState,
 	videos: List<DavEntry>,
+	groups: List<com.nasdrop.TimelineGroup> = emptyList(),
 	allMediaFolders: List<DavEntry>,
 	selectedMediaPath: String,
 	isMulti: Boolean = false,
@@ -3629,7 +3640,7 @@ private fun MediaStreamContent(
 			}
 		}
 
-		// 2. 视频内容展示：双列紧凑海报网格（一屏轻松容纳 6~8 部视频，高效且具备院线级视觉质感）
+		// 2. 视频内容展示：双列紧凑海报网格（具备院线级视觉质感）+ 右侧时间轴
 		if (videos.isEmpty()) {
 			Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
 				Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -3639,166 +3650,292 @@ private fun MediaStreamContent(
 				}
 			}
 		} else {
-			LazyVerticalGrid(
-				state = state,
-				columns = GridCells.Fixed(2),
-				contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 88.dp),
-				horizontalArrangement = Arrangement.spacedBy(10.dp),
-				verticalArrangement = Arrangement.spacedBy(10.dp),
-				modifier = Modifier
-					.fillMaxSize()
-					.dragSelectableGrid(
-						state = state,
-						items = videos,
-						isMulti = isMulti,
-						selectedEntries = videos.filter { selectedPaths.contains(it.path) }.toSet(),
-						onEnterMultiSelect = onEnterMultiSelect,
-						onUpdateSelection = { set -> onUpdateSelectionPaths?.invoke(set.map { it.path }.toSet()) },
-					),
-			) {
-				items(videos, key = { it.path }) { video ->
-					val isSelected = selectedPaths.contains(video.path)
-					Card(
-						shape = RoundedCornerShape(14.dp),
-						colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-						elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
-						modifier = Modifier
-							.fillMaxWidth()
-							.clickable {
-								if (isMulti) {
-									onToggleSelect(video)
-								} else {
-									onOpenVideo(video)
-								}
-							},
-					) {
-						Column {
-							// 16:9 院线质感海报视窗：优先展示服务端缩略图（OpenList type=thumb，真图片），
-							// 无缩略图/加载失败时回退渐变 + 播放图标（零黑块、零等待）。
-							Box(
-								modifier = Modifier
-									.fillMaxWidth()
-									.aspectRatio(16f / 9f)
-									.background(
-										Brush.linearGradient(
-										listOf(MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.surfaceVariant)
-										)
-									),
-								contentAlignment = Alignment.Center,
-							) {
-								var thumbFailed by remember(video.path) { mutableStateOf(false) }
-								val thumbUrl = urlOf(video.path)
-								if (!thumbFailed && !thumbUrl.isNullOrBlank()) {
-									AsyncImage(
-										model = ImageRequest.Builder(LocalContext.current)
-											.data(thumbUrl)
-											.memoryCacheKey("thumb:${video.path}")
-											.size(320, 180)
-											.precision(coil.size.Precision.INEXACT)
-											.allowRgb565(true)
-											.crossfade(false)
-											.build(),
-										contentDescription = video.name,
-										contentScale = ContentScale.Crop,
-										onError = {
-											thumbFailed = true
-											onThumbnailError?.invoke(video.path)
-										},
-										modifier = Modifier.fillMaxSize(),
-									)
-								}
-								Icon(
-									imageVector = Icons.Rounded.Movie,
-									contentDescription = null,
-									tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.35f),
-									modifier = Modifier.size(52.dp),
-								)
+			var isScrubbing by remember { mutableStateOf(false) }
+			var scrubFraction by remember { mutableFloatStateOf(0f) }
+			var currentScrubGroup by remember { mutableStateOf<com.nasdrop.TimelineGroup?>(null) }
+			var scrubberTrackHeightPx by remember { mutableFloatStateOf(1f) }
 
-								// 微质感播放指示器
-								Surface(
-									shape = CircleShape,
-									color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.85f),
-									modifier = Modifier.size(32.dp),
-								) {
-									Box(contentAlignment = Alignment.Center) {
-										Icon(
-											Icons.Rounded.PlayArrow,
-											contentDescription = "播放",
-											tint = MaterialTheme.colorScheme.onSecondary,
-											modifier = Modifier.size(20.dp),
-										)
-									}
-								}
-
-								// 右下角格式/清晰度微徽标
-								Surface(
-									shape = RoundedCornerShape(4.dp),
-									color = MediaBackdrop.copy(alpha = 0.65f),
+			Box(modifier = Modifier.fillMaxSize()) {
+				LazyVerticalGrid(
+					state = state,
+					columns = GridCells.Fixed(2),
+					contentPadding = PaddingValues(start = 12.dp, end = if (groups.size > 1) 28.dp else 12.dp, top = 6.dp, bottom = 88.dp),
+					horizontalArrangement = Arrangement.spacedBy(10.dp),
+					verticalArrangement = Arrangement.spacedBy(10.dp),
+					modifier = Modifier
+						.fillMaxSize()
+						.dragSelectableGrid(
+							state = state,
+							items = videos,
+							isMulti = isMulti,
+							selectedEntries = videos.filter { selectedPaths.contains(it.path) }.toSet(),
+							onEnterMultiSelect = onEnterMultiSelect,
+							onUpdateSelection = { set -> onUpdateSelectionPaths?.invoke(set.map { it.path }.toSet()) },
+						),
+				) {
+					if (groups.isNotEmpty()) {
+						groups.forEach { group ->
+							item(span = { GridItemSpan(2) }) {
+								Row(
 									modifier = Modifier
-										.align(Alignment.BottomEnd)
-										.padding(6.dp),
+										.fillMaxWidth()
+										.padding(horizontal = 4.dp, vertical = 6.dp),
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.spacedBy(8.dp),
 								) {
 									Text(
-										text = video.ext.uppercase(Locale.ROOT).ifEmpty { "HD" },
-										fontSize = 9.sp,
-										fontWeight = FontWeight.Bold,
-										color = OnMediaBackdrop,
-										modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-									)
-								}
-
-								// 仅在多选模式下显示右上角勾选框
-								if (isMulti) {
-									Box(
-										modifier = Modifier
-											.align(Alignment.TopEnd)
-											.padding(6.dp)
-									) {
-										SelectCheckbox(isSelected = isSelected)
-									}
-								}
-							}
-
-							// 紧凑双行信息 + 更多操作（非多选时提供单项管理）
-							Row(
-								modifier = Modifier
-									.fillMaxWidth()
-									.padding(horizontal = 8.dp, vertical = 8.dp),
-								verticalAlignment = Alignment.CenterVertically,
-							) {
-								Column(modifier = Modifier.weight(1f)) {
-									Text(
-										text = video.displayName,
-										fontSize = 12.sp,
+										text = group.dateTitle,
+										fontSize = 15.sp,
 										fontWeight = FontWeight.Bold,
 										color = MaterialTheme.colorScheme.onSurface,
-										maxLines = 1,
-										overflow = TextOverflow.Ellipsis,
 									)
-									Spacer(modifier = Modifier.height(3.dp))
 									Text(
-										text = formatMeta(video),
-										fontSize = 10.sp,
+										text = "${group.count}部",
+										fontSize = 12.sp,
 										color = MaterialTheme.colorScheme.onSurfaceVariant,
-										maxLines = 1,
-										overflow = TextOverflow.Ellipsis,
 									)
-								}
-								if (!isMulti) {
-									IconButton(
-										onClick = { onOpenAction(video) },
-										modifier = Modifier.size(48.dp)
-									) {
-										Icon(
-											Icons.Rounded.MoreVert,
-											contentDescription = "管理",
-											tint = MaterialTheme.colorScheme.onSurfaceVariant,
-											modifier = Modifier.size(16.dp)
-										)
-									}
 								}
 							}
+
+							items(group.items, key = { it.path }) { video ->
+								VideoCardItem(
+									video = video,
+									isSelected = selectedPaths.contains(video.path),
+									isMulti = isMulti,
+									urlOf = urlOf,
+									onThumbnailError = onThumbnailError,
+									onToggleSelect = onToggleSelect,
+									onOpenVideo = onOpenVideo,
+									onOpenAction = onOpenAction,
+								)
+							}
 						}
+					} else {
+						items(videos, key = { it.path }) { video ->
+							VideoCardItem(
+								video = video,
+								isSelected = selectedPaths.contains(video.path),
+								isMulti = isMulti,
+								urlOf = urlOf,
+								onThumbnailError = onThumbnailError,
+								onToggleSelect = onToggleSelect,
+								onOpenVideo = onOpenVideo,
+								onOpenAction = onOpenAction,
+							)
+						}
+					}
+				}
+
+				// 拖动时浮现居中偏上的高质感毛玻璃时间气泡
+				if (isScrubbing && currentScrubGroup != null) {
+					Surface(
+						shape = RoundedCornerShape(20.dp),
+						color = MaterialTheme.colorScheme.inverseSurface,
+						tonalElevation = 6.dp,
+						shadowElevation = 8.dp,
+						border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+						modifier = Modifier
+							.align(Alignment.TopEnd)
+							.padding(end = 46.dp)
+							.offset {
+								val maxTravel = (scrubberTrackHeightPx - 44.dp.toPx()).coerceAtLeast(0f)
+								IntOffset(
+									x = 0,
+									y = (scrubFraction * maxTravel + 20.dp.toPx()).roundToInt().coerceAtLeast(0)
+								)
+							}
+					) {
+						Row(
+							modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(8.dp),
+						) {
+							Icon(
+								Icons.Rounded.DateRange,
+								contentDescription = null,
+								tint = MaterialTheme.colorScheme.inverseOnSurface,
+								modifier = Modifier.size(17.dp),
+							)
+							Text(
+								text = "${currentScrubGroup!!.dateTitle} · ${currentScrubGroup!!.count}部",
+								style = MaterialTheme.typography.labelLarge,
+								fontWeight = FontWeight.Bold,
+								color = MaterialTheme.colorScheme.inverseOnSurface,
+							)
+						}
+					}
+				}
+
+				// 右侧竖向时间轴快捷滑动条
+				if (groups.size > 1) {
+					TimelineDateScrubber(
+						state = state,
+						groups = groups,
+						onScrubStateChanged = { dragging, fraction, group, heightPx ->
+							isScrubbing = dragging
+							scrubFraction = fraction
+							currentScrubGroup = group
+							scrubberTrackHeightPx = heightPx
+						},
+						modifier = Modifier
+							.align(Alignment.CenterEnd)
+							.fillMaxHeight()
+							.padding(end = 2.dp, top = 8.dp, bottom = 96.dp),
+					)
+				}
+			}
+		}
+	}
+}
+
+@Composable
+private fun VideoCardItem(
+	video: DavEntry,
+	isSelected: Boolean,
+	isMulti: Boolean,
+	urlOf: (String) -> String?,
+	onThumbnailError: ((String) -> Unit)?,
+	onToggleSelect: (DavEntry) -> Unit,
+	onOpenVideo: (DavEntry) -> Unit,
+	onOpenAction: (DavEntry) -> Unit,
+) {
+	Card(
+		shape = RoundedCornerShape(14.dp),
+		colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+		elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
+		modifier = Modifier
+			.fillMaxWidth()
+			.clickable {
+				if (isMulti) {
+					onToggleSelect(video)
+				} else {
+					onOpenVideo(video)
+				}
+			},
+	) {
+		Column {
+			// 16:9 院线质感海报视窗：优先展示服务端缩略图（OpenList type=thumb，真图片），
+			// 无缩略图/加载失败时回退渐变 + 播放图标（零黑块、零等待）。
+			Box(
+				modifier = Modifier
+					.fillMaxWidth()
+					.aspectRatio(16f / 9f)
+					.background(
+						Brush.linearGradient(
+							listOf(MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.surfaceVariant)
+						)
+					),
+				contentAlignment = Alignment.Center,
+			) {
+				var thumbFailed by remember(video.path) { mutableStateOf(false) }
+				val thumbUrl = urlOf(video.path)
+				if (!thumbFailed && !thumbUrl.isNullOrBlank()) {
+					AsyncImage(
+						model = ImageRequest.Builder(LocalContext.current)
+							.data(thumbUrl)
+							.memoryCacheKey("thumb:${video.path}")
+							.size(320, 180)
+							.precision(coil.size.Precision.INEXACT)
+							.allowRgb565(true)
+							.crossfade(false)
+							.build(),
+						contentDescription = video.name,
+						contentScale = ContentScale.Crop,
+						onError = {
+							thumbFailed = true
+							onThumbnailError?.invoke(video.path)
+						},
+						modifier = Modifier.fillMaxSize(),
+					)
+				}
+				Icon(
+					imageVector = Icons.Rounded.Movie,
+					contentDescription = null,
+					tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.35f),
+					modifier = Modifier.size(52.dp),
+				)
+
+				// 微质感播放指示器
+				Surface(
+					shape = CircleShape,
+					color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.85f),
+					modifier = Modifier.size(32.dp),
+				) {
+					Box(contentAlignment = Alignment.Center) {
+						Icon(
+							Icons.Rounded.PlayArrow,
+							contentDescription = "播放",
+							tint = MaterialTheme.colorScheme.onSecondary,
+							modifier = Modifier.size(20.dp),
+						)
+					}
+				}
+
+				// 右下角格式/清晰度微徽标
+				Surface(
+					shape = RoundedCornerShape(4.dp),
+					color = MediaBackdrop.copy(alpha = 0.65f),
+					modifier = Modifier
+						.align(Alignment.BottomEnd)
+						.padding(6.dp),
+				) {
+					Text(
+						text = video.ext.uppercase(Locale.ROOT).ifEmpty { "HD" },
+						fontSize = 9.sp,
+						fontWeight = FontWeight.Bold,
+						color = OnMediaBackdrop,
+						modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+					)
+				}
+
+				// 仅在多选模式下显示右上角勾选框
+				if (isMulti) {
+					Box(
+						modifier = Modifier
+							.align(Alignment.TopEnd)
+							.padding(6.dp)
+					) {
+						SelectCheckbox(isSelected = isSelected)
+					}
+				}
+			}
+
+			// 紧凑双行信息 + 更多操作（非多选时提供单项管理）
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 8.dp, vertical = 8.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Column(modifier = Modifier.weight(1f)) {
+					Text(
+						text = video.displayName,
+						fontSize = 12.sp,
+						fontWeight = FontWeight.Bold,
+						color = MaterialTheme.colorScheme.onSurface,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
+					Spacer(modifier = Modifier.height(3.dp))
+					Text(
+						text = formatMeta(video),
+						fontSize = 10.sp,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
+				}
+				if (!isMulti) {
+					IconButton(
+						onClick = { onOpenAction(video) },
+						modifier = Modifier.size(48.dp)
+					) {
+						Icon(
+							Icons.Rounded.MoreVert,
+							contentDescription = "管理",
+							tint = MaterialTheme.colorScheme.onSurfaceVariant,
+							modifier = Modifier.size(16.dp)
+						)
 					}
 				}
 			}

@@ -16,9 +16,8 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
-import java.io.RandomAccessFile
+import java.io.IOException
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicLong
 
 data class UpdateInfo(
 	val versionName: String,
@@ -180,87 +179,19 @@ object UpdateManager {
 		var lastException: Exception? = null
 		for (url in sortedUrls) {
 			try {
-				Log.i("UpdateManager", "Attempting download from mirror: $url")
-				val headReq = Request.Builder()
+				Log.i("UpdateManager", "Attempting download from: $url")
+				val req = Request.Builder()
 					.url(url)
 					.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
 					.build()
-				val headResp = downloadHttp.newCall(headReq).execute()
-				if (!headResp.isSuccessful) continue
-				val body = headResp.body ?: continue
+				val resp = downloadHttp.newCall(req).execute()
+				if (!resp.isSuccessful) continue
+				val body = resp.body ?: continue
 				val total = body.contentLength()
 
-				// 如果文件大于 4MB 且有明确长度，开启 4 线程并发分块高速下载（可跑满 10~20 MB/s）
-				if (total > 4L * 1024 * 1024) {
-					try {
-						val numChunks = 4
-						val chunkSize = (total + numChunks - 1) / numChunks
-						val downloadedAtomic = AtomicLong(0L)
-						var lastReportTime = System.currentTimeMillis()
-						var lastReportBytes = 0L
-
-						RandomAccessFile(destFile, "rw").use { raf ->
-							raf.setLength(total)
-						}
-
-						coroutineScope {
-							(0 until numChunks).map { index ->
-								val start = index * chunkSize
-								val end = minOf(total - 1L, (index + 1) * chunkSize - 1L)
-								async(Dispatchers.IO) {
-									val chunkReq = Request.Builder()
-										.url(url)
-										.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
-										.header("Range", "bytes=$start-$end")
-										.build()
-									val chunkResp = downloadHttp.newCall(chunkReq).execute()
-									if (chunkResp.code != 206) {
-										throw IllegalStateException("Server returned HTTP ${chunkResp.code} instead of 206 Partial Content")
-									}
-									val chunkBody = chunkResp.body ?: throw IllegalStateException("Chunk $index body empty")
-									chunkBody.byteStream().use { stream ->
-										RandomAccessFile(destFile, "rw").use { raf ->
-											raf.seek(start)
-											val buffer = ByteArray(64 * 1024)
-											var read: Int
-											while (stream.read(buffer).also { read = it } != -1) {
-												raf.write(buffer, 0, read)
-												val cur = downloadedAtomic.addAndGet(read.toLong())
-												val now = System.currentTimeMillis()
-												val dt = now - lastReportTime
-												if (dt >= 200) {
-													val speed = ((cur - lastReportBytes) * 1000) / dt
-													lastReportTime = now
-													lastReportBytes = cur
-													onProgress(cur, total, speed)
-												}
-											}
-										}
-									}
-								}
-							}.awaitAll()
-						}
-						onProgress(total, total, 0L)
-						return@withContext destFile
-					} catch (e: Exception) {
-						Log.w("UpdateManager", "Chunked download failed, falling back to single stream: ${e.message}")
-						if (destFile.exists()) destFile.delete()
-					}
-				}
-
-				// 单流常规下载（小文件或分块不支持时的兜底）
-				val singleReq = Request.Builder()
-					.url(url)
-					.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
-					.build()
-				val singleResp = downloadHttp.newCall(singleReq).execute()
-				if (!singleResp.isSuccessful) continue
-				val singleBody = singleResp.body ?: continue
-				val singleTotal = singleBody.contentLength()
-
-				singleBody.byteStream().use { input ->
+				body.byteStream().use { input ->
 					FileOutputStream(destFile).use { output ->
-						val buffer = ByteArray(64 * 1024)
+						val buffer = ByteArray(128 * 1024)
 						var read: Int
 						var downloaded = 0L
 						var lastTime = System.currentTimeMillis()
@@ -272,22 +203,26 @@ object UpdateManager {
 
 							val now = System.currentTimeMillis()
 							val dt = now - lastTime
-							if (dt >= 250) {
-								val speed = ((downloaded - lastDownloaded) * 1000) / dt
+							if (dt >= 200 || (total > 0 && downloaded >= total)) {
+								val speed = if (dt > 0) ((downloaded - lastDownloaded) * 1000) / dt else 0L
 								lastTime = now
 								lastDownloaded = downloaded
-								onProgress(downloaded, singleTotal, speed)
+								onProgress(downloaded, total, speed)
 							}
 						}
-						onProgress(downloaded, singleTotal, 0L)
+						onProgress(downloaded, total, 0L)
 					}
 				}
-				return@withContext destFile
+				if (destFile.exists() && destFile.length() > 1024 * 1024) {
+					return@withContext destFile
+				}
 			} catch (e: Exception) {
 				lastException = e
+				Log.w("UpdateManager", "Download failed from $url: ${e.message}")
+				if (destFile.exists()) destFile.delete()
 			}
 		}
-		throw lastException ?: IllegalStateException("所有镜像下载通道均失败")
+		throw lastException ?: IllegalStateException("所有下载通道均失败")
 	}
 
 	fun installApk(context: Context, apkFile: File) {

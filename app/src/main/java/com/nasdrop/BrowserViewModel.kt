@@ -334,6 +334,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	val photoTimelineGroups: List<TimelineGroup>
 		get() = groupEntriesForTimeline(currentAlbumPhotos)
 
+	val mediaTimelineGroups: List<TimelineGroup>
+		get() = groupEntriesForTimeline(currentMediaVideos)
+
 	init {
 		PhotoMetadataStore.init(app)
 		loadUserPreferences()
