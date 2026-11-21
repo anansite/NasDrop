@@ -178,48 +178,59 @@ object UpdateManager {
 
 		var lastException: Exception? = null
 		for (url in sortedUrls) {
-			try {
-				Log.i("UpdateManager", "Attempting download from: $url")
-				val req = Request.Builder()
-					.url(url)
-					.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
-					.build()
-				val resp = downloadHttp.newCall(req).execute()
-				if (!resp.isSuccessful) continue
-				val body = resp.body ?: continue
-				val total = body.contentLength()
-
-				body.byteStream().use { input ->
-					FileOutputStream(destFile).use { output ->
-						val buffer = ByteArray(128 * 1024)
-						var read: Int
-						var downloaded = 0L
-						var lastTime = System.currentTimeMillis()
-						var lastDownloaded = 0L
-
-						while (input.read(buffer).also { read = it } != -1) {
-							output.write(buffer, 0, read)
-							downloaded += read
-
-							val now = System.currentTimeMillis()
-							val dt = now - lastTime
-							if (dt >= 200 || (total > 0 && downloaded >= total)) {
-								val speed = if (dt > 0) ((downloaded - lastDownloaded) * 1000) / dt else 0L
-								lastTime = now
-								lastDownloaded = downloaded
-								onProgress(downloaded, total, speed)
-							}
+			for (attempt in 1..2) {
+				try {
+					Log.i("UpdateManager", "Attempting download (try $attempt) from: $url")
+					val req = Request.Builder()
+						.url(url)
+						.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
+						.build()
+					val resp = downloadHttp.newCall(req).execute()
+					if (!resp.isSuccessful) {
+						if (attempt < 2) {
+							kotlinx.coroutines.delay(1500)
+							continue
 						}
-						onProgress(downloaded, total, 0L)
+						continue
+					}
+					val body = resp.body ?: continue
+					val total = body.contentLength()
+
+					body.byteStream().use { input ->
+						FileOutputStream(destFile).use { output ->
+							val buffer = ByteArray(128 * 1024)
+							var read: Int
+							var downloaded = 0L
+							var lastTime = System.currentTimeMillis()
+							var lastDownloaded = 0L
+
+							while (input.read(buffer).also { read = it } != -1) {
+								output.write(buffer, 0, read)
+								downloaded += read
+
+								val now = System.currentTimeMillis()
+								val dt = now - lastTime
+								if (dt >= 200 || (total > 0 && downloaded >= total)) {
+									val speed = if (dt > 0) ((downloaded - lastDownloaded) * 1000) / dt else 0L
+									lastTime = now
+									lastDownloaded = downloaded
+									onProgress(downloaded, total, speed)
+								}
+							}
+							onProgress(downloaded, total, 0L)
+						}
+					}
+					if (destFile.exists() && destFile.length() > 1024 * 1024) {
+						return@withContext destFile
+					}
+				} catch (e: Exception) {
+					lastException = e
+					Log.w("UpdateManager", "Download failed (try $attempt) from $url: ${e.message}")
+					if (destFile.exists()) destFile.delete()
+					if (attempt < 2) {
+						kotlinx.coroutines.delay(1500)
 					}
 				}
-				if (destFile.exists() && destFile.length() > 1024 * 1024) {
-					return@withContext destFile
-				}
-			} catch (e: Exception) {
-				lastException = e
-				Log.w("UpdateManager", "Download failed from $url: ${e.message}")
-				if (destFile.exists()) destFile.delete()
 			}
 		}
 		throw lastException ?: IllegalStateException("所有下载通道均失败")
