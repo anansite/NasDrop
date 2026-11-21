@@ -10,7 +10,7 @@ enum class ConnectionMode(val title: String, val desc: String) {
 
 /** 持久化的服务、上传目录及网络配置；密码保留用户原始输入。 */
 data class Settings(
-	val baseUrl: String = "https://nas.205002.xyz/dav/",
+	val baseUrl: String = "https://nas.205002.xyz/",
 	val user: String = "admin",
 	val password: String = "admin",
 	val lastDir: String = "",

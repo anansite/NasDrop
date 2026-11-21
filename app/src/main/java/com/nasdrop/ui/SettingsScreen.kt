@@ -189,7 +189,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 						enabled = !saving,
 						onValueChange = { baseUrl = it },
 						label = { Text("WebDAV 服务接入地址", fontSize = 12.sp) },
-						placeholder = { Text("https://nas.205002.xyz/dav/") },
+						placeholder = { Text("https://nas.205002.xyz/") },
 						singleLine = true,
 						shape = RoundedCornerShape(12.dp),
 						colors = OutlinedTextFieldDefaults.colors(
