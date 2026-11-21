@@ -268,10 +268,62 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	 * 后台异步补齐某目录的缩略图直链。列目录先返回、UI 先渲染，缩略图随后流入，
 	 * 两条链路解耦——慢速隧道里不再互相拖累。
 	 */
+	/** 正在进行缩略图自愈修复的任务集合，去重防并发 */
+	private val healingPaths = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+	fun repairThumbnailAsync(entry: DavEntry) {
+		val key = entry.path.trim('/')
+		if (key.isEmpty() || !healingPaths.add(key)) return
+		val c = client ?: return
+		viewModelScope.launch(Dispatchers.IO) {
+			try {
+				val bytes = LocalThumbs.generateRemoteThumbnail(app, c, entry)
+				if (bytes != null && bytes.isNotEmpty()) {
+					LocalThumbs.put(app, entry.path, bytes)
+					val d = parentOf(entry.path)
+					val thumbDir = if (d.isEmpty()) ".thumbnails" else "$d/.thumbnails"
+					runCatching { c.mkcol(thumbDir) }
+					val uploaded = c.uploadBytes(bytes, thumbDir, entry.name)
+					if (uploaded) {
+						PhotoMetadataStore.markThumbnail(entry.path, true)
+						val meta = PhotoMetadataStore.get(entry.path) ?: PhotoMetadata(
+							path = entry.path,
+							name = entry.name,
+							dir = d,
+							size = entry.size,
+							modified = entry.modified,
+							takenAt = entry.effectiveDate,
+							hasThumbnail = true,
+						)
+						c.reportMetadata(listOf(meta.copy(hasThumbnail = true)))
+					}
+					c.unmarkThumbnailFailed(entry.path)
+					thumbRevision++
+				}
+			} catch (t: Throwable) {
+				Log.w("BrowserViewModel", "自愈修复缩略图异常 path=${entry.path}", t)
+			} finally {
+				healingPaths.remove(key)
+			}
+		}
+	}
+
 	private fun prefetchThumbsAsync(path: String, items: List<DavEntry>) {
 		viewModelScope.launch(workerDispatcher) {
 			val s = app.prefs.current()
-			clientOf(s).prefetchThumbnails(path, items)
+			val c = clientOf(s)
+			c.prefetchThumbnails(path, items)
+			// 扫描缺失伴生缩略图的项目，静默触发后台自愈补齐并同步到远端
+			for (item in items) {
+				if (item.isImage || item.isVideo) {
+					val meta = PhotoMetadataStore.get(item.path)
+					if (meta == null || !meta.hasThumbnail) {
+						if (LocalThumbs.get(item.path) == null) {
+							repairThumbnailAsync(item)
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -298,15 +350,15 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 			val raw = if (searchQuery.isBlank()) baseList else baseList.filter { it.name.contains(searchQuery.trim(), ignoreCase = true) }
 
-			// 夸克排序逻辑：文件夹恒定排在最上方（置顶），内部按用户所选排序
+			// 夸克排序逻辑：文件夹恒定排在最上方（置顶），内部按用户所选排序（时间优先按对象真实创建时间排序）
 			return when (sortOrder) {
 				SortOrder.ModifiedDesc -> raw.sortedWith(
 					compareBy<DavEntry> { !it.isDir }
-						.thenByDescending { it.modified }
+						.thenByDescending { it.effectiveDate }
 				)
 				SortOrder.ModifiedAsc -> raw.sortedWith(
 					compareBy<DavEntry> { !it.isDir }
-						.thenBy { it.modified }
+						.thenBy { it.effectiveDate }
 				)
 				SortOrder.NameAsc -> raw.sortedWith(
 					compareBy<DavEntry> { !it.isDir }
@@ -567,7 +619,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				val takenAt = if (meta != null && meta.takenAt > 0L && meta.size == entry.size && meta.modified == entry.modified) {
 					meta.takenAt
 				} else {
-					val parsed = PhotoTimeParser.parseFromFilename(entry.name) ?: entry.modified
+					val parsed = PhotoTimeParser.parseFromFilename(entry.name) ?: if (entry.created > 0L) entry.created else entry.modified
 					val newMeta = PhotoMetadata(
 						path = entry.path,
 						name = entry.name,
@@ -583,7 +635,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				}
 				entry.copy(takenAt = takenAt)
 			} else {
-				entry
+				val parsed = PhotoTimeParser.parseFromFilename(entry.name)
+				if (parsed != null && parsed > 0L) {
+					entry.copy(takenAt = parsed)
+				} else {
+					entry
+				}
 			}
 		}
 
@@ -803,6 +860,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	fun markThumbnailFailed(entryPath: String) {
 		client?.markThumbnailFailed(entryPath)
 		thumbRevision++
+		// 自动触发缺失缩略图的后台自愈修复与远端同步
+		val found = (allPhotos + allVideos + entries).firstOrNull { it.path == entryPath }
+		if (found != null) {
+			repairThumbnailAsync(found)
+		}
 	}
 
 	/** 记录进入大图查看器时的初始图片，退出时若未翻页则保持原位置绝对不动 */

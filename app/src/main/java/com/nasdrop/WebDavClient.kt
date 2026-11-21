@@ -39,8 +39,17 @@ data class DavEntry(
 	val size: Long = 0L,
 	val modified: Long = System.currentTimeMillis(),
 	val takenAt: Long = 0L,
+	val created: Long = 0L,
 ) {
-	val effectiveDate: Long get() = if (takenAt > 0L) takenAt else modified
+	/**
+	 * 对象的真实创建/拍摄时间：
+	 * 优先 拍摄时间(EXIF/文件名时间) > 服务端创建时间(creationdate) > 兜底修改/上传时间(modified)
+	 */
+	val effectiveDate: Long get() = when {
+		takenAt > 0L -> takenAt
+		created > 0L -> created
+		else -> modified
+	}
 	val ext: String get() = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
 	val sizeHuman: String get() {
 		if (size < 0) return "--"
@@ -126,6 +135,18 @@ class WebDavClient(
 		val key = path.trim('/')
 		failedThumbs.add(key)
 		thumbUrls.remove(key)
+	}
+
+	fun unmarkThumbnailFailed(path: String) {
+		val key = path.trim('/')
+		failedThumbs.remove(key)
+	}
+
+	fun authHeaderValue(): String? {
+		if (apiUser.isNotEmpty() && apiPassword.isNotEmpty()) {
+			return okhttp3.Credentials.basic(apiUser, apiPassword)
+		}
+		return null
 	}
 
 	/**
@@ -246,7 +267,7 @@ class WebDavClient(
 	 * 全局 okHttp 的 readTimeout 是 5 分钟（为大文件传输留的），列目录/删改/缩略图
 	 * 这类小请求一旦继承它，隧道抖动时页面就会假死好几分钟。这里单独收紧。
 	 */
-	private fun metaCall(req: Request) = http.newCall(req).also {
+	internal fun metaCall(req: Request) = http.newCall(req).also {
 		it.timeout().timeout(20, TimeUnit.SECONDS)
 	}
 
@@ -907,6 +928,7 @@ class WebDavClient(
 		var isDir = false
 		var size = -1L
 		var modified = 0L
+		var created = 0L
 		var inResponse = false
 
 		var event = parser.eventType
@@ -914,15 +936,16 @@ class WebDavClient(
 			if (event == XmlPullParser.START_TAG) {
 				when (parser.name) {
 					"response" -> {
-						inResponse = true; href = null; isDir = false; size = -1L; modified = 0L
+						inResponse = true; href = null; isDir = false; size = -1L; modified = 0L; created = 0L
 					}
 					"href" -> if (inResponse && href == null) href = parser.nextText()
 					"collection" -> isDir = true
 					"getcontentlength" -> size = parser.nextText().trim().toLongOrNull() ?: -1L
 					"getlastmodified" -> modified = parseDate(parser.nextText())
+					"creationdate" -> created = parseIsoDate(parser.nextText())
 				}
 			} else if (event == XmlPullParser.END_TAG && parser.name == "response" && inResponse) {
-				responses += Raw(href, isDir, size, modified)
+				responses += Raw(href, isDir, size, modified, created)
 				inResponse = false
 			}
 			event = parser.next()
@@ -953,12 +976,16 @@ class WebDavClient(
 				}
 				// 排除空路径以及当前所请求目录自身
 				if (rel.isNotEmpty() && rel != cleanTargetRel) {
+					val entryName = rel.substringAfterLast('/')
+					val nameTaken = PhotoTimeParser.parseFromFilename(entryName) ?: 0L
 					out += DavEntry(
-						name = rel.substringAfterLast('/'),
+						name = entryName,
 						path = rel,
 						isDir = r.isDir || decoded.endsWith("/"),
 						size = r.size,
 						modified = r.modified,
+						takenAt = nameTaken,
+						created = r.created,
 					)
 				}
 			}
@@ -1033,13 +1060,22 @@ class WebDavClient(
 		0L
 	}
 
+	private fun parseIsoDate(raw: String): Long = try {
+		val clean = raw.trim()
+		val pattern = if (clean.contains('.')) "yyyy-MM-dd'T'HH:mm:ss.SSSX" else "yyyy-MM-dd'T'HH:mm:ssX"
+		SimpleDateFormat(pattern, Locale.US).parse(clean)?.time
+			?: SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).parse(clean.take(19))?.time ?: 0L
+	} catch (_: Exception) {
+		0L
+	}
+
 	companion object {
 		private val logger = Logger.getLogger("WebDavClient")
-		private data class Raw(val href: String?, val isDir: Boolean, val size: Long, val modified: Long)
+		private data class Raw(val href: String?, val isDir: Boolean, val size: Long, val modified: Long, val created: Long)
 
 		private const val PROPFIND_BODY = """<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:"><d:prop>
-<d:resourcetype/><d:getcontentlength/><d:getlastmodified/>
+<d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:creationdate/>
 </d:prop></d:propfind>"""
 	}
 }

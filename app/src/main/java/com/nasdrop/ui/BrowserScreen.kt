@@ -4866,7 +4866,7 @@ private fun CompactTabItem(
 }
 
 internal fun formatMeta(entry: DavEntry): String {
-	val dateStr = if (entry.modified > 0) formatQuarkDate(entry.modified) else ""
+	val dateStr = if (entry.effectiveDate > 0) formatQuarkDate(entry.effectiveDate) else ""
 	if (entry.isDir) {
 		return if (dateStr.isNotEmpty()) "$dateStr  文件夹" else "文件夹"
 	}

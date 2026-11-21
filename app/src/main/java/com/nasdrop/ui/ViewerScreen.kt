@@ -451,7 +451,15 @@ fun ImageViewer(
 					) {
 						Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
 							ImageDetailItem(label = "文件名称", value = current.name)
-							ImageDetailItem(label = "文件大小", value = current.sizeHuman.ifBlank { formatSize(current.size) })
+
+							val rawSize = current.size
+							val sizeDetail = if (rawSize > 0) {
+								"${current.sizeHuman} (${java.text.NumberFormat.getNumberInstance(Locale.CHINA).format(rawSize)} 字节)"
+							} else {
+								current.sizeHuman.ifBlank { formatSize(current.size) }
+							}
+							ImageDetailItem(label = "文件大小", value = sizeDetail)
+
 							ImageDetailItem(
 								label = "存储路径",
 								value = current.path,
@@ -462,10 +470,18 @@ fun ImageViewer(
 									Toast.makeText(context, "已复制存储路径", Toast.LENGTH_SHORT).show()
 								}
 							)
-							ImageDetailItem(
-								label = "修改时间",
-								value = if (current.modified > 0) SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(current.modified)) else "未知"
-							)
+
+							val createTime = current.effectiveDate
+							val createTimeStr = if (createTime > 0) {
+								SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(createTime))
+							} else "未知"
+							ImageDetailItem(label = "创建时间", value = createTimeStr)
+
+							if (current.modified > 0 && kotlin.math.abs(current.modified - createTime) > 60_000L) {
+								val uploadTimeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(current.modified))
+								ImageDetailItem(label = "修改/上传时间", value = uploadTimeStr)
+							}
+
 							ImageDetailItem(
 								label = "文件类型",
 								value = current.name.substringAfterLast('.', "未知").uppercase(Locale.ROOT)
