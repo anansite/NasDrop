@@ -327,19 +327,6 @@ class WebDavClient(
 			null
 		}
 	}
-					val p = item.getString("path")
-					val n = item.getString("name")
-					val s = item.optLong("size", 0L)
-					val m = item.optLong("modified", 0L)
-					val t = item.optLong("taken_at", 0L)
-					list.add(DavEntry(name = n, path = p, isDir = false, size = s, modified = m, takenAt = t))
-				}
-				list
-			}
-		} catch (_: Exception) {
-			null
-		}
-	}
 
 	/** 列目录。path 为空表示根。只做 PROPFIND，绝不在此阻塞拉缩略图。 */
 	fun list(path: String): List<DavEntry> {
