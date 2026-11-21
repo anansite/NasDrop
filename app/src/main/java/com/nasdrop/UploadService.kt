@@ -189,17 +189,14 @@ class UploadService : Service() {
 								runCatching {
 									client.reportMetadata(listOf(meta))
 									LocalThumbs.ensure(this@UploadService, uri, entryPath, isVideo)
-									// 视频绝不上传伴生缩略图，仅对普通图片异步上传伴生微缩图
-									if (isImage) {
-										val thumbFile = LocalThumbs.get(entryPath)
-										if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0L) {
-											val thumbDir = if (dirKey.isEmpty()) ".thumbnails" else "$dirKey/.thumbnails"
-											runCatching { client.mkcol(thumbDir) }
-											client.uploadBytes(thumbFile.readBytes(), thumbDir, name)
-											PhotoMetadataStore.markThumbnail(entryPath, true)
-											client.reportMetadata(listOf(meta.copy(hasThumbnail = true)))
-											Log.i("UploadService", "图片伴生微缩图已上传: $thumbDir/$name")
-										}
+									val thumbFile = LocalThumbs.get(entryPath)
+									if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0L) {
+										val thumbDir = if (dirKey.isEmpty()) ".thumbnails" else "$dirKey/.thumbnails"
+										runCatching { client.mkcol(thumbDir) }
+										client.uploadBytes(thumbFile.readBytes(), thumbDir, name)
+										PhotoMetadataStore.markThumbnail(entryPath, true)
+										client.reportMetadata(listOf(meta.copy(hasThumbnail = true)))
+										Log.i("UploadService", "伴生微缩图已上传(图片与视频封面): $thumbDir/$name")
 									}
 								}
 							}

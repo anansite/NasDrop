@@ -3395,11 +3395,13 @@ private fun TimelineDateScrubber(
 
 			// 时间刻度里程碑（文字标签 + 刻度圆点，清晰展示时间轴上的时间分布）
 			milestones.forEach { m ->
-				val yOffset = ((trackHeightPx - 20.dp.toPx()).coerceAtLeast(0f) * m.fraction).roundToInt()
 				Row(
 					modifier = Modifier
 						.align(Alignment.TopEnd)
-						.offset { IntOffset(x = 0, y = yOffset) }
+						.offset {
+							val yOffset = ((trackHeightPx - 20.dp.toPx()).coerceAtLeast(0f) * m.fraction).roundToInt()
+							IntOffset(x = 0, y = yOffset)
+						}
 						.padding(end = 10.dp),
 					verticalAlignment = Alignment.CenterVertically,
 					horizontalArrangement = Arrangement.spacedBy(3.dp),
