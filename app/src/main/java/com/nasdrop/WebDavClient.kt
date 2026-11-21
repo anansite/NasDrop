@@ -251,7 +251,7 @@ class WebDavClient(
 
 	fun checkServerCapability(): Boolean {
 		return try {
-			val pingUrl = baseUrl.newBuilder().encodedPath("/api/ping").build()
+			val pingUrl = effectiveBase.newBuilder().encodedPath("/api/ping").build()
 			val req = Request.Builder().url(pingUrl).get().build()
 			metaCall(req).execute().use { resp ->
 				if (resp.isSuccessful) {
@@ -286,10 +286,11 @@ class WebDavClient(
 				}
 				json.put(obj)
 			}
-			val url = baseUrl.newBuilder().encodedPath("/api/metadata").build()
+			val targetUrl = effectiveBase.newBuilder().encodedPath("/api/metadata").build()
+			val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
 			val req = Request.Builder()
-				.url(url)
-				.post(json.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()))
+				.url(targetUrl)
+				.post(body)
 				.build()
 			metaCall(req).execute().use { it.isSuccessful }
 		} catch (_: Exception) {
@@ -299,7 +300,7 @@ class WebDavClient(
 
 	fun fetchServerTimeline(limit: Int = 100, offset: Int = 0, dir: String = ""): List<DavEntry>? {
 		return try {
-			val urlBuilder = baseUrl.newBuilder().encodedPath("/api/timeline")
+			val urlBuilder = effectiveBase.newBuilder().encodedPath("/api/timeline")
 				.addQueryParameter("limit", limit.toString())
 				.addQueryParameter("offset", offset.toString())
 			if (dir.isNotBlank()) urlBuilder.addQueryParameter("dir", dir)
@@ -313,6 +314,19 @@ class WebDavClient(
 				val list = mutableListOf<DavEntry>()
 				for (i in 0 until items.length()) {
 					val item = items.getJSONObject(i)
+					val p = item.getString("path")
+					val n = item.getString("name")
+					val s = item.optLong("size", 0L)
+					val m = item.optLong("modified", 0L)
+					val t = item.optLong("taken_at", 0L)
+					list.add(DavEntry(name = n, path = p, isDir = false, size = s, modified = m, takenAt = t))
+				}
+				list
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
 					val p = item.getString("path")
 					val n = item.getString("name")
 					val s = item.optLong("size", 0L)
