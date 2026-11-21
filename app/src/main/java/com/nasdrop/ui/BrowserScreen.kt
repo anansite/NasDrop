@@ -2050,6 +2050,7 @@ private fun Modifier.dragSelectablePhotoGrid(
 		awaitEachGesture {
 			val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
 			val downPos = down.position
+			if (downPos.x >= size.width - 48.dp.toPx()) return@awaitEachGesture
 			var dragStartIndex = -1
 			var dragCurrentIndex = -1
 			var baseSelection = emptySet<String>()
@@ -2181,6 +2182,7 @@ private fun Modifier.dragSelectableList(
 		awaitEachGesture {
 			val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
 			val downPos = down.position
+			if (downPos.x >= size.width - 48.dp.toPx()) return@awaitEachGesture
 			var dragStartIndex = -1
 			var dragCurrentIndex = -1
 			var baseSelection = emptySet<DavEntry>()
@@ -2320,6 +2322,7 @@ private fun Modifier.dragSelectableGrid(
 		awaitEachGesture {
 			val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
 			val downPos = down.position
+			if (downPos.x >= size.width - 48.dp.toPx()) return@awaitEachGesture
 			var dragStartIndex = -1
 			var dragCurrentIndex = -1
 			var baseSelection = emptySet<DavEntry>()
@@ -3206,27 +3209,30 @@ private fun TimelineDateScrubber(
 				if (size.height > 0) trackHeightPx = size.height.toFloat()
 			}
 			.pointerInput(groups) {
-				detectVerticalDragGestures(
-					onDragStart = { offset ->
-						isDragging = true
-						val fraction = (offset.y / trackHeightPx).coerceIn(0f, 1f)
-						dragFraction = fraction
-						val target = (fraction * (groups.size - 1)).roundToInt().coerceIn(0, groups.size - 1)
-						if (target != activeGroupIdx) {
-							activeGroupIdx = target
-							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-							coroutineScope.launch {
-								state.scrollToItem(groupStartIndices[target])
-							}
+				awaitEachGesture {
+					val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+					down.consume()
+					isDragging = true
+					var currentY = down.position.y
+					val f0 = (currentY / trackHeightPx).coerceIn(0f, 1f)
+					dragFraction = f0
+					val target0 = (f0 * (groups.size - 1)).roundToInt().coerceIn(0, groups.size - 1)
+					if (target0 != activeGroupIdx) {
+						activeGroupIdx = target0
+						haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+						coroutineScope.launch {
+							state.scrollToItem(groupStartIndices[target0])
 						}
-					},
-					onDragEnd = { isDragging = false },
-					onDragCancel = { isDragging = false },
-					onVerticalDrag = { change, _ ->
+					}
+					while (true) {
+						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+						val change = event.changes.firstOrNull { it.id == down.id } ?: break
+						if (!change.pressed) break
 						change.consume()
-						val fraction = (change.position.y / trackHeightPx).coerceIn(0f, 1f)
-						dragFraction = fraction
-						val target = (fraction * (groups.size - 1)).roundToInt().coerceIn(0, groups.size - 1)
+						currentY = change.position.y
+						val f = (currentY / trackHeightPx).coerceIn(0f, 1f)
+						dragFraction = f
+						val target = (f * (groups.size - 1)).roundToInt().coerceIn(0, groups.size - 1)
 						if (target != activeGroupIdx) {
 							activeGroupIdx = target
 							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -3235,7 +3241,8 @@ private fun TimelineDateScrubber(
 							}
 						}
 					}
-				)
+					isDragging = false
+				}
 			},
 		contentAlignment = Alignment.CenterEnd,
 	) {
