@@ -5,6 +5,10 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 data class PhotoMetadata(
@@ -23,6 +27,7 @@ data class PhotoMetadata(
 /**
  * 手机端本地图片元数据存储中心（SQLite + 内存快照双层缓存）。
  * 负责记录照片真实拍摄时间、尺寸、伴生缩略图状态，并严格保持新增、删除、修改、重命名、移动的生命周期一致性。
+ * 所有 SQLite 写入均在后台 IO 协程执行，内存缓存瞬时更新，绝不阻塞主线程。
  */
 object PhotoMetadataStore {
 
@@ -31,6 +36,7 @@ object PhotoMetadataStore {
 	private const val DB_VERSION = 1
 	private const val TABLE_NAME = "photo_metadata"
 
+	private val ioScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 	private var dbHelper: DBHelper? = null
 	private val cache = ConcurrentHashMap<String, PhotoMetadata>()
 
@@ -39,7 +45,9 @@ object PhotoMetadataStore {
 			synchronized(this) {
 				if (dbHelper == null) {
 					dbHelper = DBHelper(context.applicationContext)
-					loadInitialCache()
+					ioScope.launch {
+						loadInitialCache()
+					}
 				}
 			}
 		}
@@ -88,36 +96,47 @@ object PhotoMetadataStore {
 		return cache[key]
 	}
 
+	fun putMemoryOnly(meta: PhotoMetadata) {
+		val key = meta.path.trim('/')
+		cache[key] = meta
+	}
+
 	fun put(meta: PhotoMetadata) {
 		val key = meta.path.trim('/')
 		cache[key] = meta
-		try {
-			val db = dbHelper?.writableDatabase ?: return
-			val cv = toContentValues(meta)
-			db.insertWithOnConflict(TABLE_NAME, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
-		} catch (e: Exception) {
-			Log.e(TAG, "写入图片元数据失败: ${meta.path}", e)
+		ioScope.launch {
+			try {
+				val db = dbHelper?.writableDatabase ?: return@launch
+				val cv = toContentValues(meta)
+				db.insertWithOnConflict(TABLE_NAME, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+			} catch (e: Exception) {
+				Log.e(TAG, "写入图片元数据失败: ${meta.path}", e)
+			}
 		}
 	}
 
 	fun putBatch(list: List<PhotoMetadata>) {
 		if (list.isEmpty()) return
 		list.forEach { cache[it.path.trim('/')] = it }
-		try {
-			val db = dbHelper?.writableDatabase ?: return
-			db.beginTransaction()
+		ioScope.launch {
 			try {
-				for (meta in list) {
-					db.insertWithOnConflict(TABLE_NAME, null, toContentValues(meta), SQLiteDatabase.CONFLICT_REPLACE)
+				val db = dbHelper?.writableDatabase ?: return@launch
+				db.beginTransaction()
+				try {
+					for (meta in list) {
+						db.insertWithOnConflict(TABLE_NAME, null, toContentValues(meta), SQLiteDatabase.CONFLICT_REPLACE)
+					}
+					db.setTransactionSuccessful()
+				} finally {
+					db.endTransaction()
 				}
-				db.setTransactionSuccessful()
-			} finally {
-				db.endTransaction()
+			} catch (e: Exception) {
+				Log.e(TAG, "批量写入图片元数据失败 count=${list.size}", e)
 			}
-		} catch (e: Exception) {
-			Log.e(TAG, "批量写入图片元数据失败 count=${list.size}", e)
 		}
 	}
+
+	fun putBatchAsync(list: List<PhotoMetadata>) = putBatch(list)
 
 	/**
 	 * 删除单个文件元数据
@@ -125,11 +144,13 @@ object PhotoMetadataStore {
 	fun delete(path: String) {
 		val key = path.trim('/')
 		cache.remove(key)
-		try {
-			val db = dbHelper?.writableDatabase ?: return
-			db.delete(TABLE_NAME, "path = ?", arrayOf(key))
-		} catch (e: Exception) {
-			Log.e(TAG, "删除图片元数据失败: $path", e)
+		ioScope.launch {
+			try {
+				val db = dbHelper?.writableDatabase ?: return@launch
+				db.delete(TABLE_NAME, "path = ?", arrayOf(key))
+			} catch (e: Exception) {
+				Log.e(TAG, "删除图片元数据失败: $path", e)
+			}
 		}
 	}
 
@@ -149,15 +170,17 @@ object PhotoMetadataStore {
 				}
 			}
 		}
-		try {
-			val db = dbHelper?.writableDatabase ?: return
-			if (prefix.isEmpty()) {
-				db.delete(TABLE_NAME, null, null)
-			} else {
-				db.delete(TABLE_NAME, "path = ? OR path LIKE ?", arrayOf(prefix, "$prefix/%"))
+		ioScope.launch {
+			try {
+				val db = dbHelper?.writableDatabase ?: return@launch
+				if (prefix.isEmpty()) {
+					db.delete(TABLE_NAME, null, null)
+				} else {
+					db.delete(TABLE_NAME, "path = ? OR path LIKE ?", arrayOf(prefix, "$prefix/%"))
+				}
+			} catch (e: Exception) {
+				Log.e(TAG, "删除目录图片元数据失败: $dirPrefix", e)
 			}
-		} catch (e: Exception) {
-			Log.e(TAG, "删除目录图片元数据失败: $dirPrefix", e)
 		}
 	}
 
@@ -184,18 +207,20 @@ object PhotoMetadataStore {
 		)
 		cache[newKey] = updated
 
-		try {
-			val db = dbHelper?.writableDatabase ?: return
-			db.beginTransaction()
+		ioScope.launch {
 			try {
-				db.delete(TABLE_NAME, "path = ?", arrayOf(oldKey))
-				db.insertWithOnConflict(TABLE_NAME, null, toContentValues(updated), SQLiteDatabase.CONFLICT_REPLACE)
-				db.setTransactionSuccessful()
-			} finally {
-				db.endTransaction()
+				val db = dbHelper?.writableDatabase ?: return@launch
+				db.beginTransaction()
+				try {
+					db.delete(TABLE_NAME, "path = ?", arrayOf(oldKey))
+					db.insertWithOnConflict(TABLE_NAME, null, toContentValues(updated), SQLiteDatabase.CONFLICT_REPLACE)
+					db.setTransactionSuccessful()
+				} finally {
+					db.endTransaction()
+				}
+			} catch (e: Exception) {
+				Log.e(TAG, "移动/重命名元数据失败: $oldPath -> $newPath", e)
 			}
-		} catch (e: Exception) {
-			Log.e(TAG, "移动/重命名元数据失败: $oldPath -> $newPath", e)
 		}
 	}
 
@@ -222,20 +247,22 @@ object PhotoMetadataStore {
 		toRemove.forEach { cache.remove(it) }
 		toUpdate.forEach { cache[it.path] = it }
 
-		try {
-			val db = dbHelper?.writableDatabase ?: return
-			db.beginTransaction()
+		ioScope.launch {
 			try {
-				db.delete(TABLE_NAME, "path = ? OR path LIKE ?", arrayOf(oldP, "$oldP/%"))
-				for (meta in toUpdate) {
-					db.insertWithOnConflict(TABLE_NAME, null, toContentValues(meta), SQLiteDatabase.CONFLICT_REPLACE)
+				val db = dbHelper?.writableDatabase ?: return@launch
+				db.beginTransaction()
+				try {
+					db.delete(TABLE_NAME, "path = ? OR path LIKE ?", arrayOf(oldP, "$oldP/%"))
+					for (meta in toUpdate) {
+						db.insertWithOnConflict(TABLE_NAME, null, toContentValues(meta), SQLiteDatabase.CONFLICT_REPLACE)
+					}
+					db.setTransactionSuccessful()
+				} finally {
+					db.endTransaction()
 				}
-				db.setTransactionSuccessful()
-			} finally {
-				db.endTransaction()
+			} catch (e: Exception) {
+				Log.e(TAG, "批量移动目录元数据失败: $oldPrefix -> $newPrefix", e)
 			}
-		} catch (e: Exception) {
-			Log.e(TAG, "批量移动目录元数据失败: $oldPrefix -> $newPrefix", e)
 		}
 	}
 
@@ -258,20 +285,22 @@ object PhotoMetadataStore {
 		}
 
 		if (purged.isNotEmpty()) {
-			try {
-				val db = dbHelper?.writableDatabase ?: return purged
-				db.beginTransaction()
+			ioScope.launch {
 				try {
-					for (p in purged) {
-						db.delete(TABLE_NAME, "path = ?", arrayOf(p))
+					val db = dbHelper?.writableDatabase ?: return@launch
+					db.beginTransaction()
+					try {
+						for (p in purged) {
+							db.delete(TABLE_NAME, "path = ?", arrayOf(p))
+						}
+						db.setTransactionSuccessful()
+					} finally {
+						db.endTransaction()
 					}
-					db.setTransactionSuccessful()
-				} finally {
-					db.endTransaction()
+					Log.i(TAG, "已自动对齐并清理外部删除的照片记录 count=${purged.size} dir=$dir")
+				} catch (e: Exception) {
+					Log.e(TAG, "差量对齐清理失败 dir=$dir", e)
 				}
-				Log.i(TAG, "已自动对齐并清理外部删除的照片记录 count=${purged.size} dir=$dir")
-			} catch (e: Exception) {
-				Log.e(TAG, "差量对齐清理失败 dir=$dir", e)
 			}
 		}
 		return purged
@@ -286,15 +315,17 @@ object PhotoMetadataStore {
 		if (existing != null) {
 			val updated = existing.copy(hasThumbnail = hasThumbnail, updatedAt = System.currentTimeMillis())
 			cache[key] = updated
-			try {
-				val db = dbHelper?.writableDatabase ?: return
-				val cv = ContentValues().apply {
-					put("has_thumb", if (hasThumbnail) 1 else 0)
-					put("updated_at", updated.updatedAt)
+			ioScope.launch {
+				try {
+					val db = dbHelper?.writableDatabase ?: return@launch
+					val cv = ContentValues().apply {
+						put("has_thumb", if (hasThumbnail) 1 else 0)
+						put("updated_at", updated.updatedAt)
+					}
+					db.update(TABLE_NAME, cv, "path = ?", arrayOf(key))
+				} catch (e: Exception) {
+					Log.e(TAG, "更新缩略图标记失败: $path", e)
 				}
-				db.update(TABLE_NAME, cv, "path = ?", arrayOf(key))
-			} catch (e: Exception) {
-				Log.e(TAG, "更新缩略图标记失败: $path", e)
 			}
 		}
 	}

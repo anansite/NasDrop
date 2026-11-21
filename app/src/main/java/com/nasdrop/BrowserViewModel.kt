@@ -138,15 +138,17 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/** 当前所选子相册（或全部）照片集合 */
 	val currentAlbumPhotos: List<DavEntry>
 		get() {
-			if (selectedAlbumPath.isBlank()) return allPhotos
-			return allPhotos.filter { isPathWithin(it.path, selectedAlbumPath) }
+			val distinct = allPhotos.distinctBy { it.path }
+			if (selectedAlbumPath.isBlank()) return distinct
+			return distinct.filter { isPathWithin(it.path, selectedAlbumPath) }
 		}
 
 	/** 当前所选子影集（或全部）视频集合 */
 	val currentMediaVideos: List<DavEntry>
 		get() {
-			if (selectedMediaPath.isBlank()) return allVideos
-			return allVideos.filter { isPathWithin(it.path, selectedMediaPath) }
+			val distinct = allVideos.distinctBy { it.path }
+			if (selectedMediaPath.isBlank()) return distinct
+			return distinct.filter { isPathWithin(it.path, selectedMediaPath) }
 		}
 
 	/** 当前已发现的所有文件夹相对路径集合（供文件移动对话框选择） */
@@ -538,10 +540,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** 主线程更新文件列表和媒体池，既不列目录也不等待缩略图。 */
 	private fun renderUploadedDirectory(dir: String) {
+		val cleanDir = dir.trim('/')
 		val visible = mergeUploadedEntries(dir, dirCache[dir].orEmpty())
-		if (path == dir) entries = visible
-		allPhotos = allPhotos.filterNot { parentOf(it.path) == dir } + visible.filter { !it.isDir && it.isImage }
-		allVideos = allVideos.filterNot { parentOf(it.path) == dir } + visible.filter { !it.isDir && it.isVideo }
+		if (path.trim('/') == cleanDir) entries = visible
+		allPhotos = (allPhotos.filterNot { parentOf(it.path) == cleanDir } + visible.filter { !it.isDir && it.isImage }).distinctBy { it.path }
+		allVideos = (allVideos.filterNot { parentOf(it.path) == cleanDir } + visible.filter { !it.isDir && it.isVideo }).distinctBy { it.path }
 	}
 
 	/** 保存服务器原始列表，再合并仍未被目录确认的上传项；所有 UI 状态在主线程更新。 */
@@ -550,10 +553,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		// 过滤隐藏的 .thumbnails 缩略图目录，不让其干扰主目录浏览
 		val filteredFresh = fresh.filterNot { it.name == ".thumbnails" || it.path.contains("/.thumbnails") }
 
-		// 差量对齐：比对远端真实文件，清理已被电脑端删除的孤儿元数据记录
+		// 差量对齐：比对远端真实文件，清理已被电脑端删除的孤儿元数据记录（后台 IO 自动执行）
 		PhotoMetadataStore.reconcile(cleanDir, filteredFresh)
 
-		// 注入并同步拍摄时间（takenAt）元数据
+		// 注入并同步拍摄时间（takenAt）元数据（内存缓存瞬时更新，后台批量落库）
+		val toPersist = mutableListOf<PhotoMetadata>()
 		val resolvedFresh = filteredFresh.map { entry ->
 			if (entry.isImage || entry.isVideo) {
 				val meta = PhotoMetadataStore.get(entry.path)
@@ -561,23 +565,27 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					meta.takenAt
 				} else {
 					val parsed = PhotoTimeParser.parseFromFilename(entry.name) ?: entry.modified
-					PhotoMetadataStore.put(
-						PhotoMetadata(
-							path = entry.path,
-							name = entry.name,
-							dir = cleanDir,
-							size = entry.size,
-							modified = entry.modified,
-							takenAt = parsed,
-							hasThumbnail = meta?.hasThumbnail == true
-						)
+					val newMeta = PhotoMetadata(
+						path = entry.path,
+						name = entry.name,
+						dir = cleanDir,
+						size = entry.size,
+						modified = entry.modified,
+						takenAt = parsed,
+						hasThumbnail = meta?.hasThumbnail == true
 					)
+					toPersist.add(newMeta)
+					PhotoMetadataStore.putMemoryOnly(newMeta)
 					parsed
 				}
 				entry.copy(takenAt = takenAt)
 			} else {
 				entry
 			}
+		}
+
+		if (toPersist.isNotEmpty()) {
+			PhotoMetadataStore.putBatchAsync(toPersist)
 		}
 
 		dirCache[dir] = resolvedFresh
@@ -1774,16 +1782,15 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				if (sub.any { it.isVideo }) mediaAlbums.add(dir)
 			}
 		}
-		allAlbumFolders = (albums + if (mediaError != null) allAlbumFolders else emptyList()).distinctBy { it.path }
-		allMediaFolders = (mediaAlbums + if (mediaError != null) allMediaFolders else emptyList()).distinctBy { it.path }
+		allAlbumFolders = albums.distinctBy { it.path }
+		allMediaFolders = mediaAlbums.distinctBy { it.path }
 	}
 
 	private suspend fun scanMediaDirectory(directory: String): List<DavEntry>? = try {
 		loadDirectory(directory)
 	} catch (e: Exception) {
 		if (e is CancellationException) throw e
-		mediaError = "部分目录加载失败，可重试补全"
-		Log.w("BrowserViewModel", "媒体子目录加载失败 dir=$directory", e)
+		Log.w("BrowserViewModel", "媒体子目录加载跳过 dir=$directory", e)
 		null
 	}
 

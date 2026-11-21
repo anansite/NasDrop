@@ -930,22 +930,25 @@ class WebDavClient(
 		// 它去掉 targetRel 后的部分就是根前缀。找不到时再退回最长公共前缀。
 		val decodedHrefs = responses.mapNotNull { it.href }.map { decode(it) }
 		val rootPrefix = inferRootPrefix(decodedHrefs, targetRel, base.encodedPath)
+		val cleanRoot = rootPrefix.trim('/')
 		// 记住服务端真实的 WebDAV 根（如 /dav），MOVE 的 Destination 要用它
-		if (rootPrefix.isNotBlank()) davRootPrefix = rootPrefix.trimEnd('/')
+		if (cleanRoot.isNotEmpty()) davRootPrefix = "/$cleanRoot"
 
+		val cleanTargetRel = targetRel.trim('/')
 		for (r in responses) {
 			val raw = r.href
 			if (raw != null) {
 				val decoded = decode(raw)
 				val trimmed = decoded.trimEnd('/')
 				val rel = when {
-					rootPrefix.isNotEmpty() && trimmed == rootPrefix -> "" // 目录自身
-					rootPrefix.isNotEmpty() && trimmed.startsWith("$rootPrefix/") ->
-						trimmed.removePrefix("$rootPrefix/")
+					cleanRoot.isNotEmpty() && trimmed == "/$cleanRoot" -> "" // WebDAV 根自身
+					cleanRoot.isNotEmpty() && trimmed.startsWith("/$cleanRoot/") ->
+						trimmed.removePrefix("/$cleanRoot/")
+					cleanRoot.isEmpty() -> trimmed.trim('/')
 					else -> decoded.trim('/')
 				}
 				// 排除空路径以及当前所请求目录自身
-				if (rel.isNotEmpty() && rel != targetRel) {
+				if (rel.isNotEmpty() && rel != cleanTargetRel) {
 					out += DavEntry(
 						name = rel.substringAfterLast('/'),
 						path = rel,
@@ -963,33 +966,33 @@ class WebDavClient(
 	}
 
 	/**
-	 * 从 PROPFIND 响应推断服务端的 WebDAV 根前缀（形如 "/dav"，不带结尾斜杠）。
+	 * 从 PROPFIND 响应推断服务端的 WebDAV 根前缀（形如 "dav" 或 ""，不带首尾斜杠）。
 	 *
-	 * 优先路径：找一条 href，其解码后路径去掉尾斜杠，恰好以 "/$targetRel" 结尾，
-	 * 那么把它去掉 "/$targetRel" 就是根。这样 AList/OpenList(/dav)、原生 WebDAV(/nas)、
+	 * 优先路径：找一条 href，其解码后路径去掉尾斜杠，恰好以 "/$cleanTarget" 结尾，
+	 * 那么把它去掉 "/$cleanTarget" 就是根。这样 AList/OpenList(/dav)、原生 WebDAV(/)、
 	 * 甚至挂在子路径的服务都能自动适配，且不受配置里 base 写什么影响。
 	 * 兜底：取所有 href 的最长公共路径段前缀；再兜底用 base 的编码路径。
 	 */
 	private fun inferRootPrefix(hrefs: List<String>, targetRel: String, basePath: String): String {
 		fun norm(p: String) = p.trim().trimEnd('/').let { if (it.isEmpty()) "/" else it }
 
-		// 1) 目录自身那条：/dav/Photos → 去掉 /Photos 得到 /dav
-		if (targetRel.isNotEmpty()) {
-			val suffix = "/$targetRel"
+		// 1) 目录自身那条：/dav/Photos → 去掉 /Photos 得到 dav；/Photos → 去掉 /Photos 得到 ""
+		val cleanTarget = targetRel.trim('/')
+		if (cleanTarget.isNotEmpty()) {
+			val suffix = "/$cleanTarget"
 			hrefs.firstOrNull { h ->
 				val n = norm(h)
 				n == suffix || n.endsWith(suffix)
 			}?.let { h ->
 				val n = norm(h)
-				val cut = n.removeSuffix(suffix).trimEnd('/')
-				if (cut.isNotEmpty()) return cut
+				return n.removeSuffix(suffix).trim('/')
 			}
 		} else {
 			// 根目录：目录自身的 href 就是根，取层级最浅的一条
-			hrefs.map { norm(it) }.minByOrNull { it.count { c -> c == '/' } }?.let { return it }
+			hrefs.map { norm(it).trim('/') }.minByOrNull { it.count { c -> c == '/' } }?.let { return it }
 		}
 
-		// 2) 最长公共段前缀
+		// 2) 最长公共段前缀兜底
 		val paths = hrefs.map { norm(it).split('/').filter { it.isNotEmpty() } }
 		if (paths.isNotEmpty()) {
 			val first = paths.first()
@@ -999,11 +1002,19 @@ class WebDavClient(
 				while (i < common && i < p.size && first[i] == p[i]) i++
 				common = i
 			}
-			if (common > 0) return "/" + first.take(common).joinToString("/")
+			if (common > 0) {
+				val commonPrefix = first.take(common).joinToString("/")
+				if (cleanTarget.isNotEmpty()) {
+					if (commonPrefix == cleanTarget || commonPrefix.endsWith("/$cleanTarget")) {
+						return commonPrefix.removeSuffix("/$cleanTarget").removeSuffix(cleanTarget).trim('/')
+					}
+				}
+				return commonPrefix.trim('/')
+			}
 		}
 
 		// 3) 退回 base 路径
-		return norm(basePath)
+		return basePath.trim('/')
 	}
 
 	private fun decode(raw: String): String = try {

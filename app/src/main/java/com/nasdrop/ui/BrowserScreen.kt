@@ -390,7 +390,7 @@ fun BrowserScreen(
 							detail = contentError ?: "请先完成 Tailscale 授权，再访问 NAS。",
 							onPrimary = onLogin, primaryLabel = "前往登录", onSettings = onOpenSettings,
 						)
-						contentError != null -> BrowserStatus(
+						contentError != null && vm.currentTabEntries.isEmpty() -> BrowserStatus(
 							title = if (mediaTab) "媒体加载失败" else "文件加载失败",
 							detail = contentError,
 							onPrimary = { if (mediaTab) vm.ensureMediaScanned(force = true) else vm.refresh() },
