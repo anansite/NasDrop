@@ -3281,13 +3281,8 @@ private fun TimelineDateScrubber(
 						if (y != lastYear) {
 							lastYear = y
 							lastMonth = m
-							if (y != currentYear) {
-								"${y.takeLast(2)}年"
-							} else if (m.isNotEmpty()) {
-								"${m}月"
-							} else {
-								title.take(4)
-							}
+							// 换年时：明确标注年代（如 "26年"、"25年"），消除年代认知断层
+							"${y.takeLast(2)}年"
 						} else if (m.isNotEmpty() && m != lastMonth) {
 							lastMonth = m
 							"${m}月"
@@ -3309,21 +3304,20 @@ private fun TimelineDateScrubber(
 		}
 
 		if (result.size > 6) {
-			val step = (result.size - 1) / 5.0
-			val sampled = mutableListOf<ScrubberMilestone>()
+			val sampled = mutableSetOf<ScrubberMilestone>()
+			// 1. 首尾里程碑保留
 			sampled.add(result.first())
+			sampled.add(result.last())
+			// 2. 所有年份锚点（如 "26年"、"25年"）必须强制保留，绝不能因下采样漏掉
+			sampled.addAll(result.filter { it.label.endsWith("年") })
+
+			// 3. 按均匀步长补充中间月份刻度
+			val step = (result.size - 1) / 5.0
 			for (k in 1..4) {
-				val idx = (k * step).roundToInt().coerceIn(1, result.size - 2)
-				val cand = result[idx]
-				if (sampled.none { it.groupIndex == cand.groupIndex || it.label == cand.label }) {
-					sampled.add(cand)
-				}
+				val idx = (k * step).roundToInt().coerceIn(0, result.size - 1)
+				sampled.add(result[idx])
 			}
-			val lastCand = result.last()
-			if (sampled.none { it.groupIndex == lastCand.groupIndex || it.label == lastCand.label }) {
-				sampled.add(lastCand)
-			}
-			sampled
+			sampled.sortedBy { it.groupIndex }
 		} else {
 			result
 		}
