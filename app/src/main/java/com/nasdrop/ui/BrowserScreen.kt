@@ -3252,37 +3252,59 @@ private fun TimelineDateScrubber(
 		list
 	}
 
-	// 智能提取时间轴刻度（月份、年份等里程碑，最多展示5~6个，避免重叠）
+	// 智能提取时间轴刻度（月份、年份等里程碑，最多展示5~6个，避免重复与重叠）
 	val milestones = remember(groups) {
 		val result = mutableListOf<ScrubberMilestone>()
-		var lastTag = ""
 		val total = groups.size
 		val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR).toString()
+		var lastYear = ""
+		var lastMonth = ""
+		var hasRecent = false
 
 		for (i in groups.indices) {
 			val title = groups[i].dateTitle
-			val tag = when {
-				title == "今天" || title == "昨天" -> "近期"
-				title == "更早之前" -> "更早"
+			val tag: String? = when {
+				title == "今天" || title == "昨天" -> {
+					if (!hasRecent) {
+						hasRecent = true
+						"近期"
+					} else null
+				}
+				title == "更早之前" -> {
+					if (result.none { it.label == "更早" }) "更早" else null
+				}
 				title.contains("-") -> {
 					val parts = title.split("-")
 					val y = parts.getOrNull(0) ?: ""
 					val m = parts.getOrNull(1)?.toIntOrNull()?.toString() ?: parts.getOrNull(1) ?: ""
-					if (y.isNotEmpty() && y != currentYear && (result.isEmpty() || !result.last().label.contains(y.takeLast(2)))) {
-						"${y.takeLast(2)}年"
-					} else if (m.isNotEmpty()) {
-						"${m}月"
-					} else {
-						title.take(4)
-					}
+					if (y.isNotEmpty()) {
+						if (y != lastYear) {
+							lastYear = y
+							lastMonth = m
+							if (y != currentYear) {
+								"${y.takeLast(2)}年"
+							} else if (m.isNotEmpty()) {
+								"${m}月"
+							} else {
+								title.take(4)
+							}
+						} else if (m.isNotEmpty() && m != lastMonth) {
+							lastMonth = m
+							"${m}月"
+						} else {
+							null
+						}
+					} else null
 				}
-				else -> title.take(4)
+				else -> {
+					val short = title.take(4)
+					if (result.none { it.label == short }) short else null
+				}
 			}
 
-			if (tag != lastTag) {
+			if (tag != null) {
 				val frac = if (total > 1) i.toFloat() / (total - 1) else 0f
 				result.add(ScrubberMilestone(i, tag, frac))
-				lastTag = tag
 			}
 		}
 
@@ -3292,12 +3314,14 @@ private fun TimelineDateScrubber(
 			sampled.add(result.first())
 			for (k in 1..4) {
 				val idx = (k * step).roundToInt().coerceIn(1, result.size - 2)
-				if (sampled.none { it.groupIndex == result[idx].groupIndex }) {
-					sampled.add(result[idx])
+				val cand = result[idx]
+				if (sampled.none { it.groupIndex == cand.groupIndex || it.label == cand.label }) {
+					sampled.add(cand)
 				}
 			}
-			if (sampled.none { it.groupIndex == result.last().groupIndex }) {
-				sampled.add(result.last())
+			val lastCand = result.last()
+			if (sampled.none { it.groupIndex == lastCand.groupIndex || it.label == lastCand.label }) {
+				sampled.add(lastCand)
 			}
 			sampled
 		} else {
