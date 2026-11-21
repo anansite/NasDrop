@@ -3002,6 +3002,11 @@ private fun PhotoTimelineContent(
 				}
 			}
 		} else {
+			var isScrubbing by remember { mutableStateOf(false) }
+			var scrubFraction by remember { mutableFloatStateOf(0f) }
+			var currentScrubGroup by remember { mutableStateOf<com.nasdrop.TimelineGroup?>(null) }
+			var scrubberTrackHeightPx by remember { mutableFloatStateOf(1f) }
+
 			Box(modifier = Modifier.fillMaxSize()) {
 				PullToRefreshBox(
 					isRefreshing = isRefreshing,
@@ -3151,10 +3156,56 @@ private fun PhotoTimelineContent(
 				}
 			}
 
-			// 右侧竖向时间轴快捷滑动条 (独立在 PullToRefreshBox 外部，互不干扰)
+			// 1. 拖动时间轴时悬浮在左侧的清晰时间胶囊（全宽无挤压、单行横向排版、深色质感胶囊）
+			if (isScrubbing && currentScrubGroup != null) {
+				Surface(
+					shape = RoundedCornerShape(20.dp),
+					color = MaterialTheme.colorScheme.inverseSurface,
+					tonalElevation = 6.dp,
+					shadowElevation = 8.dp,
+					border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+					modifier = Modifier
+						.align(Alignment.TopEnd)
+						.padding(end = 46.dp)
+						.offset {
+							val maxTravel = (scrubberTrackHeightPx - 44.dp.toPx()).coerceAtLeast(0f)
+							IntOffset(
+								x = 0,
+								y = (scrubFraction * maxTravel + 20.dp.toPx()).roundToInt().coerceAtLeast(0)
+							)
+						}
+				) {
+					Row(
+						modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(8.dp),
+					) {
+						Icon(
+							Icons.Rounded.DateRange,
+							contentDescription = null,
+							tint = MaterialTheme.colorScheme.inverseOnSurface,
+							modifier = Modifier.size(17.dp),
+						)
+						Text(
+							text = "${currentScrubGroup!!.dateTitle} · ${currentScrubGroup!!.count}张",
+							style = MaterialTheme.typography.labelLarge,
+							fontWeight = FontWeight.Bold,
+							color = MaterialTheme.colorScheme.inverseOnSurface,
+						)
+					}
+				}
+			}
+
+			// 2. 右侧竖向时间轴快捷滑动条 (独立在 PullToRefreshBox 外部，互不干扰)
 			TimelineDateScrubber(
 					state = state,
 					groups = groups,
+					onScrubStateChanged = { dragging, fraction, group, heightPx ->
+						isScrubbing = dragging
+						scrubFraction = fraction
+						currentScrubGroup = group
+						scrubberTrackHeightPx = heightPx
+					},
 					modifier = Modifier
 						.align(Alignment.CenterEnd)
 						.fillMaxHeight()
@@ -3165,17 +3216,24 @@ private fun PhotoTimelineContent(
 	}
 }
 
+private data class ScrubberMilestone(
+	val groupIndex: Int,
+	val label: String,
+	val fraction: Float,
+)
+
 /**
  * 相册右侧快捷滑动竖向时间轴。
- * 1. 动态展示时间刻度；
+ * 1. 动态展示时间刻度（如近期、11月、10月、2025等清晰刻度标签与圆点）；
  * 2. 支持手指按压、上下快速拖动，实时平滑跳转到对应日期的照片分组；
- * 3. 拖动时浮现当前选中日期气泡（日期标题 + 照片张数）与震动触感反馈；
+ * 3. 拖动时通知父容器弹出全局单行时间气泡与震动触感反馈；
  * 4. 正常滚动时指示器滑块自动联动同步当前屏幕所在日期。
  */
 @Composable
 private fun TimelineDateScrubber(
 	state: LazyGridState,
 	groups: List<com.nasdrop.TimelineGroup>,
+	onScrubStateChanged: (dragging: Boolean, fraction: Float, group: com.nasdrop.TimelineGroup, heightPx: Float) -> Unit,
 	modifier: Modifier = Modifier,
 ) {
 	if (groups.size <= 1) return
@@ -3192,6 +3250,59 @@ private fun TimelineDateScrubber(
 			currentIdx += 1 + g.items.size // 1 对应 item(header) + 该组内图片数量
 		}
 		list
+	}
+
+	// 智能提取时间轴刻度（月份、年份等里程碑，最多展示5~6个，避免重叠）
+	val milestones = remember(groups) {
+		val result = mutableListOf<ScrubberMilestone>()
+		var lastTag = ""
+		val total = groups.size
+		val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR).toString()
+
+		for (i in groups.indices) {
+			val title = groups[i].dateTitle
+			val tag = when {
+				title == "今天" || title == "昨天" -> "近期"
+				title == "更早之前" -> "更早"
+				title.contains("-") -> {
+					val parts = title.split("-")
+					val y = parts.getOrNull(0) ?: ""
+					val m = parts.getOrNull(1)?.toIntOrNull()?.toString() ?: parts.getOrNull(1) ?: ""
+					if (y.isNotEmpty() && y != currentYear && (result.isEmpty() || !result.last().label.contains(y.takeLast(2)))) {
+						"${y.takeLast(2)}年"
+					} else if (m.isNotEmpty()) {
+						"${m}月"
+					} else {
+						title.take(4)
+					}
+				}
+				else -> title.take(4)
+			}
+
+			if (tag != lastTag) {
+				val frac = if (total > 1) i.toFloat() / (total - 1) else 0f
+				result.add(ScrubberMilestone(i, tag, frac))
+				lastTag = tag
+			}
+		}
+
+		if (result.size > 6) {
+			val step = (result.size - 1) / 5.0
+			val sampled = mutableListOf<ScrubberMilestone>()
+			sampled.add(result.first())
+			for (k in 1..4) {
+				val idx = (k * step).roundToInt().coerceIn(1, result.size - 2)
+				if (sampled.none { it.groupIndex == result[idx].groupIndex }) {
+					sampled.add(result[idx])
+				}
+			}
+			if (sampled.none { it.groupIndex == result.last().groupIndex }) {
+				sampled.add(result.last())
+			}
+			sampled
+		} else {
+			result
+		}
 	}
 
 	var isDragging by remember { mutableStateOf(false) }
@@ -3220,7 +3331,7 @@ private fun TimelineDateScrubber(
 
 	Box(
 		modifier = modifier
-			.width(48.dp)
+			.width(42.dp)
 			.onSizeChanged { size ->
 				if (size.height > 0) trackHeightPx = size.height.toFloat()
 			}
@@ -3233,12 +3344,11 @@ private fun TimelineDateScrubber(
 					val f0 = (currentY / trackHeightPx).coerceIn(0f, 1f)
 					dragFraction = f0
 					val target0 = (f0 * (groups.size - 1)).roundToInt().coerceIn(0, groups.size - 1)
-					if (target0 != activeGroupIdx) {
-						activeGroupIdx = target0
-						haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-						coroutineScope.launch {
-							state.scrollToItem(groupStartIndices[target0])
-						}
+					activeGroupIdx = target0
+					onScrubStateChanged(true, f0, groups[target0], trackHeightPx)
+					haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+					coroutineScope.launch {
+						state.scrollToItem(groupStartIndices[target0])
 					}
 					while (true) {
 						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
@@ -3256,78 +3366,57 @@ private fun TimelineDateScrubber(
 								state.scrollToItem(groupStartIndices[target])
 							}
 						}
+						onScrubStateChanged(true, f, groups[target], trackHeightPx)
 					}
 					isDragging = false
+					onScrubStateChanged(false, dragFraction, currentGroup, trackHeightPx)
 				}
 			},
 		contentAlignment = Alignment.CenterEnd,
 	) {
-		// 1. 拖动时在左侧弹出的时间气泡 (Floating Date Pill)
-		if (isDragging) {
-			val bubbleFraction = dragFraction.coerceIn(0.05f, 0.95f)
-			Surface(
-				shape = RoundedCornerShape(16.dp),
-				color = MaterialTheme.colorScheme.primaryContainer,
-				tonalElevation = 6.dp,
-				shadowElevation = 8.dp,
-				border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
-				modifier = Modifier
-					.align(Alignment.TopEnd)
-					.padding(end = 32.dp)
-					.offset {
-						IntOffset(
-							x = 0,
-							y = (bubbleFraction * trackHeightPx - 28.dp.toPx()).roundToInt().coerceAtLeast(0)
-						)
-					}
-			) {
-				Row(
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(6.dp),
-					modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-				) {
-					Icon(
-						Icons.Rounded.DateRange,
-						contentDescription = null,
-						tint = MaterialTheme.colorScheme.onPrimaryContainer,
-						modifier = Modifier.size(16.dp),
-					)
-					Column {
-						Text(
-							text = currentGroup.dateTitle,
-							style = MaterialTheme.typography.labelMedium,
-							fontWeight = FontWeight.Bold,
-							color = MaterialTheme.colorScheme.onPrimaryContainer,
-						)
-						Text(
-							text = "${currentGroup.count} 张照片",
-							style = MaterialTheme.typography.labelSmall,
-							fontSize = 11.sp,
-							color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
-						)
-					}
-				}
-			}
-		}
-
-		// 2. 竖向刻度轨道背景条与滑块
+		// 1. 竖向轨道细线与刻度点/文字
 		Box(
 			modifier = Modifier
-				.width(22.dp)
 				.fillMaxHeight()
-				.padding(vertical = 4.dp),
-			contentAlignment = Alignment.Center,
+				.fillMaxWidth(),
+			contentAlignment = Alignment.CenterEnd,
 		) {
-			// 细轨道线
+			// 背景细轨道线 (位于右侧 5.dp 处)
 			Box(
 				modifier = Modifier
+					.padding(end = 5.dp)
 					.width(3.dp)
 					.fillMaxHeight()
 					.background(
-						color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+						color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
 						shape = RoundedCornerShape(1.5.dp),
 					)
 			)
+
+			// 时间刻度里程碑（文字标签 + 刻度圆点，清晰展示时间轴上的时间分布）
+			milestones.forEach { m ->
+				val yOffset = ((trackHeightPx - 20.dp.toPx()).coerceAtLeast(0f) * m.fraction).roundToInt()
+				Row(
+					modifier = Modifier
+						.align(Alignment.TopEnd)
+						.offset { IntOffset(x = 0, y = yOffset) }
+						.padding(end = 10.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(3.dp),
+				) {
+					Text(
+						text = m.label,
+						fontSize = 9.sp,
+						fontWeight = FontWeight.Bold,
+						color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+					)
+					Box(
+						modifier = Modifier
+							.size(3.5.dp)
+							.background(MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), CircleShape)
+					)
+				}
+			}
 
 			// 随当前位置滑动的圆润指示胶囊
 			val targetFraction = if (isDragging) dragFraction else (currentSelectedIdx.toFloat() / (groups.size - 1).coerceAtLeast(1))
@@ -3339,23 +3428,23 @@ private fun TimelineDateScrubber(
 
 			Box(
 				modifier = Modifier
-					.align(Alignment.TopCenter)
+					.align(Alignment.TopEnd)
+					.padding(end = 3.dp)
 					.offset {
 						val maxTravel = (trackHeightPx - 24.dp.toPx()).coerceAtLeast(0f)
 						IntOffset(x = 0, y = (animatedFraction * maxTravel).roundToInt())
 					}
-					.size(width = if (isDragging) 18.dp else 12.dp, height = if (isDragging) 26.dp else 20.dp)
+					.size(width = if (isDragging) 9.dp else 7.dp, height = if (isDragging) 28.dp else 20.dp)
 					.background(
 						color = MaterialTheme.colorScheme.primary,
-						shape = RoundedCornerShape(10.dp),
+						shape = RoundedCornerShape(4.dp),
 					),
 				contentAlignment = Alignment.Center,
 			) {
-				// 指示滑块内小横线
 				Box(
 					modifier = Modifier
-						.width(6.dp)
-						.height(2.dp)
+						.width(2.5.dp)
+						.height(8.dp)
 						.background(MaterialTheme.colorScheme.onPrimary, CircleShape)
 				)
 			}
