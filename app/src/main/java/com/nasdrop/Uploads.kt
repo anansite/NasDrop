@@ -57,7 +57,7 @@ object Uploads {
 		update(id) { it.copy(started = true, total = total, writeOrder = order) }
 	}
 
-	/** 追加一批任务并返回其稳定标识；新批次不会替换运行中或已完成的记录。 */
+	/** 追加一批任务并返回其稳定标识；若上一批次已经全部结束，新批次自动清理上一批次历史。 */
 	@Synchronized
 	fun begin(
 		items: List<Pair<String, String>>,
@@ -67,7 +67,13 @@ object Uploads {
 		val added = items.map { (uri, name) ->
 			UploadTask(uri = uri, name = name, batchId = batchId, dir = dir.trim('/'))
 		}
-		_tasks.value = _tasks.value + added
+		// 若已有任务均已结束（即上一批次已全部完成），新批次开始时清理上一批次历史，避免百分比和列表叠加
+		val existing = if (_tasks.value.isNotEmpty() && _tasks.value.all { it.done }) {
+			emptyList()
+		} else {
+			_tasks.value.filterNot { it.dismissed }
+		}
+		_tasks.value = existing + added
 		return added
 	}
 

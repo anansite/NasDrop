@@ -3800,9 +3800,9 @@ private fun VideoCardItem(
 	onEnterMultiSelect: (DavEntry) -> Unit = {},
 ) {
 	Card(
-		shape = RoundedCornerShape(14.dp),
-		colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-		elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
+		shape = RoundedCornerShape(12.dp),
+		colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+		elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
 		modifier = Modifier
 			.fillMaxWidth()
 			.combinedClickable(
@@ -3822,130 +3822,87 @@ private fun VideoCardItem(
 				},
 			),
 	) {
-		Column {
-			// 16:9 院线质感海报视窗：优先展示服务端缩略图（OpenList type=thumb，真图片），
-			// 无缩略图/加载失败时回退渐变 + 播放图标（零黑块、零等待）。
-			Box(
-				modifier = Modifier
-					.fillMaxWidth()
-					.aspectRatio(16f / 9f)
-					.background(
-						Brush.linearGradient(
-							listOf(MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.surfaceVariant)
-						)
-					),
-				contentAlignment = Alignment.Center,
-			) {
-				var thumbFailed by remember(video.path) { mutableStateOf(false) }
-				val thumbUrl = urlOf(video.path)
-				if (!thumbFailed && !thumbUrl.isNullOrBlank()) {
-					AsyncImage(
-						model = ImageRequest.Builder(LocalContext.current)
-							.data(thumbUrl)
-							.memoryCacheKey("thumb:${video.path}")
-							.size(320, 180)
-							.precision(coil.size.Precision.INEXACT)
-							.allowRgb565(true)
-							.crossfade(false)
-							.build(),
-						contentDescription = video.name,
-						contentScale = ContentScale.Crop,
-						onError = {
-							thumbFailed = true
-							onThumbnailError?.invoke(video.path)
-						},
-						modifier = Modifier.fillMaxSize(),
+		// 16:9 院线质感海报视窗：如同相册页面，纯净展现画面，不显示冗余名称与时间标签
+		Box(
+			modifier = Modifier
+				.fillMaxWidth()
+				.aspectRatio(16f / 9f)
+				.background(
+					Brush.linearGradient(
+						listOf(MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.surfaceVariant)
 					)
-				}
-				Icon(
-					imageVector = Icons.Rounded.Movie,
-					contentDescription = null,
-					tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.35f),
-					modifier = Modifier.size(52.dp),
+				),
+			contentAlignment = Alignment.Center,
+		) {
+			var thumbFailed by remember(video.path) { mutableStateOf(false) }
+			val thumbUrl = urlOf(video.path)
+			if (!thumbFailed && !thumbUrl.isNullOrBlank()) {
+				AsyncImage(
+					model = ImageRequest.Builder(LocalContext.current)
+						.data(thumbUrl)
+						.memoryCacheKey("thumb:${video.path}")
+						.size(320, 180)
+						.precision(coil.size.Precision.INEXACT)
+						.allowRgb565(true)
+						.crossfade(false)
+						.build(),
+					contentDescription = video.name,
+					contentScale = ContentScale.Crop,
+					onError = {
+						thumbFailed = true
+						onThumbnailError?.invoke(video.path)
+					},
+					modifier = Modifier.fillMaxSize(),
 				)
+			}
+			Icon(
+				imageVector = Icons.Rounded.Movie,
+				contentDescription = null,
+				tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.35f),
+				modifier = Modifier.size(52.dp),
+			)
 
-				// 微质感播放指示器
-				Surface(
-					shape = CircleShape,
-					color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.85f),
-					modifier = Modifier.size(32.dp),
-				) {
-					Box(contentAlignment = Alignment.Center) {
-						Icon(
-							Icons.Rounded.PlayArrow,
-							contentDescription = "播放",
-							tint = MaterialTheme.colorScheme.onSecondary,
-							modifier = Modifier.size(20.dp),
-						)
-					}
-				}
-
-				// 右下角格式/清晰度微徽标
-				Surface(
-					shape = RoundedCornerShape(4.dp),
-					color = MediaBackdrop.copy(alpha = 0.65f),
-					modifier = Modifier
-						.align(Alignment.BottomEnd)
-						.padding(6.dp),
-				) {
-					Text(
-						text = video.ext.uppercase(Locale.ROOT).ifEmpty { "HD" },
-						fontSize = 9.sp,
-						fontWeight = FontWeight.Bold,
-						color = OnMediaBackdrop,
-						modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+			// 微质感播放指示器
+			Surface(
+				shape = CircleShape,
+				color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.85f),
+				modifier = Modifier.size(32.dp),
+			) {
+				Box(contentAlignment = Alignment.Center) {
+					Icon(
+						Icons.Rounded.PlayArrow,
+						contentDescription = "播放",
+						tint = MaterialTheme.colorScheme.onSecondary,
+						modifier = Modifier.size(20.dp),
 					)
-				}
-
-				// 仅在多选模式下显示右上角勾选框
-				if (isMulti) {
-					Box(
-						modifier = Modifier
-							.align(Alignment.TopEnd)
-							.padding(6.dp)
-					) {
-						SelectCheckbox(isSelected = isSelected)
-					}
 				}
 			}
 
-			// 紧凑双行信息 + 更多操作（非多选时提供单项管理）
-			Row(
+			// 右下角格式/清晰度微徽标
+			Surface(
+				shape = RoundedCornerShape(4.dp),
+				color = MediaBackdrop.copy(alpha = 0.65f),
 				modifier = Modifier
-					.fillMaxWidth()
-					.padding(horizontal = 8.dp, vertical = 8.dp),
-				verticalAlignment = Alignment.CenterVertically,
+					.align(Alignment.BottomEnd)
+					.padding(6.dp),
 			) {
-				Column(modifier = Modifier.weight(1f)) {
-					Text(
-						text = video.displayName,
-						fontSize = 12.sp,
-						fontWeight = FontWeight.Bold,
-						color = MaterialTheme.colorScheme.onSurface,
-						maxLines = 1,
-						overflow = TextOverflow.Ellipsis,
-					)
-					Spacer(modifier = Modifier.height(3.dp))
-					Text(
-						text = formatMeta(video),
-						fontSize = 10.sp,
-						color = MaterialTheme.colorScheme.onSurfaceVariant,
-						maxLines = 1,
-						overflow = TextOverflow.Ellipsis,
-					)
-				}
-				if (!isMulti) {
-					IconButton(
-						onClick = { onOpenAction(video) },
-						modifier = Modifier.size(48.dp)
-					) {
-						Icon(
-							Icons.Rounded.MoreVert,
-							contentDescription = "管理",
-							tint = MaterialTheme.colorScheme.onSurfaceVariant,
-							modifier = Modifier.size(16.dp)
-						)
-					}
+				Text(
+					text = video.ext.uppercase(Locale.ROOT).ifEmpty { "HD" },
+					fontSize = 9.sp,
+					fontWeight = FontWeight.Bold,
+					color = OnMediaBackdrop,
+					modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+				)
+			}
+
+			// 仅在多选模式下显示右上角勾选框
+			if (isMulti) {
+				Box(
+					modifier = Modifier
+						.align(Alignment.TopEnd)
+						.padding(6.dp)
+				) {
+					SelectCheckbox(isSelected = isSelected)
 				}
 			}
 		}
@@ -4174,52 +4131,89 @@ private fun TransferCenterSheet(
 					Text(if (tasks.isEmpty()) "暂无传输任务" else "此筛选下暂无任务", color = MaterialTheme.colorScheme.onSurfaceVariant)
 				}
 			} else {
-				LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+				LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
 					items(visibleTasks, key = { it.id }) { task ->
 						val isCompleted = task.status == TransferStatus.COMPLETED
 						val terminal = task.status in finishedStates
-						val statusText = when (task.status) {
-							TransferStatus.RUNNING -> if (task.isUpload) "正在上传" else "正在下载"
-							TransferStatus.CONFIRMING -> "正在写入存储…"
-							TransferStatus.QUEUED -> "排队等待中"
-							TransferStatus.PAUSED -> "已暂停"
-							TransferStatus.COMPLETED -> if (task.isUpload) "✓ 上传完成" else "✓ 下载完成"
-							TransferStatus.FAILED -> "传输失败"
-							TransferStatus.CANCELLED -> "已取消"
-						}
 						Surface(
 							color = if (isCompleted) Color(0xFF2E7D32).copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant,
-							shape = MaterialTheme.shapes.medium,
+							shape = RoundedCornerShape(10.dp),
 							border = if (isCompleted) BorderStroke(1.dp, Color(0xFF2E7D32).copy(alpha = 0.35f)) else null,
 						) {
-							Column(Modifier.fillMaxWidth().padding(16.dp)) {
-								Row(verticalAlignment = Alignment.CenterVertically) {
+							Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+								// 第1行：图标 + 文件名（单行省略） + 实时速率/状态徽标 + 紧凑操作按钮
+								Row(
+									modifier = Modifier.fillMaxWidth(),
+									verticalAlignment = Alignment.CenterVertically
+								) {
 									Icon(
 										if (isCompleted) Icons.Rounded.CheckCircle
 										else if (task.isUpload) Icons.Rounded.CloudUpload
 										else Icons.Rounded.CloudDownload,
 										contentDescription = if (task.isUpload) "上传" else "下载",
 										tint = if (isCompleted) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary,
+										modifier = Modifier.size(16.dp),
 									)
-									Text(task.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f).padding(start = 10.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+									Text(
+										task.name,
+										style = MaterialTheme.typography.bodyMedium,
+										fontWeight = FontWeight.SemiBold,
+										modifier = Modifier.weight(1f).padding(start = 8.dp, end = 8.dp),
+										maxLines = 1,
+										overflow = TextOverflow.Ellipsis
+									)
+									// 实时状态/速率徽章
+									if (task.status == TransferStatus.RUNNING) {
+										Text(
+											if (task.speedStr != "--") task.speedStr else "传输中",
+											style = MaterialTheme.typography.labelSmall,
+											fontWeight = FontWeight.Bold,
+											color = MaterialTheme.colorScheme.primary,
+										)
+									} else if (task.status == TransferStatus.CONFIRMING) {
+										Text("写入存储…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+									} else if (isCompleted) {
+										Text("✓ 完成", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+									} else if (task.status == TransferStatus.FAILED) {
+										Text("失败", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+									} else if (task.status == TransferStatus.PAUSED) {
+										Text("已暂停", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+									} else if (task.status == TransferStatus.QUEUED) {
+										Text("排队中", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+									} else if (task.status == TransferStatus.CANCELLED) {
+										Text("已取消", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+									}
+
+									// 紧凑快捷操作按钮
+									if (!task.isUpload && task.status in setOf(TransferStatus.RUNNING, TransferStatus.QUEUED)) {
+										IconButton(onClick = { onPauseTask(task.id) }, modifier = Modifier.size(24.dp).padding(start = 4.dp)) {
+											Icon(Icons.Rounded.Pause, contentDescription = "暂停", modifier = Modifier.size(14.dp))
+										}
+									} else if (!task.isUpload && task.status == TransferStatus.PAUSED) {
+										IconButton(onClick = { onResumeTask(task.id) }, modifier = Modifier.size(24.dp).padding(start = 4.dp)) {
+											Icon(Icons.Rounded.PlayArrow, contentDescription = "继续", modifier = Modifier.size(14.dp))
+										}
+									} else if (task.status in setOf(TransferStatus.FAILED, TransferStatus.CANCELLED)) {
+										IconButton(onClick = { onRetryTask(task.id) }, modifier = Modifier.size(24.dp).padding(start = 4.dp)) {
+											Icon(Icons.Rounded.Refresh, contentDescription = "重试", modifier = Modifier.size(14.dp))
+										}
+									} else if (task.status == TransferStatus.COMPLETED) {
+										IconButton(onClick = { onOpenResult(task.id) }, modifier = Modifier.size(24.dp).padding(start = 4.dp)) {
+											Icon(Icons.Rounded.FolderOpen, contentDescription = "打开", modifier = Modifier.size(14.dp), tint = Color(0xFF2E7D32))
+										}
+									}
+									IconButton(onClick = { onCancelTask(task.id) }, modifier = Modifier.size(24.dp).padding(start = 2.dp)) {
+										Icon(Icons.Rounded.Close, contentDescription = "清除", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+									}
 								}
-								Text(
-									statusText,
-									style = MaterialTheme.typography.bodyMedium,
-									fontWeight = if (isCompleted) FontWeight.Bold else FontWeight.Normal,
-									color = if (isCompleted) Color(0xFF2E7D32) else if (task.status == TransferStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-									modifier = Modifier.padding(top = 10.dp)
-								)
-								if (task.status == TransferStatus.FAILED && !task.error.isNullOrBlank()) {
-									Text(task.error.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
-								}
+
+								// 第2行：超窄流线型进度条（3dp 高度）
 								if (isCompleted) {
-									// 满格 100% 翡翠绿进度条，强化逐项完成的成就感
 									LinearProgressIndicator(
 										progress = { 1f },
 										color = Color(0xFF2E7D32),
 										trackColor = Color(0xFF2E7D32).copy(alpha = 0.15f),
-										modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(5.dp).clip(RoundedCornerShape(2.5.dp)),
+										modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp).clip(RoundedCornerShape(1.5.dp)),
 									)
 								} else if (!terminal) {
 									val animProgress by animateFloatAsState(
@@ -4231,48 +4225,40 @@ private fun TransferCenterSheet(
 										LinearProgressIndicator(
 											progress = { 0.99f },
 											color = MaterialTheme.colorScheme.primary,
-											modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(5.dp).clip(RoundedCornerShape(2.5.dp))
+											modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp).clip(RoundedCornerShape(1.5.dp))
 										)
 									} else if (task.status == TransferStatus.RUNNING && task.totalBytes <= 0) {
 										LinearProgressIndicator(
 											color = MaterialTheme.colorScheme.primary,
-											modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(5.dp).clip(RoundedCornerShape(2.5.dp))
+											modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp).clip(RoundedCornerShape(1.5.dp))
 										)
 									} else {
 										LinearProgressIndicator(
 											progress = { animProgress },
 											color = MaterialTheme.colorScheme.primary,
 											trackColor = MaterialTheme.colorScheme.surfaceVariant,
-											modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(5.dp).clip(RoundedCornerShape(2.5.dp))
+											modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp).clip(RoundedCornerShape(1.5.dp))
 										)
 									}
 								}
-								val speedDisplay = if (task.status == TransferStatus.RUNNING) {
-									if (task.speedStr != "--") " · ${task.speedStr}" else ""
-								} else if (task.status == TransferStatus.CONFIRMING) {
-									" · 服务端确认中…"
-								} else ""
-								Text(
-									"${formatSize(task.sentBytes)} / ${if (task.totalBytes > 0) formatSize(task.totalBytes) else "大小未知"}$speedDisplay",
-									style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp),
-								)
-								LazyRow {
-									if (!task.isUpload && task.status in setOf(TransferStatus.RUNNING, TransferStatus.QUEUED)) {
-										item { TextButton(onClick = { onPauseTask(task.id) }) { Text("暂停") } }
+
+								// 第3行：极简大小进度与百分比
+								Row(
+									modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+									horizontalArrangement = Arrangement.SpaceBetween,
+									verticalAlignment = Alignment.CenterVertically
+								) {
+									if (task.status == TransferStatus.FAILED && !task.error.isNullOrBlank()) {
+										Text(task.error.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 1, overflow = TextOverflow.Ellipsis)
+									} else {
+										val sizeText = "${formatSize(task.sentBytes)} / ${if (task.totalBytes > 0) formatSize(task.totalBytes) else "大小未知"}"
+										Text(sizeText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 									}
-									if (!task.isUpload && task.status == TransferStatus.PAUSED) {
-										item { TextButton(onClick = { onResumeTask(task.id) }) { Text("继续") } }
-									}
-									if (task.status in setOf(TransferStatus.FAILED, TransferStatus.CANCELLED)) {
-										item { TextButton(onClick = { onRetryTask(task.id) }) { Text("重试") } }
-									}
-									if (task.status == TransferStatus.COMPLETED) {
-										item { TextButton(onClick = { onOpenResult(task.id) }) { Text(if (task.isUpload) "查看位置" else "打开文件") } }
-									}
-									item {
-										TextButton(onClick = { onCancelTask(task.id) }) {
-											Text(if (terminal) "清除" else "取消", color = if (terminal) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
-										}
+									val percentText = if (task.totalBytes > 0 && !isCompleted && !terminal) {
+										"${(task.progress * 100).toInt()}%"
+									} else ""
+									if (percentText.isNotEmpty()) {
+										Text(percentText, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
 									}
 								}
 							}

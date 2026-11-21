@@ -209,6 +209,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		get() = selectedEntries.map { it.path }.toSet()
 
 	// ========== 传输管理中心状态 ==========
+	private val finishedStates = setOf(TransferStatus.COMPLETED, TransferStatus.FAILED, TransferStatus.CANCELLED)
 	private var downloadTasks by mutableStateOf<List<TransferTask>>(emptyList())
 	private var uploadTasks by mutableStateOf<List<TransferTask>>(emptyList())
 
@@ -506,10 +507,19 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** App 内上传与分享上传共用同名检查，明确确认后才允许覆盖远端文件。 */
 	fun startUploads(uris: List<Uri>, dir: String, onStarted: () -> Unit) {
+		// 若上一批次任务已全部完成，重新选上传时主动清理已结束任务，防止叠加旧批次进度百分比
+		if (uploadTasks.isNotEmpty() && uploadTasks.all { it.status in finishedStates }) {
+			Uploads.clearFinished()
+			transferTasks = transferTasks.filterNot { it.isUpload && it.status in finishedStates }
+		}
 		prepareUploads(PendingUpload(uris, dir.trim('/')) { onStarted() })
 	}
 
 	fun startShareUploads(uris: List<Uri>, dir: String) {
+		if (uploadTasks.isNotEmpty() && uploadTasks.all { it.status in finishedStates }) {
+			Uploads.clearFinished()
+			transferTasks = transferTasks.filterNot { it.isUpload && it.status in finishedStates }
+		}
 		prepareUploads(PendingUpload(uris, dir.trim('/')) { id ->
 			shareUploadDirectory = dir.trim('/')
 			shareUploadBatchId = id
