@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -50,7 +51,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.scrollBy
+import kotlin.math.roundToInt
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -64,6 +67,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DateRange
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -133,7 +137,9 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -147,10 +153,15 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -443,7 +454,7 @@ fun BrowserScreen(
 								onDeleteAlbum = { folder -> activeFolderForDelete = Pair(folder, true) },
 								onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 								urlOf = { vm.thumbnailUrlFor(it) },
-								directUrlOf = { vm.directUrlFor(it) },
+								directUrlOf = null, // 列表只拉取缩略图，绝不直接拉原图
 								onThumbnailError = { vm.markThumbnailFailed(it) },
 								onOpenImage = onOpenImage,
 							)
@@ -2985,146 +2996,352 @@ private fun PhotoTimelineContent(
 				}
 			}
 		} else {
-			LazyVerticalGrid(
-				state = state,
-				columns = GridCells.Fixed(3),
-				contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 88.dp),
-				horizontalArrangement = Arrangement.spacedBy(3.dp),
-				verticalArrangement = Arrangement.spacedBy(3.dp),
-				modifier = Modifier
-					.fillMaxSize()
-					.dragSelectablePhotoGrid(
-						state = state,
-						allPhotos = allPhotos,
-						isMulti = isMulti,
-						selectedPaths = selectedPaths,
-						onEnterMultiSelect = onEnterMultiSelect,
-						onUpdateSelectionPaths = { onUpdateSelectionPaths?.invoke(it) },
-					),
-			) {
-				groups.forEach { group ->
-					item(span = { GridItemSpan(3) }) {
-						Row(
-							modifier = Modifier
-								.fillMaxWidth()
-								.padding(horizontal = 10.dp, vertical = 6.dp),
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.SpaceBetween,
-						) {
+			Box(modifier = Modifier.fillMaxSize()) {
+				LazyVerticalGrid(
+					state = state,
+					columns = GridCells.Fixed(3),
+					contentPadding = PaddingValues(start = 4.dp, end = 26.dp, top = 4.dp, bottom = 88.dp),
+					horizontalArrangement = Arrangement.spacedBy(3.dp),
+					verticalArrangement = Arrangement.spacedBy(3.dp),
+					modifier = Modifier
+						.fillMaxSize()
+						.dragSelectablePhotoGrid(
+							state = state,
+							allPhotos = allPhotos,
+							isMulti = isMulti,
+							selectedPaths = selectedPaths,
+							onEnterMultiSelect = onEnterMultiSelect,
+							onUpdateSelectionPaths = { onUpdateSelectionPaths?.invoke(it) },
+						),
+				) {
+					groups.forEach { group ->
+						item(span = { GridItemSpan(3) }) {
 							Row(
+								modifier = Modifier
+									.fillMaxWidth()
+									.padding(horizontal = 10.dp, vertical = 6.dp),
 								verticalAlignment = Alignment.CenterVertically,
-								horizontalArrangement = Arrangement.spacedBy(8.dp),
+								horizontalArrangement = Arrangement.SpaceBetween,
 							) {
-								Text(group.dateTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-								Text("${group.count}张", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-							}
-							if (isMulti) {
-								val isAllGroupSelected = group.items.isNotEmpty() && group.items.all { selectedPaths.contains(it.path) }
-								Surface(
-									shape = RoundedCornerShape(12.dp),
-									color = if (isAllGroupSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-									onClick = {
-										onToggleSelectGroup?.invoke(group, !isAllGroupSelected)
-									},
+								Row(
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.spacedBy(8.dp),
 								) {
-									Text(
-										text = if (isAllGroupSelected) "取消全选" else "全选",
-										fontSize = 12.sp,
-										fontWeight = FontWeight.Bold,
-										color = if (isAllGroupSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
-										modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-									)
+									Text(group.dateTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+									Text("${group.count}张", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+								}
+								if (isMulti) {
+									val isAllGroupSelected = group.items.isNotEmpty() && group.items.all { selectedPaths.contains(it.path) }
+									Surface(
+										shape = RoundedCornerShape(12.dp),
+										color = if (isAllGroupSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+										onClick = {
+											onToggleSelectGroup?.invoke(group, !isAllGroupSelected)
+										},
+									) {
+										Text(
+											text = if (isAllGroupSelected) "取消全选" else "全选",
+											fontSize = 12.sp,
+											fontWeight = FontWeight.Bold,
+											color = if (isAllGroupSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
+											modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+										)
+									}
 								}
 							}
 						}
-					}
 
-					items(group.items, key = { it.path }) { item ->
-						val isSelected = selectedPaths.contains(item.path)
-						Box(
-							modifier = Modifier
-								.aspectRatio(1f)
-								.clip(RoundedCornerShape(6.dp))
-								.background(MaterialTheme.colorScheme.outlineVariant)
-								.combinedClickable(
-									onClick = {
-										if (isMulti) {
-											onToggleSelect(item)
-										} else {
-											onOpenImage(item)
-										}
-									},
-									onLongClick = {
-										if (!isMulti) {
-											onEnterMultiSelect(item)
-										} else {
-											onToggleSelect(item)
-										}
-									},
-								),
-						) {
-							val thumbTarget = urlOf(item.path)
-							var thumbFailed by remember(item.path) { mutableStateOf(false) }
-							var directFailed by remember(item.path) { mutableStateOf(false) }
-							val actualData = if (thumbFailed && directUrlOf != null) {
-								if (!directFailed) directUrlOf(item.path) else null
-							} else {
-								thumbTarget ?: directUrlOf?.invoke(item.path)
-							}
-							if (!directFailed && !actualData.isNullOrBlank()) {
-								AsyncImage(
-									model = ImageRequest.Builder(LocalContext.current)
-										.data(actualData)
-										.memoryCacheKey("thumb:${item.path}")
-										.size(240, 240)
-										.precision(coil.size.Precision.INEXACT)
-										.allowRgb565(true)
-										.crossfade(false)
-										.build(),
-									onError = {
-										if (!thumbFailed) {
-											thumbFailed = true
-											onThumbnailError?.invoke(item.path)
-										} else {
-											directFailed = true
-										}
-									},
-									contentDescription = item.name,
-									contentScale = ContentScale.Crop,
-									modifier = Modifier.fillMaxSize(),
-								)
-							} else {
-								Box(
-									modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
-									contentAlignment = Alignment.Center,
-								) {
-									FileIcon(category = FileCategory.Image, isDir = false, size = 32.dp)
+						items(group.items, key = { it.path }) { item ->
+							val isSelected = selectedPaths.contains(item.path)
+							Box(
+								modifier = Modifier
+									.aspectRatio(1f)
+									.clip(RoundedCornerShape(6.dp))
+									.background(MaterialTheme.colorScheme.outlineVariant)
+									.combinedClickable(
+										onClick = {
+											if (isMulti) {
+												onToggleSelect(item)
+											} else {
+												onOpenImage(item)
+											}
+										},
+										onLongClick = {
+											if (!isMulti) {
+												onEnterMultiSelect(item)
+											} else {
+												onToggleSelect(item)
+											}
+										},
+									),
+							) {
+								val thumbTarget = urlOf(item.path)
+								var thumbFailed by remember(item.path) { mutableStateOf(false) }
+								var directFailed by remember(item.path) { mutableStateOf(false) }
+								val actualData = if (thumbFailed && directUrlOf != null) {
+									if (!directFailed) directUrlOf(item.path) else null
+								} else {
+									thumbTarget ?: directUrlOf?.invoke(item.path)
 								}
-							}
+								if (!directFailed && !actualData.isNullOrBlank()) {
+									AsyncImage(
+										model = ImageRequest.Builder(LocalContext.current)
+											.data(actualData)
+											.memoryCacheKey("thumb:${item.path}")
+											.size(240, 240)
+											.precision(coil.size.Precision.INEXACT)
+											.allowRgb565(true)
+											.crossfade(false)
+											.build(),
+										onError = {
+											if (!thumbFailed) {
+												thumbFailed = true
+												onThumbnailError?.invoke(item.path)
+											} else {
+												directFailed = true
+											}
+										},
+										contentDescription = item.name,
+										contentScale = ContentScale.Crop,
+										modifier = Modifier.fillMaxSize(),
+									)
+								} else {
+									Box(
+										modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
+										contentAlignment = Alignment.Center,
+									) {
+										FileIcon(category = FileCategory.Image, isDir = false, size = 32.dp)
+									}
+								}
 
-							// 多选选中时显示精致主题色边框与半透明遮罩
-							if (isMulti && isSelected) {
-								Box(
-									modifier = Modifier
-										.fillMaxSize()
-										.border(2.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
-										.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.20f))
-								)
-							}
+								// 多选选中时显示精致主题色边框与半透明遮罩
+								if (isMulti && isSelected) {
+									Box(
+										modifier = Modifier
+											.fillMaxSize()
+											.border(2.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
+											.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.20f))
+									)
+								}
 
-							// 仅在多选模式下显示右上角勾选框（日常沉浸全图，长按才浮现选框）
-							if (isMulti) {
-								Box(
-									modifier = Modifier
-										.align(Alignment.TopEnd)
-										.padding(6.dp)
-								) {
-									SelectCheckbox(isSelected = isSelected)
+								// 仅在多选模式下显示右上角勾选框（日常沉浸全图，长按才浮现选框）
+								if (isMulti) {
+									Box(
+										modifier = Modifier
+											.align(Alignment.TopEnd)
+											.padding(6.dp)
+									) {
+										SelectCheckbox(isSelected = isSelected)
+									}
 								}
 							}
 						}
 					}
 				}
+
+				// 右侧竖向时间轴快捷滑动条
+				TimelineDateScrubber(
+					state = state,
+					groups = groups,
+					modifier = Modifier
+						.align(Alignment.CenterEnd)
+						.fillMaxHeight()
+						.padding(end = 2.dp, top = 8.dp, bottom = 96.dp),
+				)
+			}
+		}
+	}
+}
+
+/**
+ * 相册右侧快捷滑动竖向时间轴。
+ * 1. 动态展示时间刻度；
+ * 2. 支持手指按压、上下快速拖动，实时平滑跳转到对应日期的照片分组；
+ * 3. 拖动时浮现当前选中日期气泡（日期标题 + 照片张数）与震动触感反馈；
+ * 4. 正常滚动时指示器滑块自动联动同步当前屏幕所在日期。
+ */
+@Composable
+private fun TimelineDateScrubber(
+	state: LazyGridState,
+	groups: List<com.nasdrop.TimelineGroup>,
+	modifier: Modifier = Modifier,
+) {
+	if (groups.size <= 1) return
+
+	val coroutineScope = rememberCoroutineScope()
+	val haptic = LocalHapticFeedback.current
+
+	// 计算每个 group 在 LazyVerticalGrid 里的全局起始 item index
+	val groupStartIndices = remember(groups) {
+		val list = ArrayList<Int>(groups.size)
+		var currentIdx = 0
+		for (g in groups) {
+			list.add(currentIdx)
+			currentIdx += 1 + g.items.size // 1 对应 item(header) + 该组内图片数量
+		}
+		list
+	}
+
+	var isDragging by remember { mutableStateOf(false) }
+	var dragFraction by remember { mutableFloatStateOf(0f) }
+	var activeGroupIdx by remember { mutableIntStateOf(0) }
+	var trackHeightPx by remember { mutableFloatStateOf(1f) }
+
+	// 联动计算：未拖动时跟随列表当前首个可见 item 对应的 group
+	val visibleGroupIdx by remember(groups, state.firstVisibleItemIndex) {
+		derivedStateOf {
+			val first = state.firstVisibleItemIndex
+			var matched = 0
+			for (i in groupStartIndices.indices) {
+				if (groupStartIndices[i] <= first) {
+					matched = i
+				} else {
+					break
+				}
+			}
+			matched
+		}
+	}
+
+	val currentSelectedIdx = if (isDragging) activeGroupIdx else visibleGroupIdx
+	val currentGroup = groups.getOrNull(currentSelectedIdx) ?: groups.first()
+
+	Box(
+		modifier = modifier
+			.width(48.dp)
+			.onSizeChanged { size ->
+				if (size.height > 0) trackHeightPx = size.height.toFloat()
+			}
+			.pointerInput(groups) {
+				detectVerticalDragGestures(
+					onDragStart = { offset ->
+						isDragging = true
+						val fraction = (offset.y / trackHeightPx).coerceIn(0f, 1f)
+						dragFraction = fraction
+						val target = (fraction * (groups.size - 1)).roundToInt().coerceIn(0, groups.size - 1)
+						if (target != activeGroupIdx) {
+							activeGroupIdx = target
+							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+							coroutineScope.launch {
+								state.scrollToItem(groupStartIndices[target])
+							}
+						}
+					},
+					onDragEnd = { isDragging = false },
+					onDragCancel = { isDragging = false },
+					onVerticalDrag = { change, _ ->
+						change.consume()
+						val fraction = (change.position.y / trackHeightPx).coerceIn(0f, 1f)
+						dragFraction = fraction
+						val target = (fraction * (groups.size - 1)).roundToInt().coerceIn(0, groups.size - 1)
+						if (target != activeGroupIdx) {
+							activeGroupIdx = target
+							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+							coroutineScope.launch {
+								state.scrollToItem(groupStartIndices[target])
+							}
+						}
+					}
+				)
+			},
+		contentAlignment = Alignment.CenterEnd,
+	) {
+		// 1. 拖动时在左侧弹出的时间气泡 (Floating Date Pill)
+		if (isDragging) {
+			val bubbleFraction = dragFraction.coerceIn(0.05f, 0.95f)
+			Surface(
+				shape = RoundedCornerShape(16.dp),
+				color = MaterialTheme.colorScheme.primaryContainer,
+				tonalElevation = 6.dp,
+				shadowElevation = 8.dp,
+				border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+				modifier = Modifier
+					.align(Alignment.TopEnd)
+					.padding(end = 32.dp)
+					.offset {
+						IntOffset(
+							x = 0,
+							y = (bubbleFraction * trackHeightPx - 28.dp.toPx()).roundToInt().coerceAtLeast(0)
+						)
+					}
+			) {
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
+					modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+				) {
+					Icon(
+						Icons.Rounded.DateRange,
+						contentDescription = null,
+						tint = MaterialTheme.colorScheme.onPrimaryContainer,
+						modifier = Modifier.size(16.dp),
+					)
+					Column {
+						Text(
+							text = currentGroup.dateTitle,
+							style = MaterialTheme.typography.labelMedium,
+							fontWeight = FontWeight.Bold,
+							color = MaterialTheme.colorScheme.onPrimaryContainer,
+						)
+						Text(
+							text = "${currentGroup.count} 张照片",
+							style = MaterialTheme.typography.labelSmall,
+							fontSize = 11.sp,
+							color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+						)
+					}
+				}
+			}
+		}
+
+		// 2. 竖向刻度轨道背景条与滑块
+		Box(
+			modifier = Modifier
+				.width(22.dp)
+				.fillMaxHeight()
+				.padding(vertical = 4.dp),
+			contentAlignment = Alignment.Center,
+		) {
+			// 细轨道线
+			Box(
+				modifier = Modifier
+					.width(3.dp)
+					.fillMaxHeight()
+					.background(
+						color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+						shape = RoundedCornerShape(1.5.dp),
+					)
+			)
+
+			// 随当前位置滑动的圆润指示胶囊
+			val targetFraction = if (isDragging) dragFraction else (currentSelectedIdx.toFloat() / (groups.size - 1).coerceAtLeast(1))
+			val animatedFraction by animateFloatAsState(
+				targetValue = targetFraction.coerceIn(0f, 1f),
+				animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+				label = "scrubber_fraction"
+			)
+
+			Box(
+				modifier = Modifier
+					.align(Alignment.TopCenter)
+					.offset {
+						val maxTravel = (trackHeightPx - 24.dp.toPx()).coerceAtLeast(0f)
+						IntOffset(x = 0, y = (animatedFraction * maxTravel).roundToInt())
+					}
+					.size(width = if (isDragging) 18.dp else 12.dp, height = if (isDragging) 26.dp else 20.dp)
+					.background(
+						color = MaterialTheme.colorScheme.primary,
+						shape = RoundedCornerShape(10.dp),
+					),
+				contentAlignment = Alignment.Center,
+			) {
+				// 指示滑块内小横线
+				Box(
+					modifier = Modifier
+						.width(6.dp)
+						.height(2.dp)
+						.background(MaterialTheme.colorScheme.onPrimary, CircleShape)
+				)
 			}
 		}
 	}

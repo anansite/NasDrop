@@ -223,18 +223,22 @@ class WebDavClient(
 	}
 
 	/**
-	 * 列表缩略图专用：命中服务端缩略图返回真图片直链，否则图片回退原图地址（视频返回 null）。
-	 * 下载/播放/删除等仍走 urlFor()，绝不受影响。
+	 * 列表缩略图专用：命中服务端缩略图返回真图片直链（20KB~30KB），绝不直接拉取几十MB原图。
+	 * 下载/播放/删除/查看器等仍走 urlFor() / directUrlFor()，清晰度不受影响。
 	 */
 	fun thumbnailUrl(path: String): HttpUrl? {
 		val key = path.trim('/')
 		if (!failedThumbs.contains(key)) {
 			thumbUrls[key]?.toHttpUrlOrNull()?.let { return it }
 		}
-		// 图片没有专用服务端缩略图时回退原图直链（Coil 负责按 240x240 下采样解码，内存开销极低）；
-		// 视频没有服务端缩略图时返回 null——绝不让 Coil 去拉取整个视频当图片解码。
 		val ext = path.substringAfterLast('.', "").lowercase()
-		return if (ext in DavEntry.IMAGES) directUrlFor(path) else null
+		if (ext !in DavEntry.IMAGES && ext !in DavEntry.VIDEOS) return null
+
+		// 服务端轻量缩略图端点：/api/thumbnail?path=<key>&dim=320
+		val b = effectiveBase.newBuilder().encodedPath("/api/thumbnail")
+		b.addQueryParameter("path", key)
+		b.addQueryParameter("dim", "320")
+		return b.build()
 	}
 
 	/**
