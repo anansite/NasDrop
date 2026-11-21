@@ -378,55 +378,56 @@ fun BrowserScreen(
 				}
 			}
 
-			// 主内容区域根据 Tab 呈现，并接入标准下拉刷新
+			// 主内容区域根据 Tab 呈现
 			Box(modifier = Modifier.weight(1f)) {
 				val mediaTab = vm.currentTab == MainTab.Photos || vm.currentTab == MainTab.Media
 				val contentError = if (mediaTab) vm.mediaError else vm.error
 				val initialLoading = (if (mediaTab) vm.mediaScanning else vm.loading) && vm.currentTabEntries.isEmpty()
-				PullToRefreshBox(
-					isRefreshing = vm.isRefreshing,
-					onRefresh = { vm.pullRefresh() },
-					modifier = Modifier.fillMaxSize(),
-				) {
-					when {
-						vm.needsLogin -> BrowserStatus(
-							title = "需要授权内网连接",
-							detail = contentError ?: "请先完成 Tailscale 授权，再访问 NAS。",
-							onPrimary = onLogin, primaryLabel = "前往登录", onSettings = onOpenSettings,
-						)
-						contentError != null && vm.currentTabEntries.isEmpty() -> BrowserStatus(
-							title = if (mediaTab) "媒体加载失败" else "文件加载失败",
-							detail = contentError,
-							onPrimary = { if (mediaTab) vm.ensureMediaScanned(force = true) else vm.refresh() },
-							primaryLabel = "重试", onSettings = onOpenSettings,
-						)
-						initialLoading -> BrowserStatus(
-							title = if (mediaTab) "正在扫描媒体…" else "正在加载文件…", loading = true,
-						)
-						else -> when (vm.currentTab) {
+				when {
+					vm.needsLogin -> BrowserStatus(
+						title = "需要授权内网连接",
+						detail = contentError ?: "请先完成 Tailscale 授权，再访问 NAS。",
+						onPrimary = onLogin, primaryLabel = "前往登录", onSettings = onOpenSettings,
+					)
+					contentError != null && vm.currentTabEntries.isEmpty() -> BrowserStatus(
+						title = if (mediaTab) "媒体加载失败" else "文件加载失败",
+						detail = contentError,
+						onPrimary = { if (mediaTab) vm.ensureMediaScanned(force = true) else vm.refresh() },
+						primaryLabel = "重试", onSettings = onOpenSettings,
+					)
+					initialLoading -> BrowserStatus(
+						title = if (mediaTab) "正在扫描媒体…" else "正在加载文件…", loading = true,
+					)
+					else -> when (vm.currentTab) {
 						MainTab.Files -> {
-							FileBrowserContent(
-								vm = vm,
-								onOpenEntry = { entry ->
-									if (vm.isMultiSelectMode) {
-										vm.toggleSelect(entry)
-									} else if (entry.isDir) {
-										vm.cd(entry)
-									} else if (entry.isImage) {
-										onOpenImage(entry)
-									} else if (entry.isVideo) {
-										onOpenVideo(entry)
-									} else {
-										activeEntryForAction = entry
-									}
-								},
-								onLongClickEntry = { entry ->
-									if (!vm.isMultiSelectMode) {
-										vm.enterMultiSelect(entry)
-									}
-								},
-								onOpenAction = { entry -> activeEntryForAction = entry },
-							)
+							PullToRefreshBox(
+								isRefreshing = vm.isRefreshing,
+								onRefresh = { vm.pullRefresh() },
+								modifier = Modifier.fillMaxSize(),
+							) {
+								FileBrowserContent(
+									vm = vm,
+									onOpenEntry = { entry ->
+										if (vm.isMultiSelectMode) {
+											vm.toggleSelect(entry)
+										} else if (entry.isDir) {
+											vm.cd(entry)
+										} else if (entry.isImage) {
+											onOpenImage(entry)
+										} else if (entry.isVideo) {
+											onOpenVideo(entry)
+										} else {
+											activeEntryForAction = entry
+										}
+									},
+									onLongClickEntry = { entry ->
+										if (!vm.isMultiSelectMode) {
+											vm.enterMultiSelect(entry)
+										}
+									},
+									onOpenAction = { entry -> activeEntryForAction = entry },
+								)
+							}
 						}
 
 						MainTab.Photos -> {
@@ -435,6 +436,8 @@ fun BrowserScreen(
 								groups = vm.photoTimelineGroups,
 								allAlbums = vm.allAlbumFolders,
 								selectedAlbumPath = vm.selectedAlbumPath,
+								isRefreshing = vm.isRefreshing,
+								onRefresh = { vm.pullRefresh() },
 								isMulti = vm.isMultiSelectMode,
 								selectedPaths = vm.selectedPaths,
 								onToggleSelect = { vm.toggleSelect(it) },
@@ -454,24 +457,30 @@ fun BrowserScreen(
 						}
 
 						MainTab.Media -> {
-							MediaStreamContent(
-								state = vm.mediaGridState,
-								videos = vm.currentMediaVideos,
-								allMediaFolders = vm.allMediaFolders,
-								selectedMediaPath = vm.selectedMediaPath,
-								isMulti = vm.isMultiSelectMode,
-								selectedPaths = vm.selectedPaths,
-								onToggleSelect = { vm.toggleSelect(it) },
-								onEnterMultiSelect = { vm.enterMultiSelect(it) },
-								onUpdateSelectionPaths = { vm.updateSelectionByPaths(it) },
-								onOpenAction = { activeEntryForAction = it },
-								onSelectMediaFolder = { vm.openMedia(it) },
-								onDeleteMediaFolder = { folder -> activeFolderForDelete = Pair(folder, false) },
-								onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
-								urlOf = { vm.thumbnailUrlFor(it) },
-								onThumbnailError = { vm.markThumbnailFailed(it) },
-								onOpenVideo = onOpenVideo,
-							)
+							PullToRefreshBox(
+								isRefreshing = vm.isRefreshing,
+								onRefresh = { vm.pullRefresh() },
+								modifier = Modifier.fillMaxSize(),
+							) {
+								MediaStreamContent(
+									state = vm.mediaGridState,
+									videos = vm.currentMediaVideos,
+									allMediaFolders = vm.allMediaFolders,
+									selectedMediaPath = vm.selectedMediaPath,
+									isMulti = vm.isMultiSelectMode,
+									selectedPaths = vm.selectedPaths,
+									onToggleSelect = { vm.toggleSelect(it) },
+									onEnterMultiSelect = { vm.enterMultiSelect(it) },
+									onUpdateSelectionPaths = { vm.updateSelectionByPaths(it) },
+									onOpenAction = { activeEntryForAction = it },
+									onSelectMediaFolder = { vm.openMedia(it) },
+									onDeleteMediaFolder = { folder -> activeFolderForDelete = Pair(folder, false) },
+									onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
+									urlOf = { vm.thumbnailUrlFor(it) },
+									onThumbnailError = { vm.markThumbnailFailed(it) },
+									onOpenVideo = onOpenVideo,
+								)
+							}
 						}
 
 						MainTab.Me -> {
@@ -486,7 +495,6 @@ fun BrowserScreen(
 								onOpenSettings = onOpenSettings,
 								logs = vm.logs(),
 							)
-						}
 						}
 					}
 				}
@@ -2827,6 +2835,8 @@ private fun PhotoTimelineContent(
 	groups: List<com.nasdrop.TimelineGroup>,
 	allAlbums: List<DavEntry>,
 	selectedAlbumPath: String,
+	isRefreshing: Boolean = false,
+	onRefresh: () -> Unit = {},
 	isMulti: Boolean = false,
 	selectedPaths: Set<String> = emptySet(),
 	onToggleSelect: (DavEntry) -> Unit = {},
@@ -2993,7 +3003,12 @@ private fun PhotoTimelineContent(
 			}
 		} else {
 			Box(modifier = Modifier.fillMaxSize()) {
-				LazyVerticalGrid(
+				PullToRefreshBox(
+					isRefreshing = isRefreshing,
+					onRefresh = onRefresh,
+					modifier = Modifier.fillMaxSize(),
+				) {
+					LazyVerticalGrid(
 					state = state,
 					columns = GridCells.Fixed(3),
 					contentPadding = PaddingValues(start = 4.dp, end = 26.dp, top = 4.dp, bottom = 88.dp),
@@ -3134,9 +3149,10 @@ private fun PhotoTimelineContent(
 						}
 					}
 				}
+			}
 
-				// 右侧竖向时间轴快捷滑动条
-				TimelineDateScrubber(
+			// 右侧竖向时间轴快捷滑动条 (独立在 PullToRefreshBox 外部，互不干扰)
+			TimelineDateScrubber(
 					state = state,
 					groups = groups,
 					modifier = Modifier
