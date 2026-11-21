@@ -333,6 +333,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		get() = groupEntriesForTimeline(currentAlbumPhotos)
 
 	init {
+		PhotoMetadataStore.init(app)
 		loadUserPreferences()
 		open("")
 		startUnifiedLinkMonitor()
@@ -545,11 +546,45 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** 保存服务器原始列表，再合并仍未被目录确认的上传项；所有 UI 状态在主线程更新。 */
 	private fun applyDirectoryListing(dir: String, fresh: List<DavEntry>) {
-		dirCache[dir] = fresh
-		Uploads.markListed(uploadListing.reconcile(dir, fresh.associate { it.path to it.size }))
+		val cleanDir = dir.trim('/')
+		// 过滤隐藏的 .thumbnails 缩略图目录，不让其干扰主目录浏览
+		val filteredFresh = fresh.filterNot { it.name == ".thumbnails" || it.path.contains("/.thumbnails") }
+
+		// 差量对齐：比对远端真实文件，清理已被电脑端删除的孤儿元数据记录
+		PhotoMetadataStore.reconcile(cleanDir, filteredFresh)
+
+		// 注入并同步拍摄时间（takenAt）元数据
+		val resolvedFresh = filteredFresh.map { entry ->
+			if (entry.isImage || entry.isVideo) {
+				val meta = PhotoMetadataStore.get(entry.path)
+				val takenAt = if (meta != null && meta.takenAt > 0L && meta.size == entry.size && meta.modified == entry.modified) {
+					meta.takenAt
+				} else {
+					val parsed = PhotoTimeParser.parseFromFilename(entry.name) ?: entry.modified
+					PhotoMetadataStore.put(
+						PhotoMetadata(
+							path = entry.path,
+							name = entry.name,
+							dir = cleanDir,
+							size = entry.size,
+							modified = entry.modified,
+							takenAt = parsed,
+							hasThumbnail = meta?.hasThumbnail == true
+						)
+					)
+					parsed
+				}
+				entry.copy(takenAt = takenAt)
+			} else {
+				entry
+			}
+		}
+
+		dirCache[dir] = resolvedFresh
+		Uploads.markListed(uploadListing.reconcile(dir, resolvedFresh.associate { it.path to it.size }))
 		renderUploadedDirectory(dir)
-		updateFolderPaths(fresh)
-		prefetchThumbsAsync(dir, fresh)
+		updateFolderPaths(resolvedFresh)
+		prefetchThumbsAsync(dir, resolvedFresh)
 	}
 
 	/** 同目录只应用最后发起的请求，防止旧响应晚到后撤销已确认的新文件。 */
@@ -723,6 +758,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val key = entryPath.trim('/')
 		LocalThumbs.get(key)?.let { return android.net.Uri.fromFile(it).toString() }
 		@Suppress("UNUSED_VARIABLE") val revision = thumbRevision
+
+		// 优先命中伴生 .thumbnails 极速缩略图
+		val meta = PhotoMetadataStore.get(key)
+		if (meta != null && meta.hasThumbnail) {
+			val thumbPath = if (meta.dir.isEmpty()) ".thumbnails/${meta.name}" else "${meta.dir}/.thumbnails/${meta.name}"
+			client?.directUrlFor(thumbPath)?.toString()?.let { return it }
+		}
+
 		return client?.thumbnailUrl(key)?.toString()
 	}
 
@@ -736,6 +779,13 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val key = entryPath.trim('/')
 		LocalThumbs.get(key)?.let { return android.net.Uri.fromFile(it).toString() }
 		@Suppress("UNUSED_VARIABLE") val revision = thumbRevision
+
+		val meta = PhotoMetadataStore.get(key)
+		if (meta != null && meta.hasThumbnail) {
+			val thumbPath = if (meta.dir.isEmpty()) ".thumbnails/${meta.name}" else "${meta.dir}/.thumbnails/${meta.name}"
+			client?.directUrlFor(thumbPath)?.toString()?.let { return it }
+		}
+
 		return client?.serverThumbUrl(key)?.toString()
 	}
 
@@ -1072,6 +1122,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 			dirCache.clear()
 			LocalThumbs.forget(*deleted.toTypedArray())
+			deleted.forEach { PhotoMetadataStore.delete(it) }
 			pruneMediaPools(deleted)
 			onDone(okCount, failCount)
 			if (failCount > 0) uiMessage = "删除完成：成功 $okCount 项，失败 $failCount 项"
@@ -1117,6 +1168,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 			dirCache.clear()
 			LocalThumbs.forget(*moved.toTypedArray())
+			moved.forEach { p ->
+				val dest = join(targetDir, p.substringAfterLast('/'))
+				PhotoMetadataStore.move(p, dest)
+			}
 			pruneMediaPools(moved)
 			mediaDirty = true
 			refreshSilent()
@@ -1477,7 +1532,15 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			dirCache.clear()
 			if (err == null) {
 				LocalThumbs.forget(entry.path)
+				if (entry.isDir) PhotoMetadataStore.deleteDir(entry.path) else PhotoMetadataStore.delete(entry.path)
 				pruneMediaPools(listOf(entry.path))
+				if (entry.isImage || entry.isVideo) {
+					launch(Dispatchers.IO) {
+						val d = parentOf(entry.path)
+						val thumbPath = if (d.isEmpty()) ".thumbnails/${entry.name}" else "$d/.thumbnails/${entry.name}"
+						runCatching { clientOf(app.prefs.current()).delete(thumbPath, false) }
+					}
+				}
 				onResult(true, null)
 			} else {
 				uiMessage = "删除失败：$err"
@@ -1509,7 +1572,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			refreshSilent()
 			if (err == null) {
 				LocalThumbs.forget(entry.path)
+				if (entry.isDir) PhotoMetadataStore.moveDir(oldPath, dest) else PhotoMetadataStore.move(oldPath, dest, newName)
 				mediaDirty = true
+				if (entry.isImage || entry.isVideo) {
+					launch(Dispatchers.IO) {
+						val d = parentOf(oldPath)
+						val oldThumb = if (d.isEmpty()) ".thumbnails/${entry.name}" else "$d/.thumbnails/${entry.name}"
+						val newThumb = if (d.isEmpty()) ".thumbnails/$newName" else "$d/.thumbnails/$newName"
+						runCatching { clientOf(app.prefs.current()).move(oldThumb, newThumb) }
+					}
+				}
 				onResult(true, "已重命名为 $newName")
 			} else {
 				uiMessage = "重命名失败：$err"
@@ -1534,8 +1606,21 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			dirCache.clear()
 			if (err == null) {
 				LocalThumbs.forget(entry.path)
+				if (entry.isDir) PhotoMetadataStore.moveDir(entry.path, dest) else PhotoMetadataStore.move(entry.path, dest)
 				pruneMediaPools(listOf(entry.path))
 				mediaDirty = true // 目标目录的相册/影音归属变了，下次进页面时校正
+				if (entry.isImage || entry.isVideo) {
+					launch(Dispatchers.IO) {
+						val oldDir = parentOf(entry.path)
+						val oldThumb = if (oldDir.isEmpty()) ".thumbnails/${entry.name}" else "$oldDir/.thumbnails/${entry.name}"
+						val newThumb = if (targetDir.isEmpty()) ".thumbnails/${entry.name}" else "$targetDir/.thumbnails/${entry.name}"
+						val c = clientOf(app.prefs.current())
+						runCatching {
+							c.mkcol(if (targetDir.isEmpty()) ".thumbnails" else "$targetDir/.thumbnails")
+							c.move(oldThumb, newThumb)
+						}
+					}
+				}
 				refreshSilent()
 				onResult(true, "已移动到 /${targetDir.ifEmpty { "根目录" }}")
 			} else {
@@ -1711,8 +1796,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		cal.add(Calendar.DAY_OF_YEAR, -1)
 		val yesterdayStr = sdf.format(cal.time)
 
-		val groupsMap = items.sortedByDescending { it.modified }.groupBy {
-			if (it.modified > 0) sdf.format(Date(it.modified)) else "其他"
+		val groupsMap = items.sortedByDescending { it.effectiveDate }.groupBy {
+			if (it.effectiveDate > 0) sdf.format(Date(it.effectiveDate)) else "其他"
 		}
 
 		return groupsMap.map { (dateKey, list) ->

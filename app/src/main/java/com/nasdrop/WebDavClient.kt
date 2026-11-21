@@ -38,7 +38,9 @@ data class DavEntry(
 	val isDir: Boolean,
 	val size: Long = 0L,
 	val modified: Long = System.currentTimeMillis(),
+	val takenAt: Long = 0L,
 ) {
+	val effectiveDate: Long get() = if (takenAt > 0L) takenAt else modified
 	val ext: String get() = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
 	val sizeHuman: String get() {
 		if (size < 0) return "--"
@@ -620,6 +622,22 @@ class WebDavClient(
 		uploadStream(name, total, context.contentResolver.getType(uri), remoteDir,
 			openInput = { context.contentResolver.openInputStream(uri) ?: throw IOException("无法读取上传文件") },
 			onProgress = onProgress, onBodySent = onBodySent, onCall = onCall)
+	}
+
+	fun uploadBytes(
+		bytes: ByteArray,
+		remoteDir: String,
+		name: String,
+		mimeType: String = "image/jpeg",
+	) {
+		uploadStream(
+			name = name,
+			total = bytes.size.toLong(),
+			mimeType = mimeType,
+			remoteDir = remoteDir,
+			openInput = { java.io.ByteArrayInputStream(bytes) },
+			onProgress = { _, _ -> },
+		)
 	}
 
 	/** 流式 PUT；仅安全重试时重开输入源，每次 HTTP 调用都通过 [onCall] 登记，发送回调与远端确认独立。 */

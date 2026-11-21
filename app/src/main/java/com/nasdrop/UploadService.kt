@@ -53,6 +53,7 @@ class UploadService : Service() {
 
 	override fun onCreate() {
 		super.onCreate()
+		PhotoMetadataStore.init(this)
 		ensureChannel()
 	}
 
@@ -166,6 +167,39 @@ class UploadService : Service() {
 						)
 						Uploads.update(task.id) { it.copy(done = true, bodySent = true) }
 						Log.i("UploadService", "服务端确认写入完成 batch=$batchId task=${task.id} elapsedMs=${System.currentTimeMillis() - startedAt}")
+
+						// 记录图片/视频拍摄时间元数据，并异步上传伴生 30KB 微缩图
+						if (isImage || isVideo) {
+							val exif = if (isImage) PhotoTimeParser.extractExif(this@UploadService, uri) else ExifInfo()
+							val takenAt = exif.takenAt ?: PhotoTimeParser.parseFromFilename(name) ?: startedAt
+							PhotoMetadataStore.put(
+								PhotoMetadata(
+									path = entryPath,
+									name = name,
+									dir = dirKey,
+									size = size,
+									modified = System.currentTimeMillis(),
+									takenAt = takenAt,
+									width = exif.width,
+									height = exif.height,
+									hasThumbnail = false
+								)
+							)
+
+							scope.launch {
+								runCatching {
+									LocalThumbs.ensure(this@UploadService, uri, entryPath, isVideo)
+									val thumbFile = LocalThumbs.get(entryPath)
+									if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0L) {
+										val thumbDir = if (dirKey.isEmpty()) ".thumbnails" else "$dirKey/.thumbnails"
+										runCatching { client.mkcol(thumbDir) }
+										client.uploadBytes(thumbFile.readBytes(), thumbDir, name)
+										PhotoMetadataStore.markThumbnail(entryPath, true)
+										Log.i("UploadService", "伴生微缩图已上传: $thumbDir/$name")
+									}
+								}
+							}
+						}
 					} catch (t: Exception) {
 						if (t is CancellationException) throw t
 						val cur = Uploads.tasks.value.firstOrNull { it.id == task.id }
