@@ -283,7 +283,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					val d = parentOf(entry.path)
 					val thumbDir = if (d.isEmpty()) ".thumbnails" else "$d/.thumbnails"
 					runCatching { c.mkcol(thumbDir) }
-					val uploaded = c.uploadBytes(bytes, thumbDir, entry.name)
+					val uploaded = runCatching { c.uploadBytes(bytes, thumbDir, entry.name) }.isSuccess
 					if (uploaded) {
 						PhotoMetadataStore.markThumbnail(entry.path, true)
 						val meta = PhotoMetadataStore.get(entry.path) ?: PhotoMetadata(

@@ -1,0 +1,11 @@
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates tzdata
+WORKDIR /app
+COPY nasdrop-server .
+EXPOSE 8881
+VOLUME ["/data", "/config"]
+ENV PORT=8881
+ENV DATA_DIR=/data
+ENV DB_PATH=/config/nasdrop.db
+ENV THUMB_DIR=/config/thumbnails
+ENTRYPOINT ["./nasdrop-server"]
