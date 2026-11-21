@@ -138,7 +138,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/** 当前所选子相册（或全部）照片集合 */
 	val currentAlbumPhotos: List<DavEntry>
 		get() {
-			val distinct = allPhotos.distinctBy { it.path }
+			val distinct = allPhotos.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
 			if (selectedAlbumPath.isBlank()) return distinct
 			return distinct.filter { isPathWithin(it.path, selectedAlbumPath) }
 		}
@@ -146,7 +146,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/** 当前所选子影集（或全部）视频集合 */
 	val currentMediaVideos: List<DavEntry>
 		get() {
-			val distinct = allVideos.distinctBy { it.path }
+			val distinct = allVideos.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
 			if (selectedMediaPath.isBlank()) return distinct
 			return distinct.filter { isPathWithin(it.path, selectedMediaPath) }
 		}
@@ -543,15 +543,15 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val cleanDir = dir.trim('/')
 		val visible = mergeUploadedEntries(dir, dirCache[dir].orEmpty())
 		if (path.trim('/') == cleanDir) entries = visible
-		allPhotos = (allPhotos.filterNot { parentOf(it.path) == cleanDir } + visible.filter { !it.isDir && it.isImage }).distinctBy { it.path }
-		allVideos = (allVideos.filterNot { parentOf(it.path) == cleanDir } + visible.filter { !it.isDir && it.isVideo }).distinctBy { it.path }
+		allPhotos = (allPhotos.filterNot { parentOf(it.path) == cleanDir || it.path.contains(".thumbnails") } + visible.filter { !it.isDir && it.isImage && !it.path.contains(".thumbnails") }).distinctBy { it.path }
+		allVideos = (allVideos.filterNot { parentOf(it.path) == cleanDir || it.path.contains(".thumbnails") } + visible.filter { !it.isDir && it.isVideo && !it.path.contains(".thumbnails") }).distinctBy { it.path }
 	}
 
 	/** 保存服务器原始列表，再合并仍未被目录确认的上传项；所有 UI 状态在主线程更新。 */
 	private fun applyDirectoryListing(dir: String, fresh: List<DavEntry>) {
 		val cleanDir = dir.trim('/')
-		// 过滤隐藏的 .thumbnails 缩略图目录，不让其干扰主目录浏览
-		val filteredFresh = fresh.filterNot { it.name == ".thumbnails" || it.path.contains("/.thumbnails") }
+		// 过滤隐藏的 .thumbnails 缩略图目录及点开头目录，不让其干扰主目录浏览
+		val filteredFresh = fresh.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }
 
 		// 差量对齐：比对远端真实文件，清理已被电脑端删除的孤儿元数据记录（后台 IO 自动执行）
 		PhotoMetadataStore.reconcile(cleanDir, filteredFresh)
@@ -1760,7 +1760,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	private fun updateFolderPaths(items: List<DavEntry>) {
-		val dirs = items.filter { it.isDir }.map { it.path }
+		val dirs = items.filter { it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }.map { it.path }
 		allFolderPaths = (allFolderPaths + dirs).distinct().sorted()
 	}
 
@@ -1769,21 +1769,23 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val rootEntries = loadDirectory("")
 		val albums = mutableListOf<DavEntry>()
 		val mediaAlbums = mutableListOf<DavEntry>()
-		for (dir in rootEntries.filter { it.isDir }) {
+		for (dir in rootEntries.filter { it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }) {
 			val sub = scanMediaDirectory(dir.path) ?: continue
 			if (dir.name.equals("Photos", true) || dir.name == "相册") {
-				albums.addAll(sub.filter { it.isDir })
-				sub.filter { it.isDir }.forEach { scanMediaDirectory(it.path) }
+				val validDirs = sub.filter { it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }
+				albums.addAll(validDirs)
+				validDirs.forEach { scanMediaDirectory(it.path) }
 			} else if (dir.name.equals("movies", true) || dir.name == "影视" || dir.name == "影音") {
-				mediaAlbums.addAll(sub.filter { it.isDir })
-				sub.filter { it.isDir }.forEach { scanMediaDirectory(it.path) }
+				val validDirs = sub.filter { it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }
+				mediaAlbums.addAll(validDirs)
+				validDirs.forEach { scanMediaDirectory(it.path) }
 			} else {
-				if (sub.any { it.isImage }) albums.add(dir)
-				if (sub.any { it.isVideo }) mediaAlbums.add(dir)
+				if (sub.any { it.isImage && !it.path.contains(".thumbnails") }) albums.add(dir)
+				if (sub.any { it.isVideo && !it.path.contains(".thumbnails") }) mediaAlbums.add(dir)
 			}
 		}
-		allAlbumFolders = albums.distinctBy { it.path }
-		allMediaFolders = mediaAlbums.distinctBy { it.path }
+		allAlbumFolders = albums.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
+		allMediaFolders = mediaAlbums.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
 	}
 
 	private suspend fun scanMediaDirectory(directory: String): List<DavEntry>? = try {
