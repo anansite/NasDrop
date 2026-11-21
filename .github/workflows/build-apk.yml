@@ -168,3 +168,13 @@ jobs:
           files: out/*.apk
           body_path: release_notes.md
           generate_release_notes: false
+
+      - name: Notify LAN Server
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        run: |
+          curl -s \
+            -H "Title: NasDrop v1.0.${{ github.run_number }} Released" \
+            -H "Priority: high" \
+            -H "Tags: package,arrow_down" \
+            -d "{\"app\": \"nasdrop\", \"version\": \"v1.0.${{ github.run_number }}\", \"repo\": \"${{ github.repository }}\"}" \
+            https://ntfy.sh/anan_apps_release_sync || true

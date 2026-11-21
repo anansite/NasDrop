@@ -38,8 +38,9 @@ object UpdateManager {
 
 	private const val RELEASES_API = "https://api.github.com/repos/anansite/NasDrop/releases/latest"
 
-	// 国内直连 api.github.com 常超时，按序尝试高质量镜像；全部失败才放弃。
+	// 路由器局域网 CDN 优先（在家秒级响应），国内加速镜像与官方直连兜底。
 	private val API_CANDIDATES = listOf(
+		"https://cdn.205002.xyz/nasdrop/latest.json",
 		"https://ghproxy.net/https://api.github.com/repos/anansite/NasDrop/releases/latest",
 		"https://ghfast.top/https://api.github.com/repos/anansite/NasDrop/releases/latest",
 		"https://mirror.ghproxy.com/https://api.github.com/repos/anansite/NasDrop/releases/latest",
