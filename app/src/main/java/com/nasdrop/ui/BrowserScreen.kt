@@ -473,6 +473,7 @@ fun BrowserScreen(
 									onToggleSelect = { vm.toggleSelect(it) },
 									onEnterMultiSelect = { vm.enterMultiSelect(it) },
 									onUpdateSelectionPaths = { vm.updateSelectionByPaths(it) },
+									onToggleSelectGroup = { group, select -> vm.toggleSelectGroup(group, select) },
 									onOpenAction = { activeEntryForAction = it },
 									onSelectMediaFolder = { vm.openMedia(it) },
 									onDeleteMediaFolder = { folder -> activeFolderForDelete = Pair(folder, false) },
@@ -2014,6 +2015,32 @@ private fun findGridItemKeyAt(state: LazyGridState, pointerX: Float, pointerY: F
 	}?.key
 }
 
+private fun findGridKeyAt(
+	state: LazyGridState,
+	pointerX: Float,
+	pointerY: Float,
+	validKeySet: Set<String>,
+): String? {
+	val visibleItems = state.layoutInfo.visibleItemsInfo
+	if (visibleItems.isEmpty()) return null
+	val items = visibleItems.filter { it.key is String && it.key in validKeySet }
+	if (items.isEmpty()) return null
+	val px = pointerX.toInt()
+	val py = pointerY.toInt()
+	val hit = items.firstOrNull { info ->
+		px in info.offset.x..(info.offset.x + info.size.width) &&
+		py in info.offset.y..(info.offset.y + info.size.height)
+	}
+	if (hit != null) return hit.key as? String
+	return items.minByOrNull { info ->
+		val cx = info.offset.x + info.size.width / 2
+		val cy = info.offset.y + info.size.height / 2
+		val dx = (px - cx).toFloat()
+		val dy = (py - cy).toFloat()
+		dx * dx + dy * dy
+	}?.key as? String
+}
+
 private fun findPhotoKeyAt(state: LazyGridState, pointerX: Float, pointerY: Float): String? {
 	val visibleItems = state.layoutInfo.visibleItemsInfo
 	if (visibleItems.isEmpty()) return null
@@ -2036,51 +2063,64 @@ private fun findPhotoKeyAt(state: LazyGridState, pointerX: Float, pointerY: Floa
 }
 
 /**
- * 为相册瀑布流/时间轴赋能真正的流畅滑动多选 (支持长按连选、多选模式下直接滑动跨选、边界自动滚屏)
+ * 工业级 LazyVerticalGrid 流畅滑动多选修饰符
+ * - 长按触发震动后无需松手，手指顺势拖拽即可连续框选连选；
+ * - 多选模式下轻按/拖动即刻进入连选；
+ * - 84dp 宽域动态边界自动滚屏，且滚屏每一帧按当前手指停留位置实时拾取新滚入的项目并伴有触觉反馈；
+ * - 支持右侧时间轴擦洗条避让。
  */
 @Composable
-private fun Modifier.dragSelectablePhotoGrid(
+private fun Modifier.dragSelectableGrid(
 	state: LazyGridState,
-	allPhotos: List<DavEntry>,
+	allKeys: List<String>,
 	isMulti: Boolean,
 	selectedPaths: Set<String>,
-	onEnterMultiSelect: (DavEntry) -> Unit,
+	onEnterMultiSelect: (String) -> Unit,
 	onUpdateSelectionPaths: (Set<String>) -> Unit,
+	rightEdgeIgnoreWidthDp: Dp = 44.dp,
 ): Modifier {
 	val haptic = LocalHapticFeedback.current
 	val scope = rememberCoroutineScope()
-	val currentAllPhotos by rememberUpdatedState(allPhotos)
+	val density = LocalDensity.current
+	val currentAllKeys by rememberUpdatedState(allKeys)
 	val currentIsMulti by rememberUpdatedState(isMulti)
 	val currentSelectedPaths by rememberUpdatedState(selectedPaths)
 	val currentOnEnterMultiSelect by rememberUpdatedState(onEnterMultiSelect)
 	val currentOnUpdateSelectionPaths by rememberUpdatedState(onUpdateSelectionPaths)
 
 	return this.pointerInput(Unit) {
+		val rightIgnorePx = with(density) { rightEdgeIgnoreWidthDp.toPx() }
+		val edgeZonePx = with(density) { 84.dp.toPx() }
+
 		awaitEachGesture {
 			val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
 			val downPos = down.position
-			if (downPos.x >= size.width - 48.dp.toPx()) return@awaitEachGesture
+			if (rightIgnorePx > 0f && downPos.x >= size.width - rightIgnorePx) return@awaitEachGesture
+
+			val keySet = currentAllKeys.toSet()
 			var dragStartIndex = -1
 			var dragCurrentIndex = -1
 			var baseSelection = emptySet<String>()
 			var isDragging = false
 			val touchSlop = viewConfiguration.touchSlop
-			val effectiveTimeout = if (currentIsMulti) 100L else 220L
+			val isMultiAtStart = currentIsMulti
+			val longPressTimeout = if (isMultiAtStart) 110L else 220L
 
 			var isTriggered = false
 			try {
-				withTimeout(effectiveTimeout) {
+				withTimeout(longPressTimeout) {
 					while (true) {
 						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
 						val pointer = event.changes.firstOrNull { it.id == down.id }
 						if (pointer == null || !pointer.pressed) return@withTimeout
 						val diff = pointer.position - downPos
-						if (currentIsMulti && (kotlin.math.abs(diff.x) > touchSlop || diff.getDistance() > touchSlop)) {
-							isTriggered = true
-							return@withTimeout
-						}
-						if (!currentIsMulti && diff.getDistance() > touchSlop) {
-							return@withTimeout
+						if (isMultiAtStart) {
+							if (kotlin.math.abs(diff.x) > touchSlop || diff.getDistance() > touchSlop) {
+								isTriggered = true
+								return@withTimeout
+							}
+						} else {
+							if (diff.getDistance() > touchSlop) return@withTimeout
 						}
 					}
 				}
@@ -2089,26 +2129,48 @@ private fun Modifier.dragSelectablePhotoGrid(
 			}
 
 			if (isTriggered) {
-				val hitKey = findPhotoKeyAt(state, downPos.x, downPos.y)
-				val hitIndex = if (hitKey != null) currentAllPhotos.indexOfFirst { it.path == hitKey } else -1
-				if (hitIndex in currentAllPhotos.indices) {
+				val hitKey = findGridKeyAt(state, downPos.x, downPos.y, keySet)
+				val hitIndex = if (hitKey != null) currentAllKeys.indexOf(hitKey) else -1
+				if (hitIndex in currentAllKeys.indices) {
 					down.consume()
-					val entry = currentAllPhotos[hitIndex]
 					dragStartIndex = hitIndex
 					dragCurrentIndex = hitIndex
-					baseSelection = if (currentIsMulti) currentSelectedPaths else emptySet()
+					baseSelection = if (isMultiAtStart) currentSelectedPaths else emptySet()
 					isDragging = true
 					haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-					if (!currentIsMulti) {
-						currentOnEnterMultiSelect(entry)
+					if (!isMultiAtStart) {
+						currentOnEnterMultiSelect(hitKey!!)
 					} else {
-						currentOnUpdateSelectionPaths(baseSelection + entry.path)
+						currentOnUpdateSelectionPaths(baseSelection + hitKey!!)
 					}
 				}
 			}
 
-			if (isDragging && dragStartIndex in currentAllPhotos.indices) {
-				var autoScrollJob: Job? = null
+			if (isDragging && dragStartIndex in currentAllKeys.indices) {
+				var autoScrollVelocity = 0f
+				var latestPos = downPos
+
+				val autoScrollJob = scope.launch {
+					while (isActive) {
+						val vel = autoScrollVelocity
+						if (vel != 0f) {
+							state.scrollBy(vel)
+							val curPos = latestPos
+							val hitKey = findGridKeyAt(state, curPos.x, curPos.y, keySet)
+							val hitIndex = if (hitKey != null) currentAllKeys.indexOf(hitKey) else -1
+							if (hitIndex in currentAllKeys.indices && hitIndex != dragCurrentIndex) {
+								dragCurrentIndex = hitIndex
+								val start = minOf(dragStartIndex, dragCurrentIndex)
+								val end = maxOf(dragStartIndex, dragCurrentIndex)
+								val rangePaths = currentAllKeys.subList(start, end + 1).toSet()
+								currentOnUpdateSelectionPaths(baseSelection + rangePaths)
+								haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+							}
+						}
+						delay(16)
+					}
+				}
+
 				try {
 					while (true) {
 						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
@@ -2121,50 +2183,94 @@ private fun Modifier.dragSelectablePhotoGrid(
 						pointer.consume()
 						event.changes.forEach { it.consume() }
 
+						latestPos = pointer.position
 						val curX = pointer.position.x
 						val curY = pointer.position.y
 						val vh = state.layoutInfo.viewportSize.height.toFloat()
 
-						if (curY < 140f) {
-							if (autoScrollJob?.isActive != true) {
-								autoScrollJob = scope.launch {
-									while (isActive) {
-										state.scrollBy(-32f)
-										delay(16)
-									}
-								}
-							}
-						} else if (vh > 0f && curY > vh - 140f) {
-							if (autoScrollJob?.isActive != true) {
-								autoScrollJob = scope.launch {
-									while (isActive) {
-										state.scrollBy(32f)
-										delay(16)
-									}
-								}
-							}
+						if (curY < edgeZonePx) {
+							val factor = ((edgeZonePx - curY) / edgeZonePx).coerceIn(0f, 1f)
+							autoScrollVelocity = -(12f + factor * 38f)
+						} else if (vh > 0f && curY > vh - edgeZonePx) {
+							val factor = ((curY - (vh - edgeZonePx)) / edgeZonePx).coerceIn(0f, 1f)
+							autoScrollVelocity = (12f + factor * 38f)
 						} else {
-							autoScrollJob?.cancel()
-							autoScrollJob = null
+							autoScrollVelocity = 0f
 						}
 
-						val hitKey = findPhotoKeyAt(state, curX, curY)
-						val hitIndex = if (hitKey != null) currentAllPhotos.indexOfFirst { it.path == hitKey } else -1
-						if (hitIndex in currentAllPhotos.indices && hitIndex != dragCurrentIndex) {
+						val hitKey = findGridKeyAt(state, curX, curY, keySet)
+						val hitIndex = if (hitKey != null) currentAllKeys.indexOf(hitKey) else -1
+						if (hitIndex in currentAllKeys.indices && hitIndex != dragCurrentIndex) {
 							dragCurrentIndex = hitIndex
-							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(currentAllPhotos.indices)
-							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(currentAllPhotos.indices)
-							val rangePaths = currentAllPhotos.subList(start, end + 1).map { it.path }.toSet()
+							val start = minOf(dragStartIndex, dragCurrentIndex)
+							val end = maxOf(dragStartIndex, dragCurrentIndex)
+							val rangePaths = currentAllKeys.subList(start, end + 1).toSet()
 							currentOnUpdateSelectionPaths(baseSelection + rangePaths)
 							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 						}
 					}
 				} finally {
-					autoScrollJob?.cancel()
+					autoScrollJob.cancel()
 				}
 			}
 		}
 	}
+}
+
+/**
+ * DavEntry 列表适配重载
+ */
+@Composable
+private fun Modifier.dragSelectableGrid(
+	state: LazyGridState,
+	items: List<DavEntry>,
+	isMulti: Boolean,
+	selectedEntries: Set<DavEntry>,
+	onEnterMultiSelect: (DavEntry) -> Unit,
+	onUpdateSelection: (Set<DavEntry>) -> Unit,
+	rightEdgeIgnoreWidthDp: Dp = 0.dp,
+): Modifier {
+	val entryMap = remember(items) { items.associateBy { it.path } }
+	return this.dragSelectableGrid(
+		state = state,
+		allKeys = items.map { it.path },
+		isMulti = isMulti,
+		selectedPaths = selectedEntries.map { it.path }.toSet(),
+		onEnterMultiSelect = { path ->
+			entryMap[path]?.let { onEnterMultiSelect(it) }
+		},
+		onUpdateSelectionPaths = { paths ->
+			val selected = paths.mapNotNull { entryMap[it] }.toSet()
+			onUpdateSelection(selected)
+		},
+		rightEdgeIgnoreWidthDp = rightEdgeIgnoreWidthDp,
+	)
+}
+
+/**
+ * 为相册瀑布流/时间轴赋能真正的流畅滑动多选 (支持长按连选、多选模式下直接滑动跨选、边界自动滚屏)
+ */
+@Composable
+private fun Modifier.dragSelectablePhotoGrid(
+	state: LazyGridState,
+	allPhotos: List<DavEntry>,
+	isMulti: Boolean,
+	selectedPaths: Set<String>,
+	onEnterMultiSelect: (DavEntry) -> Unit,
+	onUpdateSelectionPaths: (Set<String>) -> Unit,
+): Modifier {
+	val entryMap = remember(allPhotos) { allPhotos.associateBy { it.path } }
+	return this.dragSelectableGrid(
+		state = state,
+		allKeys = allPhotos.map { it.path },
+		isMulti = isMulti,
+		selectedPaths = selectedPaths,
+		onEnterMultiSelect = { path ->
+			entryMap[path]?.let { onEnterMultiSelect(it) }
+		},
+		onUpdateSelectionPaths = onUpdateSelectionPaths,
+		rightEdgeIgnoreWidthDp = 44.dp,
+	)
 }
 
 /**
@@ -2181,6 +2287,7 @@ private fun Modifier.dragSelectableList(
 ): Modifier {
 	val haptic = LocalHapticFeedback.current
 	val scope = rememberCoroutineScope()
+	val density = LocalDensity.current
 	val currentItems by rememberUpdatedState(items)
 	val currentIsMulti by rememberUpdatedState(isMulti)
 	val currentSelectedEntries by rememberUpdatedState(selectedEntries)
@@ -2188,60 +2295,52 @@ private fun Modifier.dragSelectableList(
 	val currentOnUpdateSelection by rememberUpdatedState(onUpdateSelection)
 
 	return this.pointerInput(Unit) {
+		val edgeZonePx = with(density) { 84.dp.toPx() }
 		awaitEachGesture {
 			val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
 			val downPos = down.position
-			if (downPos.x >= size.width - 48.dp.toPx()) return@awaitEachGesture
+			if (downPos.x >= size.width - with(density) { 44.dp.toPx() }) return@awaitEachGesture
 			var dragStartIndex = -1
 			var dragCurrentIndex = -1
 			var baseSelection = emptySet<DavEntry>()
 			var isDragging = false
-			val isStartingFromCheckbox = currentIsMulti && (downPos.x > size.width * 0.60f)
-			val effectiveTimeout = when {
-				isStartingFromCheckbox -> 0L
-				currentIsMulti -> 100L
-				else -> 220L
-			}
 			val touchSlop = viewConfiguration.touchSlop
+			val isMultiAtStart = currentIsMulti
+			val longPressTimeout = if (isMultiAtStart) 110L else 220L
 
 			var isTriggered = false
-			if (effectiveTimeout == 0L) {
-				isTriggered = true
-			} else {
-				try {
-					withTimeout(effectiveTimeout) {
-						while (true) {
-							val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-							val pointer = event.changes.firstOrNull { it.id == down.id }
-							if (pointer == null || !pointer.pressed) {
-								return@withTimeout
-							}
-							val diff = pointer.position - downPos
-							if (currentIsMulti && (kotlin.math.abs(diff.x) > touchSlop || diff.getDistance() > touchSlop)) {
+			try {
+				withTimeout(longPressTimeout) {
+					while (true) {
+						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+						val pointer = event.changes.firstOrNull { it.id == down.id }
+						if (pointer == null || !pointer.pressed) return@withTimeout
+						val diff = pointer.position - downPos
+						if (isMultiAtStart) {
+							if (kotlin.math.abs(diff.x) > touchSlop || diff.getDistance() > touchSlop) {
 								isTriggered = true
 								return@withTimeout
 							}
-							if (!currentIsMulti && diff.getDistance() > touchSlop) {
-								return@withTimeout
-							}
+						} else {
+							if (diff.getDistance() > touchSlop) return@withTimeout
 						}
 					}
-				} catch (e: TimeoutCancellationException) {
-					isTriggered = true
 				}
+			} catch (e: TimeoutCancellationException) {
+				isTriggered = true
 			}
 
 			if (isTriggered) {
-				down.consume()
 				val hitIndex = findItemIndexAt(state, downPos.y)
 				if (hitIndex != null && hitIndex in currentItems.indices) {
+					down.consume()
 					val entry = currentItems[hitIndex]
 					dragStartIndex = hitIndex
 					dragCurrentIndex = hitIndex
-					baseSelection = if (currentIsMulti) currentSelectedEntries else emptySet()
+					baseSelection = if (isMultiAtStart) currentSelectedEntries else emptySet()
 					isDragging = true
 					haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-					if (!currentIsMulti) {
+					if (!isMultiAtStart) {
 						currentOnEnterMultiSelect(entry)
 					} else {
 						currentOnUpdateSelection(baseSelection + entry)
@@ -2250,7 +2349,28 @@ private fun Modifier.dragSelectableList(
 			}
 
 			if (isDragging && dragStartIndex in currentItems.indices) {
-				var autoScrollJob: Job? = null
+				var autoScrollVelocity = 0f
+				var latestY = downPos.y
+
+				val autoScrollJob = scope.launch {
+					while (isActive) {
+						val vel = autoScrollVelocity
+						if (vel != 0f) {
+							state.scrollBy(vel)
+							val hitIndex = findItemIndexAt(state, latestY)
+							if (hitIndex != null && hitIndex in currentItems.indices && hitIndex != dragCurrentIndex) {
+								dragCurrentIndex = hitIndex
+								val start = minOf(dragStartIndex, dragCurrentIndex)
+								val end = maxOf(dragStartIndex, dragCurrentIndex)
+								val rangeSet = currentItems.subList(start, end + 1).toSet()
+								currentOnUpdateSelection(baseSelection + rangeSet)
+								haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+							}
+						}
+						delay(16)
+					}
+				}
+
 				try {
 					while (true) {
 						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
@@ -2263,185 +2383,31 @@ private fun Modifier.dragSelectableList(
 						pointer.consume()
 						event.changes.forEach { it.consume() }
 
-						val curY = pointer.position.y
+						latestY = pointer.position.y
 						val vh = state.layoutInfo.viewportSize.height.toFloat()
 
-						if (curY < 120f) {
-							if (autoScrollJob?.isActive != true) {
-								autoScrollJob = scope.launch {
-									while (isActive) {
-										state.scrollBy(-24f)
-										delay(16)
-									}
-								}
-							}
-						} else if (vh > 0f && curY > vh - 120f) {
-							if (autoScrollJob?.isActive != true) {
-								autoScrollJob = scope.launch {
-									while (isActive) {
-										state.scrollBy(24f)
-										delay(16)
-									}
-								}
-							}
+						if (latestY < edgeZonePx) {
+							val factor = ((edgeZonePx - latestY) / edgeZonePx).coerceIn(0f, 1f)
+							autoScrollVelocity = -(12f + factor * 36f)
+						} else if (vh > 0f && latestY > vh - edgeZonePx) {
+							val factor = ((latestY - (vh - edgeZonePx)) / edgeZonePx).coerceIn(0f, 1f)
+							autoScrollVelocity = (12f + factor * 36f)
 						} else {
-							autoScrollJob?.cancel()
-							autoScrollJob = null
+							autoScrollVelocity = 0f
 						}
 
-						val hitIndex = findItemIndexAt(state, curY)
+						val hitIndex = findItemIndexAt(state, latestY)
 						if (hitIndex != null && hitIndex in currentItems.indices && hitIndex != dragCurrentIndex) {
 							dragCurrentIndex = hitIndex
-							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(currentItems.indices)
-							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(currentItems.indices)
+							val start = minOf(dragStartIndex, dragCurrentIndex)
+							val end = maxOf(dragStartIndex, dragCurrentIndex)
 							val rangeSet = currentItems.subList(start, end + 1).toSet()
 							currentOnUpdateSelection(baseSelection + rangeSet)
 							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 						}
 					}
 				} finally {
-					autoScrollJob?.cancel()
-				}
-			}
-		}
-	}
-}
-
-/**
- * 为 LazyVerticalGrid 赋予流畅的滑动多选能力
- */
-@Composable
-private fun Modifier.dragSelectableGrid(
-	state: LazyGridState,
-	items: List<DavEntry>,
-	isMulti: Boolean,
-	selectedEntries: Set<DavEntry>,
-	onEnterMultiSelect: (DavEntry) -> Unit,
-	onUpdateSelection: (Set<DavEntry>) -> Unit,
-): Modifier {
-	val haptic = LocalHapticFeedback.current
-	val scope = rememberCoroutineScope()
-	val currentItems by rememberUpdatedState(items)
-	val currentIsMulti by rememberUpdatedState(isMulti)
-	val currentSelectedEntries by rememberUpdatedState(selectedEntries)
-	val currentOnEnterMultiSelect by rememberUpdatedState(onEnterMultiSelect)
-	val currentOnUpdateSelection by rememberUpdatedState(onUpdateSelection)
-
-	return this.pointerInput(Unit) {
-		awaitEachGesture {
-			val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
-			val downPos = down.position
-			if (downPos.x >= size.width - 48.dp.toPx()) return@awaitEachGesture
-			var dragStartIndex = -1
-			var dragCurrentIndex = -1
-			var baseSelection = emptySet<DavEntry>()
-			var isDragging = false
-			val isStartingFromCheckbox = currentIsMulti && (downPos.x > size.width * 0.60f)
-			val effectiveTimeout = when {
-				isStartingFromCheckbox -> 0L
-				currentIsMulti -> 100L
-				else -> 220L
-			}
-			val touchSlop = viewConfiguration.touchSlop
-
-			var isTriggered = false
-			if (effectiveTimeout == 0L) {
-				isTriggered = true
-			} else {
-				try {
-					withTimeout(effectiveTimeout) {
-						while (true) {
-							val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-							val pointer = event.changes.firstOrNull { it.id == down.id }
-							if (pointer == null || !pointer.pressed) {
-								return@withTimeout
-							}
-							val diff = pointer.position - downPos
-							if (currentIsMulti && (kotlin.math.abs(diff.x) > touchSlop || diff.getDistance() > touchSlop)) {
-								isTriggered = true
-								return@withTimeout
-							}
-							if (!currentIsMulti && diff.getDistance() > touchSlop) {
-								return@withTimeout
-							}
-						}
-					}
-				} catch (e: TimeoutCancellationException) {
-					isTriggered = true
-				}
-			}
-
-			if (isTriggered) {
-				down.consume()
-				val hitIndex = findGridItemIndexAt(state, downPos.x, downPos.y)
-				if (hitIndex != null && hitIndex in currentItems.indices) {
-					val entry = currentItems[hitIndex]
-					dragStartIndex = hitIndex
-					dragCurrentIndex = hitIndex
-					baseSelection = if (currentIsMulti) currentSelectedEntries else emptySet()
-					isDragging = true
-					haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-					if (!currentIsMulti) {
-						currentOnEnterMultiSelect(entry)
-					} else {
-						currentOnUpdateSelection(baseSelection + entry)
-					}
-				}
-			}
-
-			if (isDragging && dragStartIndex in currentItems.indices) {
-				var autoScrollJob: Job? = null
-				try {
-					while (true) {
-						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
-						val pointer = event.changes.firstOrNull { it.id == down.id }
-						if (pointer == null || !pointer.pressed) {
-							pointer?.consume()
-							event.changes.forEach { it.consume() }
-							break
-						}
-						pointer.consume()
-						event.changes.forEach { it.consume() }
-
-						val curX = pointer.position.x
-						val curY = pointer.position.y
-						val vh = state.layoutInfo.viewportSize.height.toFloat()
-
-						if (curY < 120f) {
-							if (autoScrollJob?.isActive != true) {
-								autoScrollJob = scope.launch {
-									while (isActive) {
-										state.scrollBy(-24f)
-										delay(16)
-									}
-								}
-							}
-						} else if (vh > 0f && curY > vh - 120f) {
-							if (autoScrollJob?.isActive != true) {
-								autoScrollJob = scope.launch {
-									while (isActive) {
-										state.scrollBy(24f)
-										delay(16)
-									}
-								}
-							}
-						} else {
-							autoScrollJob?.cancel()
-							autoScrollJob = null
-						}
-
-						val hitIndex = findGridItemIndexAt(state, curX, curY)
-						if (hitIndex != null && hitIndex in currentItems.indices && hitIndex != dragCurrentIndex) {
-							dragCurrentIndex = hitIndex
-							val start = minOf(dragStartIndex, dragCurrentIndex).coerceIn(currentItems.indices)
-							val end = maxOf(dragStartIndex, dragCurrentIndex).coerceIn(currentItems.indices)
-							val rangeSet = currentItems.subList(start, end + 1).toSet()
-							currentOnUpdateSelection(baseSelection + rangeSet)
-							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-						}
-					}
-				} finally {
-					autoScrollJob?.cancel()
+					autoScrollJob.cancel()
 				}
 			}
 		}
@@ -3495,6 +3461,7 @@ private fun MediaStreamContent(
 	onToggleSelect: (DavEntry) -> Unit = {},
 	onEnterMultiSelect: (DavEntry) -> Unit = {},
 	onUpdateSelectionPaths: ((Set<String>) -> Unit)? = null,
+	onToggleSelectGroup: ((com.nasdrop.TimelineGroup, Boolean) -> Unit)? = null,
 	onOpenAction: (DavEntry) -> Unit = {},
 	onSelectMediaFolder: (String) -> Unit,
 	onDeleteMediaFolder: (DavEntry) -> Unit,
@@ -3666,11 +3633,14 @@ private fun MediaStreamContent(
 						.fillMaxSize()
 						.dragSelectableGrid(
 							state = state,
-							items = videos,
+							allKeys = videos.map { it.path },
 							isMulti = isMulti,
-							selectedEntries = videos.filter { selectedPaths.contains(it.path) }.toSet(),
-							onEnterMultiSelect = onEnterMultiSelect,
-							onUpdateSelection = { set -> onUpdateSelectionPaths?.invoke(set.map { it.path }.toSet()) },
+							selectedPaths = selectedPaths,
+							onEnterMultiSelect = { path ->
+								videos.firstOrNull { it.path == path }?.let { onEnterMultiSelect(it) }
+							},
+							onUpdateSelectionPaths = { onUpdateSelectionPaths?.invoke(it) },
+							rightEdgeIgnoreWidthDp = if (groups.size > 1) 44.dp else 0.dp,
 						),
 				) {
 					if (groups.isNotEmpty()) {
@@ -3681,19 +3651,42 @@ private fun MediaStreamContent(
 										.fillMaxWidth()
 										.padding(horizontal = 4.dp, vertical = 6.dp),
 									verticalAlignment = Alignment.CenterVertically,
-									horizontalArrangement = Arrangement.spacedBy(8.dp),
+									horizontalArrangement = Arrangement.SpaceBetween,
 								) {
-									Text(
-										text = group.dateTitle,
-										fontSize = 15.sp,
-										fontWeight = FontWeight.Bold,
-										color = MaterialTheme.colorScheme.onSurface,
-									)
-									Text(
-										text = "${group.count}部",
-										fontSize = 12.sp,
-										color = MaterialTheme.colorScheme.onSurfaceVariant,
-									)
+									Row(
+										verticalAlignment = Alignment.CenterVertically,
+										horizontalArrangement = Arrangement.spacedBy(8.dp),
+									) {
+										Text(
+											text = group.dateTitle,
+											fontSize = 15.sp,
+											fontWeight = FontWeight.Bold,
+											color = MaterialTheme.colorScheme.onSurface,
+										)
+										Text(
+											text = "${group.count}部",
+											fontSize = 12.sp,
+											color = MaterialTheme.colorScheme.onSurfaceVariant,
+										)
+									}
+									if (isMulti) {
+										val isAllGroupSelected = group.items.isNotEmpty() && group.items.all { selectedPaths.contains(it.path) }
+										Surface(
+											shape = RoundedCornerShape(12.dp),
+											color = if (isAllGroupSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+											onClick = {
+												onToggleSelectGroup?.invoke(group, !isAllGroupSelected)
+											},
+										) {
+											Text(
+												text = if (isAllGroupSelected) "取消全选" else "全选",
+												fontSize = 12.sp,
+												fontWeight = FontWeight.Medium,
+												color = if (isAllGroupSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+												modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+											)
+										}
+									}
 								}
 							}
 
@@ -3707,6 +3700,7 @@ private fun MediaStreamContent(
 									onToggleSelect = onToggleSelect,
 									onOpenVideo = onOpenVideo,
 									onOpenAction = onOpenAction,
+									onEnterMultiSelect = onEnterMultiSelect,
 								)
 							}
 						}
@@ -3721,6 +3715,7 @@ private fun MediaStreamContent(
 								onToggleSelect = onToggleSelect,
 								onOpenVideo = onOpenVideo,
 								onOpenAction = onOpenAction,
+								onEnterMultiSelect = onEnterMultiSelect,
 							)
 						}
 					}
@@ -3788,6 +3783,7 @@ private fun MediaStreamContent(
 	}
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun VideoCardItem(
 	video: DavEntry,
@@ -3798,6 +3794,7 @@ private fun VideoCardItem(
 	onToggleSelect: (DavEntry) -> Unit,
 	onOpenVideo: (DavEntry) -> Unit,
 	onOpenAction: (DavEntry) -> Unit,
+	onEnterMultiSelect: (DavEntry) -> Unit = {},
 ) {
 	Card(
 		shape = RoundedCornerShape(14.dp),
@@ -3805,13 +3802,22 @@ private fun VideoCardItem(
 		elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
 		modifier = Modifier
 			.fillMaxWidth()
-			.clickable {
-				if (isMulti) {
-					onToggleSelect(video)
-				} else {
-					onOpenVideo(video)
-				}
-			},
+			.combinedClickable(
+				onClick = {
+					if (isMulti) {
+						onToggleSelect(video)
+					} else {
+						onOpenVideo(video)
+					}
+				},
+				onLongClick = {
+					if (!isMulti) {
+						onEnterMultiSelect(video)
+					} else {
+						onToggleSelect(video)
+					}
+				},
+			),
 	) {
 		Column {
 			// 16:9 院线质感海报视窗：优先展示服务端缩略图（OpenList type=thumb，真图片），
