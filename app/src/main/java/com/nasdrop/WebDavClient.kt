@@ -246,6 +246,87 @@ class WebDavClient(
 		it.timeout().timeout(20, TimeUnit.SECONDS)
 	}
 
+	var isNasDropServer: Boolean = false
+		private set
+
+	fun checkServerCapability(): Boolean {
+		return try {
+			val pingUrl = baseUrl.newBuilder().encodedPath("/api/ping").build()
+			val req = Request.Builder().url(pingUrl).get().build()
+			metaCall(req).execute().use { resp ->
+				if (resp.isSuccessful) {
+					val body = resp.body?.string().orEmpty()
+					isNasDropServer = body.contains("nasdrop-server")
+					isNasDropServer
+				} else {
+					isNasDropServer = false
+					false
+				}
+			}
+		} catch (_: Exception) {
+			isNasDropServer = false
+			false
+		}
+	}
+
+	fun reportMetadata(metadata: List<PhotoMetadata>): Boolean {
+		return try {
+			val json = org.json.JSONArray()
+			for (m in metadata) {
+				val obj = org.json.JSONObject().apply {
+					put("path", m.path)
+					put("name", m.name)
+					put("dir", m.dir)
+					put("size", m.size)
+					put("modified", m.modified)
+					put("taken_at", m.takenAt)
+					put("width", m.width)
+					put("height", m.height)
+					put("has_thumb", m.hasThumbnail)
+				}
+				json.put(obj)
+			}
+			val url = baseUrl.newBuilder().encodedPath("/api/metadata").build()
+			val req = Request.Builder()
+				.url(url)
+				.post(json.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()))
+				.build()
+			metaCall(req).execute().use { it.isSuccessful }
+		} catch (_: Exception) {
+			false
+		}
+	}
+
+	fun fetchServerTimeline(limit: Int = 100, offset: Int = 0, dir: String = ""): List<DavEntry>? {
+		return try {
+			val urlBuilder = baseUrl.newBuilder().encodedPath("/api/timeline")
+				.addQueryParameter("limit", limit.toString())
+				.addQueryParameter("offset", offset.toString())
+			if (dir.isNotBlank()) urlBuilder.addQueryParameter("dir", dir)
+
+			val req = Request.Builder().url(urlBuilder.build()).get().build()
+			metaCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return null
+				val body = resp.body?.string() ?: return null
+				val obj = org.json.JSONObject(body)
+				val items = obj.optJSONArray("items") ?: return emptyList()
+				val list = mutableListOf<DavEntry>()
+				for (i in 0 until items.length()) {
+					val item = items.getJSONObject(i)
+					val p = item.getString("path")
+					val n = item.getString("name")
+					val s = item.optLong("size", 0L)
+					val m = item.optLong("modified", 0L)
+					val t = item.optLong("taken_at", 0L)
+					list.add(DavEntry(name = n, path = p, isDir = false, size = s, modified = m, takenAt = t))
+				}
+				list
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
+
 	/** 列目录。path 为空表示根。只做 PROPFIND，绝不在此阻塞拉缩略图。 */
 	fun list(path: String): List<DavEntry> {
 		val req = Request.Builder()

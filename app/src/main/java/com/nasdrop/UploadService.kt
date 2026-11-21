@@ -172,22 +172,22 @@ class UploadService : Service() {
 						if (isImage || isVideo) {
 							val exif = if (isImage) PhotoTimeParser.extractExif(this@UploadService, uri) else ExifInfo()
 							val takenAt = exif.takenAt ?: PhotoTimeParser.parseFromFilename(name) ?: startedAt
-							PhotoMetadataStore.put(
-								PhotoMetadata(
-									path = entryPath,
-									name = name,
-									dir = dirKey,
-									size = size,
-									modified = System.currentTimeMillis(),
-									takenAt = takenAt,
-									width = exif.width,
-									height = exif.height,
-									hasThumbnail = false
-								)
+							val meta = PhotoMetadata(
+								path = entryPath,
+								name = name,
+								dir = dirKey,
+								size = size,
+								modified = System.currentTimeMillis(),
+								takenAt = takenAt,
+								width = exif.width,
+								height = exif.height,
+								hasThumbnail = false
 							)
+							PhotoMetadataStore.put(meta)
 
 							scope.launch {
 								runCatching {
+									client.reportMetadata(listOf(meta))
 									LocalThumbs.ensure(this@UploadService, uri, entryPath, isVideo)
 									val thumbFile = LocalThumbs.get(entryPath)
 									if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0L) {
@@ -195,6 +195,7 @@ class UploadService : Service() {
 										runCatching { client.mkcol(thumbDir) }
 										client.uploadBytes(thumbFile.readBytes(), thumbDir, name)
 										PhotoMetadataStore.markThumbnail(entryPath, true)
+										client.reportMetadata(listOf(meta.copy(hasThumbnail = true)))
 										Log.i("UploadService", "伴生微缩图已上传: $thumbDir/$name")
 									}
 								}
