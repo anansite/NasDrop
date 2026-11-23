@@ -2930,7 +2930,12 @@ private fun PhotoTimelineContent(
 ) {
 	val currentPhotos = remember(groups) { groups.flatMap { it.items } }
 	val displayAlbums = remember(allAlbums) {
-		val visible = allAlbums.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }
+		val visible = allAlbums.filterNot {
+			it.name.startsWith(".") || it.path.contains(".thumbnails") ||
+				it.name == "默认影集" || it.name == "默认影音" ||
+				it.path == "movies/默认影集" || it.path == "movies/默认影音" ||
+				it.path.endsWith("/默认影集") || it.path.endsWith("/默认影音")
+		}
 		val custom = visible.filterNot { it.name == "默认相册" || it.path == "Photos/默认相册" }
 		val defaults = visible.filter { it.name == "默认相册" || it.path == "Photos/默认相册" }
 		custom + defaults
@@ -3496,6 +3501,14 @@ private fun AlbumFoldersGrid(
 	directUrlOf: ((String) -> String?)? = null,
 	modifier: Modifier = Modifier,
 ) {
+	val validAlbums = remember(allAlbums) {
+		allAlbums.filterNot {
+			it.name.startsWith(".") || it.path.contains(".thumbnails") ||
+				it.name == "默认影集" || it.name == "默认影音" ||
+				it.path == "movies/默认影集" || it.path == "movies/默认影音" ||
+				it.path.endsWith("/默认影集") || it.path.endsWith("/默认影音")
+		}
+	}
 	PullToRefreshBox(
 		isRefreshing = isRefreshing,
 		onRefresh = onRefresh,
@@ -3504,25 +3517,30 @@ private fun AlbumFoldersGrid(
 		LazyVerticalGrid(
 			columns = GridCells.Fixed(2),
 			contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 88.dp),
-			horizontalArrangement = Arrangement.spacedBy(12.dp),
-			verticalArrangement = Arrangement.spacedBy(12.dp),
+			horizontalArrangement = Arrangement.spacedBy(10.dp),
+			verticalArrangement = Arrangement.spacedBy(10.dp),
 			modifier = Modifier.fillMaxSize(),
 		) {
 			item(key = "__CREATE_ALBUM__") {
 				Card(
-					shape = RoundedCornerShape(16.dp),
+					shape = RoundedCornerShape(14.dp),
 					colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
-					border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+					border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
 					modifier = Modifier
 						.fillMaxWidth()
-						.clip(RoundedCornerShape(16.dp))
+						.clip(RoundedCornerShape(14.dp))
 						.clickable { onCreateAlbum() },
 				) {
-					Column(modifier = Modifier.padding(14.dp)) {
+					Row(
+						modifier = Modifier
+							.fillMaxWidth()
+							.padding(10.dp),
+						verticalAlignment = Alignment.CenterVertically,
+					) {
 						Box(
 							modifier = Modifier
-								.size(46.dp)
-								.clip(RoundedCornerShape(12.dp))
+								.size(42.dp)
+								.clip(RoundedCornerShape(10.dp))
 								.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
 							contentAlignment = Alignment.Center,
 						) {
@@ -3530,29 +3548,36 @@ private fun AlbumFoldersGrid(
 								Icons.Rounded.Add,
 								contentDescription = "新建相册",
 								tint = MaterialTheme.colorScheme.primary,
-								modifier = Modifier.size(26.dp),
+								modifier = Modifier.size(24.dp),
 							)
 						}
-						Spacer(modifier = Modifier.height(12.dp))
-						Text(
-							text = "新建相册",
-							fontSize = 15.sp,
-							fontWeight = FontWeight.Bold,
-							color = MaterialTheme.colorScheme.primary,
-							maxLines = 1,
-							overflow = TextOverflow.Ellipsis,
-						)
-						Spacer(modifier = Modifier.height(4.dp))
-						Text(
-							text = "创建专属相册",
-							fontSize = 12.sp,
-							color = MaterialTheme.colorScheme.onSurfaceVariant,
-						)
+						Spacer(modifier = Modifier.width(10.dp))
+						Column(
+							modifier = Modifier.weight(1f),
+							verticalArrangement = Arrangement.Center,
+						) {
+							Text(
+								text = "新建相册",
+								fontSize = 13.5.sp,
+								fontWeight = FontWeight.Bold,
+								color = MaterialTheme.colorScheme.primary,
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
+							)
+							Spacer(modifier = Modifier.height(2.dp))
+							Text(
+								text = "创建专属相册",
+								fontSize = 11.5.sp,
+								color = MaterialTheme.colorScheme.onSurfaceVariant,
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
+							)
+						}
 					}
 				}
 			}
 
-			items(allAlbums, key = { it.path }) { album ->
+			items(validAlbums, key = { it.path }) { album ->
 				var menuOpen by remember { mutableStateOf(false) }
 				val photoCount = remember(album.path, allPhotos) {
 					allPhotos.count { it.path.startsWith(album.path + "/") }
@@ -3564,93 +3589,99 @@ private fun AlbumFoldersGrid(
 					} else null
 				}
 				Card(
-					shape = RoundedCornerShape(16.dp),
+					shape = RoundedCornerShape(14.dp),
 					colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-					border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+					border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
 					modifier = Modifier
 						.fillMaxWidth()
-						.clip(RoundedCornerShape(16.dp))
+						.clip(RoundedCornerShape(14.dp))
 						.clickable { onSelectAlbum(album.path) },
 				) {
-					Column(modifier = Modifier.padding(14.dp)) {
-						Row(
-							modifier = Modifier.fillMaxWidth(),
-							horizontalArrangement = Arrangement.SpaceBetween,
-							verticalAlignment = Alignment.Top,
+					Row(
+						modifier = Modifier
+							.fillMaxWidth()
+							.padding(10.dp),
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						if (coverPhoto != null) {
+							FileThumbnail(
+								entry = coverPhoto,
+								urlOf = urlOf,
+								directUrlOf = directUrlOf,
+								size = 42.dp,
+							)
+						} else {
+							FileIconByEntry(
+								entry = album,
+								customIconKey = customKey,
+								size = 42.dp,
+								urlOf = urlOf,
+								directUrlOf = directUrlOf,
+							)
+						}
+						Spacer(modifier = Modifier.width(10.dp))
+						Column(
+							modifier = Modifier.weight(1f),
+							verticalArrangement = Arrangement.Center,
 						) {
-							if (coverPhoto != null) {
-								FileThumbnail(
-									entry = coverPhoto,
-									urlOf = urlOf,
-									directUrlOf = directUrlOf,
-									size = 46.dp,
-								)
-							} else {
-								FileIconByEntry(
-									entry = album,
-									customIconKey = customKey,
-									size = 46.dp,
-									urlOf = urlOf,
-									directUrlOf = directUrlOf,
+							Text(
+								text = album.name,
+								fontSize = 13.5.sp,
+								fontWeight = FontWeight.SemiBold,
+								color = MaterialTheme.colorScheme.onSurface,
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
+							)
+							Spacer(modifier = Modifier.height(2.dp))
+							Text(
+								text = "$photoCount 张照片",
+								fontSize = 11.5.sp,
+								color = MaterialTheme.colorScheme.onSurfaceVariant,
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
+							)
+						}
+						Box {
+							Box(
+								modifier = Modifier
+									.size(26.dp)
+									.clip(CircleShape)
+									.clickable { menuOpen = true },
+								contentAlignment = Alignment.Center,
+							) {
+								Icon(
+									Icons.Rounded.MoreVert,
+									contentDescription = "更多",
+									tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+									modifier = Modifier.size(16.dp)
 								)
 							}
-							Box {
-								Box(
-									modifier = Modifier
-										.size(28.dp)
-										.clip(CircleShape)
-										.clickable { menuOpen = true },
-									contentAlignment = Alignment.Center,
-								) {
-									Icon(
-										Icons.Rounded.MoreVert,
-										contentDescription = "更多",
-										tint = MaterialTheme.colorScheme.onSurfaceVariant,
-										modifier = Modifier.size(18.dp)
+							DropdownMenu(
+								expanded = menuOpen,
+								onDismissRequest = { menuOpen = false },
+							) {
+								val isDefault = album.name == "默认相册" || album.path == "Photos/默认相册" || album.path.endsWith("/默认相册")
+								if (!isDefault) {
+									DropdownMenuItem(
+										text = { Text("重命名相册") },
+										onClick = { menuOpen = false; onRenameAlbum(album) },
+										leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, null) },
 									)
 								}
-								DropdownMenu(
-									expanded = menuOpen,
-									onDismissRequest = { menuOpen = false },
-								) {
-									val isDefault = album.name == "默认相册" || album.path == "Photos/默认相册" || album.path.endsWith("/默认相册")
-									if (!isDefault) {
-										DropdownMenuItem(
-											text = { Text("重命名相册") },
-											onClick = { menuOpen = false; onRenameAlbum(album) },
-											leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, null) },
-										)
-									}
+								DropdownMenuItem(
+									text = { Text("更换图标") },
+									onClick = { menuOpen = false; onChangeIcon(album) },
+									leadingIcon = { Icon(Icons.Rounded.Edit, null) },
+								)
+								if (!isDefault) {
 									DropdownMenuItem(
-										text = { Text("更换图标") },
-										onClick = { menuOpen = false; onChangeIcon(album) },
-										leadingIcon = { Icon(Icons.Rounded.Edit, null) },
+										text = { Text("删除相册", color = MaterialTheme.colorScheme.error) },
+										onClick = { menuOpen = false; onDeleteAlbum(album) },
+										leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
 									)
-									if (!isDefault) {
-										DropdownMenuItem(
-											text = { Text("删除相册", color = MaterialTheme.colorScheme.error) },
-											onClick = { menuOpen = false; onDeleteAlbum(album) },
-											leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
-										)
-									}
 								}
 							}
 						}
-						Spacer(modifier = Modifier.height(12.dp))
-						Text(
-							text = album.name,
-							fontSize = 15.sp,
-							fontWeight = FontWeight.Bold,
-							color = MaterialTheme.colorScheme.onSurface,
-							maxLines = 1,
-							overflow = TextOverflow.Ellipsis,
-						)
-						Spacer(modifier = Modifier.height(4.dp))
-						Text(
-							text = "$photoCount 张照片",
-							fontSize = 12.sp,
-							color = MaterialTheme.colorScheme.onSurfaceVariant,
-						)
 					}
 				}
 			}
@@ -5673,14 +5704,6 @@ private fun CommercialNavigationBar(
 					inactiveIcon = Icons.Rounded.PhotoLibrary,
 					selected = currentTab == MainTab.Photos,
 					onClick = { onTabSelect(MainTab.Photos) },
-					modifier = Modifier.weight(1f),
-				)
-				CompactTabItem(
-					title = "影音",
-					activeIcon = Icons.Rounded.PlayCircle,
-					inactiveIcon = Icons.Rounded.PlayCircle,
-					selected = currentTab == MainTab.Media,
-					onClick = { onTabSelect(MainTab.Media) },
 					modifier = Modifier.weight(1f),
 				)
 			}

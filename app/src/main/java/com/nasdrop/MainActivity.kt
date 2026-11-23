@@ -173,8 +173,9 @@ class MainActivity : ComponentActivity() {
 					ImageViewer(
 						images = r.list,
 						startIndex = r.index,
-						urlOf = { vm.directUrlFor(it) },
+						urlOf = { path -> vm.directUrlFor(path) },
 						thumbOf = { vm.serverThumbUrlFor(it) },
+						audioUrlOf = { path -> vm.audioUrlFor(path) },
 						onBack = { currentEntry ->
 							if (currentEntry != null && currentEntry.path != vm.viewerInitialEntry?.path) {
 								vm.syncViewerPosition(currentEntry)
@@ -185,6 +186,10 @@ class MainActivity : ComponentActivity() {
 						onSaveToGallery = { entry, cb -> vm.saveImageToGallery(entry, cb) },
 						onShare = { entry, cb -> vm.prepareShareImage(entry, cb) },
 						onDelete = { entry -> vm.delete(entry) },
+						onSaveAudio = { entry, bytes, dur, cb -> vm.savePhotoVoiceNote(entry.path, bytes, dur, cb) },
+						onDeleteAudio = { entry, cb -> vm.deletePhotoVoiceNote(entry.path, cb) },
+						onSaveMemo = { entry, memo -> vm.savePhotoMemo(entry.path, memo) },
+						onDeleteMemo = { entry -> vm.deletePhotoMemo(entry.path) },
 					)
 				}
 
@@ -192,8 +197,13 @@ class MainActivity : ComponentActivity() {
 					VideoPlayer(
 						entry = r.entry,
 						url = vm.directUrlFor(r.entry.path),
+						audioUrlOf = { path -> vm.audioUrlFor(path) },
 						onBack = { route = Route.Browser },
 						onSaveToGallery = { entry, cb -> vm.saveVideoToGallery(entry, cb) },
+						onSaveAudio = { entry, bytes, dur, cb -> vm.savePhotoVoiceNote(entry.path, bytes, dur, cb) },
+						onDeleteAudio = { entry, cb -> vm.deletePhotoVoiceNote(entry.path, cb) },
+						onSaveMemo = { entry, memo -> vm.savePhotoMemo(entry.path, memo) },
+						onDeleteMemo = { entry -> vm.deletePhotoMemo(entry.path) },
 					)
 				}
 			}

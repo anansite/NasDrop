@@ -1,0 +1,281 @@
+package com.nasdrop
+
+import android.content.Context
+import android.media.AudioAttributes
+import android.media.MediaPlayer
+import android.media.MediaRecorder
+import android.net.Uri
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import java.io.File
+
+/**
+ * 伴随录音真实录制与播放控制器。
+ * 1. 真实 MediaRecorder 录制高清 AAC/M4A 伴随原声；
+ * 2. 真实 MediaPlayer 流式/本地音频播放与进度同步；
+ * 3. 伴随音频文件以 "." 开头就地缓存与存储，绝不将音频二进制存入数据库。
+ */
+class CompanionAudioPlayer(private val context: Context) {
+	private var mediaPlayer: MediaPlayer? = null
+	private val handler = Handler(Looper.getMainLooper())
+	private var progressRunnable: Runnable? = null
+
+	var isPlaying by mutableStateOf(false)
+		private set
+
+	var progress by mutableFloatStateOf(0f)
+		private set
+
+	var currentPositionMs by mutableIntStateOf(0)
+		private set
+
+	var durationMs by mutableIntStateOf(0)
+		private set
+
+	var currentUrl: String = ""
+		private set
+
+	fun prepare(audioUrlOrPath: String) {
+		currentUrl = audioUrlOrPath
+	}
+
+	fun togglePlayPause(fallbackDurationMs: Long = 0L) {
+		if (isPlaying) {
+			pause()
+		} else if (mediaPlayer != null) {
+			resume()
+		} else if (currentUrl.isNotEmpty()) {
+			play(currentUrl, fallbackDurationMs)
+		}
+	}
+
+	fun play(audioUrlOrPath: String, fallbackDurationMs: Long = 0L) {
+		stop()
+		try {
+			val player = MediaPlayer().apply {
+				setAudioAttributes(
+					AudioAttributes.Builder()
+						.setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+						.setUsage(AudioAttributes.USAGE_MEDIA)
+						.build()
+				)
+				if (audioUrlOrPath.startsWith("http://") || audioUrlOrPath.startsWith("https://")) {
+					setDataSource(context, Uri.parse(audioUrlOrPath))
+				} else {
+					setDataSource(audioUrlOrPath)
+				}
+				setOnPreparedListener { mp ->
+					val dur = if (mp.duration > 0) mp.duration else fallbackDurationMs.toInt()
+					this@CompanionAudioPlayer.durationMs = dur
+					mp.start()
+					this@CompanionAudioPlayer.isPlaying = true
+					startProgressTracker()
+				}
+				setOnCompletionListener {
+					stop()
+				}
+				setOnErrorListener { _, what, extra ->
+					Log.w("AudioPlayer", "MediaPlayer error: what=$what extra=$extra")
+					stop()
+					true
+				}
+				prepareAsync()
+			}
+			mediaPlayer = player
+		} catch (e: Exception) {
+			Log.e("AudioPlayer", "Failed to start audio playback for $audioUrlOrPath", e)
+			stop()
+		}
+	}
+
+	fun pause() {
+		mediaPlayer?.let {
+			if (it.isPlaying) {
+				it.pause()
+				isPlaying = false
+				stopProgressTracker()
+			}
+		}
+	}
+
+	fun resume() {
+		mediaPlayer?.let {
+			it.start()
+			isPlaying = true
+			startProgressTracker()
+		}
+	}
+
+	fun togglePlay(audioUrlOrPath: String, fallbackDurationMs: Long = 0L) {
+		if (isPlaying) {
+			pause()
+		} else if (mediaPlayer != null) {
+			resume()
+		} else {
+			play(audioUrlOrPath, fallbackDurationMs)
+		}
+	}
+
+	fun seekTo(fraction: Float) {
+		mediaPlayer?.let {
+			val target = (fraction.coerceIn(0f, 1f) * durationMs).toInt()
+			it.seekTo(target)
+			currentPositionMs = target
+			progress = fraction
+		}
+	}
+
+	fun stop() {
+		stopProgressTracker()
+		try {
+			mediaPlayer?.apply {
+				if (isPlaying) stop()
+				release()
+			}
+		} catch (_: Exception) {}
+		mediaPlayer = null
+		isPlaying = false
+		progress = 0f
+		currentPositionMs = 0
+	}
+
+	private fun startProgressTracker() {
+		stopProgressTracker()
+		val runnable = object : Runnable {
+			override fun run() {
+				val mp = mediaPlayer
+				if (mp != null && isPlaying) {
+					try {
+						val pos = mp.currentPosition
+						val dur = if (durationMs > 0) durationMs else mp.duration
+						if (dur > 0) {
+							currentPositionMs = pos
+							durationMs = dur
+							progress = (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
+						}
+						handler.postDelayed(this, 100)
+					} catch (_: Exception) {}
+				}
+			}
+		}
+		progressRunnable = runnable
+		handler.post(runnable)
+	}
+
+	private fun stopProgressTracker() {
+		progressRunnable?.let { handler.removeCallbacks(it) }
+		progressRunnable = null
+	}
+}
+
+/**
+ * 真实高清伴随录音器
+ */
+class CompanionAudioRecorder(private val context: Context) {
+	private var mediaRecorder: MediaRecorder? = null
+	private var tempFile: File? = null
+	private var startTimeMs = 0L
+
+	var isRecording by mutableStateOf(false)
+		private set
+
+	var elapsedSeconds by mutableIntStateOf(0)
+		private set
+
+	private val handler = Handler(Looper.getMainLooper())
+	private var timerRunnable: Runnable? = null
+
+	fun start(): Boolean {
+		stopRecordingInternal(false)
+		return try {
+			val file = File(context.cacheDir, "rec_${System.currentTimeMillis()}.m4a")
+			tempFile = file
+
+			val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+				MediaRecorder(context)
+			} else {
+				@Suppress("DEPRECATION")
+				MediaRecorder()
+			}
+			recorder.apply {
+				setAudioSource(MediaRecorder.AudioSource.MIC)
+				setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+				setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+				setAudioEncodingBitRate(64000)
+				setAudioSamplingRate(44100)
+				setOutputFile(file.absolutePath)
+				prepare()
+				start()
+			}
+			mediaRecorder = recorder
+			isRecording = true
+			startTimeMs = System.currentTimeMillis()
+			elapsedSeconds = 0
+
+			timerRunnable = object : Runnable {
+				override fun run() {
+					if (isRecording) {
+						elapsedSeconds = ((System.currentTimeMillis() - startTimeMs) / 1000).toInt()
+						handler.postDelayed(this, 500)
+					}
+				}
+			}
+			handler.post(timerRunnable!!)
+			true
+		} catch (e: Exception) {
+			Log.e("AudioRecorder", "Failed to start MediaRecorder: ${e.message}", e)
+			stopRecordingInternal(false)
+			false
+		}
+	}
+
+	/**
+	 * 停止并获取录音字节与毫秒时长
+	 */
+	fun stop(): Pair<ByteArray, Long>? {
+		if (!isRecording && tempFile == null) return null
+		val file = tempFile
+		val totalDurationMs = (System.currentTimeMillis() - startTimeMs).coerceAtLeast(1000L)
+		stopRecordingInternal(true)
+
+		return if (file != null && file.exists() && file.length() > 0) {
+			val bytes = file.readBytes()
+			file.delete()
+			Pair(bytes, totalDurationMs)
+		} else {
+			null
+		}
+	}
+
+	fun cancel() {
+		stopRecordingInternal(false)
+		tempFile?.delete()
+		tempFile = null
+	}
+
+	private fun stopRecordingInternal(saveFile: Boolean) {
+		timerRunnable?.let { handler.removeCallbacks(it) }
+		timerRunnable = null
+		isRecording = false
+
+		try {
+			mediaRecorder?.apply {
+				try { stop() } catch (_: Exception) {}
+				release()
+			}
+		} catch (_: Exception) {}
+		mediaRecorder = null
+
+		if (!saveFile) {
+			tempFile?.delete()
+			tempFile = null
+		}
+	}
+}

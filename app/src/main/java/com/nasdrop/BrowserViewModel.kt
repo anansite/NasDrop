@@ -53,10 +53,17 @@ enum class SortOrder(val label: String) {
 	SizeDesc("按文件大小 ↓"),
 }
 
+data class TimelineMoment(
+	val timeTitle: String,
+	val timestamp: Long,
+	val items: List<DavEntry>,
+)
+
 data class TimelineGroup(
 	val dateTitle: String,
 	val count: Int,
 	val items: List<DavEntry>,
+	val moments: List<TimelineMoment> = emptyList(),
 )
 
 data class MemoryAlbumGroup(
@@ -165,13 +172,23 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var memoryYearGroups by mutableStateOf<List<MemoryYearGroup>>(emptyList())
 		private set
 
-	/** 当前所选子相册（或全部）照片集合 */
+	/** 当前所选子相册（或全部）照片与视频集合：全面整合照片与视频，按时间倒序统一呈现在相册中 */
 	val currentAlbumPhotos: List<DavEntry>
 		get() {
-			val distinct = allPhotos.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
-			if (selectedAlbumPath.isBlank() || selectedAlbumPath == "__ALL_FOLDERS__") return distinct
-			return distinct.filter { isPathWithin(it.path, selectedAlbumPath) }
+			val allMedia = (allPhotos + allVideos).filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
+			val filtered = if (selectedAlbumPath.isBlank() || selectedAlbumPath == "__ALL_FOLDERS__") allMedia
+			else allMedia.filter { isPathWithin(it.path, selectedAlbumPath) }
+			return filtered.sortedByDescending { it.effectiveDate }
 		}
+
+	/** 整合相册与影音目录列表（滤除冗余的默认影集残留，全面归入统一相册） */
+	val combinedAlbumFolders: List<DavEntry>
+		get() = (allAlbumFolders + allMediaFolders).filterNot {
+			it.name.startsWith(".") || it.path.contains(".thumbnails") ||
+				it.name == "默认影集" || it.name == "默认影音" ||
+				it.path == "movies/默认影集" || it.path == "movies/默认影音" ||
+				it.path.endsWith("/默认影集") || it.path.endsWith("/默认影音")
+		}.distinctBy { it.path }
 
 	/** 当前所选子影集（或全部）视频集合 */
 	val currentMediaVideos: List<DavEntry>
@@ -657,6 +674,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		allPhotos = (allPhotos.filterNot { parentOf(it.path) == cleanDir || it.path.contains(".thumbnails") } + visible.filter { !it.isDir && it.isImage && !it.path.contains(".thumbnails") }).distinctBy { it.path }
 		allVideos = (allVideos.filterNot { parentOf(it.path) == cleanDir || it.path.contains(".thumbnails") } + visible.filter { !it.isDir && it.isVideo && !it.path.contains(".thumbnails") }).distinctBy { it.path }
 		allDocuments = (allDocuments.filterNot { parentOf(it.path) == cleanDir } + visible.filter { !it.isDir && it.isDocument }).distinctBy { it.path }
+		if (memoryYearGroups.isEmpty() && (allPhotos.isNotEmpty() || allVideos.isNotEmpty())) {
+			loadMemories()
+		}
 	}
 
 	/** 保存服务器原始列表，再合并仍未被目录确认的上传项；所有 UI 状态在主线程更新。 */
@@ -870,6 +890,19 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	fun directUrlFor(entryPath: String): String? {
 		@Suppress("UNUSED_VARIABLE") val revision = thumbRevision
 		return client?.directUrlFor(entryPath)?.toString() ?: urlFor(entryPath)
+	}
+
+	/**
+	 * 获取伴随录音的最佳播放地址（优先本地零延迟缓存，兜底 WebDAV 流式直链）
+	 */
+	fun audioUrlFor(companionAudioPath: String): String? {
+		val clean = companionAudioPath.trim('/')
+		if (clean.isEmpty()) return null
+		val localFile = File(File(app.cacheDir, "audio_cache"), clean.replace('/', '_'))
+		if (localFile.exists() && localFile.length() > 0) {
+			return localFile.absolutePath
+		}
+		return directUrlFor(clean)
 	}
 
 	/** 列表缩略图专用：命中 OpenList 服务端缩略图时返回真图片直链，否则回退原图地址。
@@ -1274,7 +1307,15 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				val c = clientOf(s)
 				for (item in targets) {
 					try {
+						val meta = PhotoMetadataStore.get(item.path)
+						val companionAudio = meta?.audioPath ?: if (!item.isDir && (item.isImage || item.isVideo)) {
+							PhotoMetadataStore.computeCompanionAudioPath(item.path)
+						} else null
+
 						c.delete(item.path, item.isDir)
+						if (!companionAudio.isNullOrEmpty()) {
+							runCatching { c.delete(companionAudio, false) }
+						}
 						okCount++
 						deleted += item.path
 					} catch (e: Exception) {
@@ -1286,7 +1327,13 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 			dirCache.clear()
 			LocalThumbs.forget(*deleted.toTypedArray())
-			deleted.forEach { PhotoMetadataStore.delete(it) }
+			val db = NasDb.getInstance(app)
+			deleted.forEach { p ->
+				PhotoMetadataStore.delete(p)
+				db.clearVideoProgress(p)
+				db.clearIconIfMatching(p)
+			}
+			folderIcons = db.getAllFolderIcons()
 			pruneMediaPools(deleted)
 			onDone(okCount, failCount)
 			if (failCount > 0) uiMessage = "删除完成：成功 $okCount 项，失败 $failCount 项"
@@ -1639,7 +1686,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					}.distinctBy { it.path }
 
 					val itemCal = Calendar.getInstance()
-					pool.filter { entry ->
+					val exactMatches = pool.filter { entry ->
 						val dateMs = entry.effectiveDate
 						if (dateMs <= 0L) false
 						else {
@@ -1648,6 +1695,22 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 							val m = itemCal.get(Calendar.MONTH) + 1
 							val d = itemCal.get(Calendar.DAY_OF_MONTH)
 							m == currentMonth && d == currentDay && y < currentYear
+						}
+					}
+					if (exactMatches.isNotEmpty()) {
+						exactMatches
+					} else {
+						// 容差 ±2 天，避免闰年或跨日误差
+						pool.filter { entry ->
+							val dateMs = entry.effectiveDate
+							if (dateMs <= 0L) false
+							else {
+								itemCal.timeInMillis = dateMs
+								val y = itemCal.get(Calendar.YEAR)
+								val m = itemCal.get(Calendar.MONTH) + 1
+								val d = itemCal.get(Calendar.DAY_OF_MONTH)
+								m == currentMonth && kotlin.math.abs(d - currentDay) <= 2 && y < currentYear
+							}
 						}
 					}
 				}
@@ -1873,11 +1936,30 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		if (hit(selectedMediaPath)) selectedMediaPath = ""
 
 		viewModelScope.launch {
-			val err = runRemote { it.delete(entry.path, entry.isDir) }
+			val meta = PhotoMetadataStore.get(entry.path)
+			val companionAudio = meta?.audioPath ?: if (!entry.isDir && (entry.isImage || entry.isVideo)) {
+				PhotoMetadataStore.computeCompanionAudioPath(entry.path)
+			} else null
+
+			val err = runRemote { client ->
+				client.delete(entry.path, entry.isDir)
+				if (!companionAudio.isNullOrEmpty()) {
+					runCatching { client.delete(companionAudio, false) }
+				}
+			}
 			dirCache.clear()
 			if (err == null) {
 				LocalThumbs.forget(entry.path)
-				if (entry.isDir) PhotoMetadataStore.deleteDir(entry.path) else PhotoMetadataStore.delete(entry.path)
+				val db = NasDb.getInstance(app)
+				if (entry.isDir) {
+					PhotoMetadataStore.deleteDir(entry.path)
+					db.clearIconsForDir(entry.path)
+				} else {
+					PhotoMetadataStore.delete(entry.path)
+					db.clearVideoProgress(entry.path)
+					db.clearIconIfMatching(entry.path)
+				}
+				folderIcons = db.getAllFolderIcons()
 				pruneMediaPools(listOf(entry.path))
 				if (entry.isImage || entry.isVideo) {
 					launch(Dispatchers.IO) {
@@ -2127,32 +2209,44 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val allDocs = mutableListOf<DavEntry>()
 		allDocs.addAll(rootEntries.filter { !it.isDir && it.isDocument })
 
-		// 默认相册与默认影集初始化确保存在（不在根目录直接传文件，满足需求13与语义对齐）
+		// 默认相册初始化确保存在（不在根目录直接传文件，满足语义对齐）
 		val defaultAlbum = DavEntry(name = "默认相册", path = "Photos/默认相册", isDir = true, modified = System.currentTimeMillis())
-		val defaultMedia = DavEntry(name = "默认影集", path = "movies/默认影集", isDir = true, modified = System.currentTimeMillis())
 		albums.add(defaultAlbum)
-		mediaAlbums.add(defaultMedia)
 
 		for (dir in rootEntries.filter { it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }) {
 			val sub = scanMediaDirectory(dir.path) ?: continue
 			allDocs.addAll(sub.filter { !it.isDir && it.isDocument })
 			if (dir.name.equals("Photos", true) || dir.name == "相册") {
-				// 深度递归扫描相册目录，确保各层级照片与子文件夹完整入池（满足需求14）
+				// 深度递归扫描相册目录，确保各层级照片与子文件夹完整入池
 				scanRecursiveMedia(dir.path, maxDepth = 4) { subDir ->
 					albums.add(subDir)
 				}
 			} else if (dir.name.equals("movies", true) || dir.name.equals("Videos", true) || dir.name == "影视" || dir.name == "影音" || dir.name == "视频" || dir.name == "影集") {
-				// 深度递归扫描影视目录，确保各层级视频与子分类完整入池（满足需求14）
+				// 深度递归扫描影视目录，视频分类直接作为常规相册入池
 				scanRecursiveMedia(dir.path, maxDepth = 4) { subDir ->
+					albums.add(subDir)
 					mediaAlbums.add(subDir)
 				}
 			} else {
 				if (sub.any { it.isImage && !it.path.contains(".thumbnails") }) albums.add(dir)
-				if (sub.any { it.isVideo && !it.path.contains(".thumbnails") }) mediaAlbums.add(dir)
+				if (sub.any { it.isVideo && !it.path.contains(".thumbnails") }) {
+					albums.add(dir)
+					mediaAlbums.add(dir)
+				}
 			}
 		}
-		val distinctAlbums = albums.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
-		val distinctMedia = mediaAlbums.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
+		val distinctAlbums = albums.filterNot {
+			it.name.startsWith(".") || it.path.contains(".thumbnails") ||
+				it.name == "默认影集" || it.name == "默认影音" ||
+				it.path == "movies/默认影集" || it.path == "movies/默认影音" ||
+				it.path.endsWith("/默认影集") || it.path.endsWith("/默认影音")
+		}.distinctBy { it.path }
+		val distinctMedia = mediaAlbums.filterNot {
+			it.name.startsWith(".") || it.path.contains(".thumbnails") ||
+				it.name == "默认影集" || it.name == "默认影音" ||
+				it.path == "movies/默认影集" || it.path == "movies/默认影音" ||
+				it.path.endsWith("/默认影集") || it.path.endsWith("/默认影音")
+		}.distinctBy { it.path }
 		allAlbumFolders = sortAlbums(distinctAlbums, albumOrder)
 		allMediaFolders = sortAlbums(distinctMedia, mediaOrder)
 		withContext(Dispatchers.Main) {
@@ -2192,15 +2286,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	private fun groupEntriesForTimeline(items: List<DavEntry>): List<TimelineGroup> {
 		if (items.isEmpty()) return emptyList()
-		val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA)
-		val todayStr = sdf.format(Date())
+		val sdfDay = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA)
+		val sdfTime = SimpleDateFormat("HH:mm", Locale.CHINA)
+		val todayStr = sdfDay.format(Date())
 
 		val cal = Calendar.getInstance()
 		cal.add(Calendar.DAY_OF_YEAR, -1)
-		val yesterdayStr = sdf.format(cal.time)
+		val yesterdayStr = sdfDay.format(cal.time)
 
 		val groupsMap = items.sortedByDescending { it.effectiveDate }.groupBy {
-			if (it.effectiveDate > 0) sdf.format(Date(it.effectiveDate)) else "其他"
+			if (it.effectiveDate > 0) sdfDay.format(Date(it.effectiveDate)) else "其他"
 		}
 
 		return groupsMap.map { (dateKey, list) ->
@@ -2210,8 +2305,117 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				"其他" -> "更早之前"
 				else -> dateKey
 			}
-			TimelineGroup(dateTitle = title, count = list.size, items = list)
+			// 按时刻细分 Moments，支持一天内的多个不同时间段细化呈现
+			val momentsMap = list.groupBy {
+				if (it.effectiveDate > 0) sdfTime.format(Date(it.effectiveDate)) else "--:--"
+			}
+			val moments = momentsMap.map { (timeStr, mItems) ->
+				TimelineMoment(
+					timeTitle = timeStr,
+					timestamp = mItems.firstOrNull()?.effectiveDate ?: 0L,
+					items = mItems
+				)
+			}
+			TimelineGroup(dateTitle = title, count = list.size, items = list, moments = moments)
 		}
+	}
+
+	/**
+	 * 保存照片伴随语音录音：
+	 * 1. 存放在照片同级目录下，且以"."开头命名（默认不可见隐藏文件）；
+	 * 2. 数据库仅记录路径指针与时长毫秒，绝不存音频原文（零 BLOB）；
+	 * 3. 即时刷新 PhotoMetadataStore 缓存并通知 UI。
+	 */
+	fun savePhotoVoiceNote(
+		photoPath: String,
+		audioBytes: ByteArray,
+		durationMs: Long,
+		onResult: (Boolean, String?) -> Unit = { _, _ -> },
+	) {
+		val clean = photoPath.trim('/')
+		val parentDir = if (clean.contains('/')) clean.substringBeforeLast('/') else ""
+		val fileName = clean.substringAfterLast('/')
+		val baseName = if (fileName.contains('.')) fileName.substringBeforeLast('.') else fileName
+		val dotAudioName = ".$baseName.m4a"
+		val companionPath = if (parentDir.isEmpty()) dotAudioName else "$parentDir/$dotAudioName"
+
+		viewModelScope.launch {
+			val s = app.prefs.current()
+			val err = withContext(Dispatchers.IO) {
+				try {
+					val localCacheDir = File(app.cacheDir, "audio_cache")
+					if (!localCacheDir.exists()) localCacheDir.mkdirs()
+					val localFile = File(localCacheDir, companionPath.replace('/', '_'))
+					localFile.writeBytes(audioBytes)
+				} catch (_: Exception) {}
+
+				try {
+					clientOf(s).uploadBytes(
+						bytes = audioBytes,
+						remoteDir = parentDir,
+						name = dotAudioName,
+						mimeType = "audio/mp4",
+					)
+					null
+				} catch (e: Exception) {
+					if (e is CancellationException) throw e
+					e.message ?: "上传伴随录音失败"
+				}
+			}
+
+			if (err == null) {
+				PhotoMetadataStore.updateAudio(photoPath, companionPath, durationMs)
+				uiMessage = "录音已保存"
+				onResult(true, null)
+			} else {
+				uiMessage = "保存录音失败：$err"
+				onResult(false, err)
+			}
+		}
+	}
+
+	/**
+	 * 删除照片伴随语音录音：
+	 * 1. 彻底从 WebDAV 删除同级目录下的隐藏 .m4a 文件；
+	 * 2. SQLite 置空对应字段，绝不残留。
+	 */
+	fun deletePhotoVoiceNote(
+		photoPath: String,
+		onResult: (Boolean, String?) -> Unit = { _, _ -> },
+	) {
+		val meta = PhotoMetadataStore.get(photoPath)
+		val companionPath = meta?.audioPath ?: PhotoMetadataStore.computeCompanionAudioPath(photoPath)
+
+		viewModelScope.launch {
+			val s = app.prefs.current()
+			withContext(Dispatchers.IO) {
+				try {
+					clientOf(s).delete(companionPath, false)
+				} catch (e: Exception) {
+					if (e is CancellationException) throw e
+				}
+			}
+
+			PhotoMetadataStore.updateAudio(photoPath, null, 0L)
+			uiMessage = "伴随录音已删除"
+			onResult(true, null)
+		}
+	}
+
+	/**
+	 * 保存照片文字备注（写入 SQLite，绝不写 JSON 文件）
+	 */
+	fun savePhotoMemo(photoPath: String, memo: String) {
+		PhotoMetadataStore.updateMemo(photoPath, memo)
+		uiMessage = "备注已保存"
+	}
+
+	/**
+	 * 清空删除照片文字备注
+	 */
+	fun deletePhotoMemo(photoPath: String) {
+		PhotoMetadataStore.updateMemo(photoPath, null)
+		uiMessage = "备注已清空"
 	}
 
 	private fun parentOf(p: String): String {

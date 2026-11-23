@@ -141,6 +141,26 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.material.icons.rounded.EditNote
+import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material3.OutlinedTextField
+import com.nasdrop.PhotoMetadataStore
+import com.nasdrop.CompanionAudioPlayer
+import com.nasdrop.CompanionAudioRecorder
+import com.nasdrop.hasAudio
+import com.nasdrop.hasMemo
+import com.nasdrop.memoText
+import com.nasdrop.audioDurationText
+import com.nasdrop.photoMeta
 import com.nasdrop.NasDb
 import com.nasdrop.DavEntry
 import com.nasdrop.DlnaDevice
@@ -164,10 +184,15 @@ fun ImageViewer(
 	urlOf: (String) -> String?,
 	/** 列表已加载的服务端缩略图直链，作为原图加载期间/失败时的即时垫底图 */
 	thumbOf: ((String) -> String?)? = null,
+	audioUrlOf: ((String) -> String?)? = null,
 	onBack: (DavEntry?) -> Unit,
 	onSaveToGallery: ((DavEntry, (Boolean, String) -> Unit) -> Unit)? = null,
 	onShare: ((DavEntry, (java.io.File?) -> Unit) -> Unit)? = null,
 	onDelete: ((DavEntry) -> Unit)? = null,
+	onSaveAudio: ((DavEntry, ByteArray, Long, (Boolean, String?) -> Unit) -> Unit)? = null,
+	onDeleteAudio: ((DavEntry, (Boolean, String?) -> Unit) -> Unit)? = null,
+	onSaveMemo: ((DavEntry, String) -> Unit)? = null,
+	onDeleteMemo: ((DavEntry) -> Unit)? = null,
 ) {
 	val context = LocalContext.current
 	var imageList by remember(images) { mutableStateOf(images) }
@@ -200,6 +225,37 @@ fun ImageViewer(
 	var showDeleteDialog by remember { mutableStateOf(false) }
 	var isSaving by remember { mutableStateOf(false) }
 	var isSharing by remember { mutableStateOf(false) }
+
+	// 照片伴随记忆资产状态
+	var showMemoDialog by remember { mutableStateOf(false) }
+	var memoInput by remember { mutableStateOf("") }
+	var showRecordSheet by remember { mutableStateOf(false) }
+	var showDeleteAudioConfirm by remember { mutableStateOf(false) }
+	var isMemoryExpanded by remember(pager.currentPage) { mutableStateOf(false) }
+
+	val audioPlayer = remember { CompanionAudioPlayer(context) }
+	val audioRecorder = remember { CompanionAudioRecorder(context) }
+
+	val micPermissionLauncher = rememberLauncherForActivityResult(
+		ActivityResultContracts.RequestPermission()
+	) { isGranted ->
+		if (isGranted) {
+			audioRecorder.start()
+		} else {
+			Toast.makeText(context, "需要麦克风权限才能录制伴随解说", Toast.LENGTH_SHORT).show()
+		}
+	}
+
+	DisposableEffect(current.path) {
+		val directAudio = (audioUrlOf ?: urlOf).invoke(current.path)
+		if (current.hasAudio && directAudio != null) {
+			audioPlayer.prepare(directAudio)
+		}
+		onDispose {
+			audioPlayer.stop()
+			audioRecorder.cancel()
+		}
+	}
 
 	BoxWithConstraints(
 		Modifier
@@ -246,7 +302,13 @@ fun ImageViewer(
 				name = entry.name,
 				sizeHuman = entry.sizeHuman,
 				targetSize = targetSize,
-				onToggleControls = { controlsVisible = !controlsVisible },
+				onToggleControls = {
+					if (isMemoryExpanded) {
+						isMemoryExpanded = false
+					} else {
+						controlsVisible = !controlsVisible
+					}
+				},
 				onZoomChanged = { zoomed ->
 					if (page == pager.currentPage) {
 						isCurrentZoomed = zoomed
@@ -284,6 +346,33 @@ fun ImageViewer(
 				navigationIcon = {
 					IconButton(onClick = { onBack(current) }) {
 						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回")
+					}
+				},
+				actions = {
+					IconButton(
+						onClick = {
+							memoInput = current.memoText ?: ""
+							showMemoDialog = true
+						}
+					) {
+						Icon(
+							Icons.Rounded.EditNote,
+							contentDescription = "照片备注",
+							tint = if (current.hasMemo) Color(0xFF34D399) else OnMediaBackdrop,
+							modifier = Modifier.size(24.dp),
+						)
+					}
+					IconButton(
+						onClick = {
+							showRecordSheet = true
+						}
+					) {
+						Icon(
+							Icons.Rounded.Mic,
+							contentDescription = "录制旁白",
+							tint = if (current.hasAudio) Color(0xFF38BDF8) else OnMediaBackdrop,
+							modifier = Modifier.size(24.dp),
+						)
 					}
 				},
 				colors = TopAppBarDefaults.topAppBarColors(
@@ -427,6 +516,294 @@ fun ImageViewer(
 			}
 		}
 
+		// ==========================================
+		// 伴随记忆资产（方案 1：右下角极简常驻微胶囊 + 按需展开）
+		// ==========================================
+		val currentAudioText = current.audioDurationText
+		val currentMemo = current.memoText
+		val hasAudio = current.hasAudio && !currentAudioText.isNullOrEmpty()
+		val hasMemo = current.hasMemo && !currentMemo.isNullOrEmpty()
+
+		// 1. 折叠状态：右下角 26dp 呼吸微胶囊（零遮挡，轻触即播/展开）
+		AnimatedVisibility(
+			visible = controlsVisible && (hasAudio || hasMemo) && !isMemoryExpanded,
+			enter = fadeIn() + scaleIn(),
+			exit = fadeOut() + scaleOut(),
+			modifier = Modifier
+				.align(Alignment.BottomEnd)
+				.padding(end = 16.dp, bottom = 92.dp),
+		) {
+			Surface(
+				shape = RoundedCornerShape(14.dp),
+				color = Color(0xDD0F172A),
+				border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
+				shadowElevation = 6.dp,
+			) {
+				Row(
+					modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
+				) {
+					if (hasAudio) {
+						// 原地播放/暂停小圆钮
+						Surface(
+							shape = CircleShape,
+							color = MaterialTheme.colorScheme.primary,
+							onClick = { audioPlayer.togglePlayPause() },
+							modifier = Modifier.size(22.dp),
+						) {
+							Box(contentAlignment = Alignment.Center) {
+								Icon(
+									imageVector = if (audioPlayer.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+									contentDescription = if (audioPlayer.isPlaying) "暂停" else "播放",
+									tint = Color.White,
+									modifier = Modifier.size(13.dp),
+								)
+							}
+						}
+						// 播放状态与时长
+						val curSec = audioPlayer.currentPositionMs / 1000
+						val totalSec = ((if (audioPlayer.durationMs > 0) audioPlayer.durationMs.toLong() else current.photoMeta?.audioDurationMs ?: 0L) / 1000).toInt()
+						Text(
+							text = if (audioPlayer.isPlaying) {
+								String.format(java.util.Locale.ROOT, "%02d:%02d", curSec / 60, curSec % 60)
+							} else {
+								currentAudioText ?: String.format(java.util.Locale.ROOT, "%02d:%02d", totalSec / 60, totalSec % 60)
+							},
+							fontSize = 11.sp,
+							fontWeight = FontWeight.SemiBold,
+							color = Color.White,
+							modifier = Modifier.clickable { isMemoryExpanded = true },
+						)
+					}
+
+					if (hasAudio && hasMemo) {
+						Box(
+							modifier = Modifier
+								.width(1.dp)
+								.height(10.dp)
+								.background(Color.White.copy(alpha = 0.25f))
+						)
+					}
+
+					if (hasMemo) {
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(4.dp),
+							modifier = Modifier.clickable { isMemoryExpanded = true },
+						) {
+							Text("📝", fontSize = 11.sp)
+							Text(
+								text = "故事",
+								fontSize = 11.sp,
+								fontWeight = FontWeight.Medium,
+								color = Color(0xFF34D399),
+							)
+						}
+					}
+
+					Icon(
+						imageVector = Icons.Rounded.KeyboardArrowUp,
+						contentDescription = "展开详情",
+						tint = Color(0xFF94A3B8),
+						modifier = Modifier
+							.size(14.dp)
+							.clickable { isMemoryExpanded = true },
+					)
+				}
+			}
+		}
+
+		// 2. 展开状态：微型悬浮控制条与故事备注（按需呼出，支持收起）
+		AnimatedVisibility(
+			visible = controlsVisible && (hasAudio || hasMemo) && isMemoryExpanded,
+			enter = fadeIn() + slideInVertically { it / 2 },
+			exit = fadeOut() + slideOutVertically { it / 2 },
+			modifier = Modifier
+				.align(Alignment.BottomCenter)
+				.padding(horizontal = 16.dp)
+				.padding(bottom = 92.dp)
+				.fillMaxWidth(),
+		) {
+			Column(
+				verticalArrangement = Arrangement.spacedBy(8.dp),
+				modifier = Modifier.fillMaxWidth(),
+			) {
+				// 顶部收起栏
+				Row(
+					modifier = Modifier.fillMaxWidth(),
+					horizontalArrangement = Arrangement.End,
+					verticalAlignment = Alignment.CenterVertically,
+				) {
+					Surface(
+						shape = RoundedCornerShape(10.dp),
+						color = Color(0xDE0F172A),
+						border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+						onClick = { isMemoryExpanded = false },
+					) {
+						Row(
+							modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(4.dp),
+						) {
+							Text("收起记忆", fontSize = 11.sp, color = Color(0xFF94A3B8))
+							Icon(
+								Icons.Rounded.KeyboardArrowDown,
+								contentDescription = "收起",
+								tint = Color(0xFF94A3B8),
+								modifier = Modifier.size(14.dp),
+							)
+						}
+					}
+				}
+
+				if (hasAudio) {
+					Surface(
+						shape = RoundedCornerShape(20.dp),
+						color = Color(0xEE1E293B),
+						border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+						shadowElevation = 8.dp,
+						modifier = Modifier
+							.fillMaxWidth()
+							.height(56.dp),
+					) {
+						Row(
+							modifier = Modifier
+								.fillMaxSize()
+								.padding(horizontal = 12.dp, vertical = 6.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(10.dp),
+						) {
+							// 播放 / 暂停按钮
+							Surface(
+								shape = CircleShape,
+								color = MaterialTheme.colorScheme.primary,
+								onClick = { audioPlayer.togglePlayPause() },
+								modifier = Modifier.size(36.dp),
+							) {
+								Box(contentAlignment = Alignment.Center) {
+									Icon(
+										imageVector = if (audioPlayer.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+										contentDescription = if (audioPlayer.isPlaying) "暂停伴随解说" else "播放伴随解说",
+										tint = Color.White,
+										modifier = Modifier.size(20.dp),
+									)
+								}
+							}
+
+							// 进度与微轨（无多余小圆点，干净流畅）
+							Column(modifier = Modifier.weight(1f)) {
+								BoxWithConstraints(
+									modifier = Modifier
+										.fillMaxWidth()
+										.height(24.dp)
+										.pointerInput(audioPlayer.durationMs) {
+											detectTapGestures { offset ->
+												val frac = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+												audioPlayer.seekTo(frac)
+											}
+										}
+										.pointerInput(audioPlayer.durationMs) {
+											detectDragGestures { change, _ ->
+												change.consume()
+												val frac = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
+												audioPlayer.seekTo(frac)
+											}
+										},
+									contentAlignment = Alignment.CenterStart,
+								) {
+									val wPx = constraints.maxWidth.toFloat()
+									val progress = audioPlayer.progress.coerceIn(0f, 1f)
+									val playW = (progress * wPx).coerceIn(0f, wPx)
+
+									Box(
+										modifier = Modifier
+											.fillMaxWidth()
+											.height(4.dp)
+											.clip(RoundedCornerShape(2.dp))
+											.background(Color.White.copy(alpha = 0.22f))
+									)
+									Box(
+										modifier = Modifier
+											.width(with(LocalDensity.current) { playW.toDp() })
+											.height(4.dp)
+											.clip(RoundedCornerShape(2.dp))
+											.background(MaterialTheme.colorScheme.primary)
+									)
+								}
+
+								Spacer(Modifier.height(2.dp))
+								Row(
+									modifier = Modifier.fillMaxWidth(),
+									horizontalArrangement = Arrangement.SpaceBetween,
+								) {
+									Text("伴随语音旁白", fontSize = 10.sp, color = Color(0xFF94A3B8))
+									val curSec = audioPlayer.currentPositionMs / 1000
+									val totalSec = ((if (audioPlayer.durationMs > 0) audioPlayer.durationMs.toLong() else current.photoMeta?.audioDurationMs ?: 0L) / 1000).toInt()
+									Text(
+										text = String.format(java.util.Locale.ROOT, "%02d:%02d / %02d:%02d", curSec / 60, curSec % 60, totalSec / 60, totalSec % 60),
+										fontSize = 10.sp,
+										color = Color(0xFF94A3B8),
+									)
+								}
+							}
+
+							// 单独删除伴随录音
+							IconButton(
+								onClick = { showDeleteAudioConfirm = true },
+								modifier = Modifier.size(32.dp),
+							) {
+								Icon(
+									Icons.Rounded.DeleteOutline,
+									contentDescription = "删除伴随录音",
+									tint = Color(0xFFEF4444),
+									modifier = Modifier.size(18.dp),
+								)
+							}
+						}
+					}
+				}
+
+				if (hasMemo) {
+					Surface(
+						shape = RoundedCornerShape(16.dp),
+						color = Color(0xDE0F172A),
+						border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+						shadowElevation = 6.dp,
+						modifier = Modifier
+							.fillMaxWidth()
+							.clip(RoundedCornerShape(16.dp))
+							.clickable {
+								memoInput = currentMemo ?: ""
+								showMemoDialog = true
+							},
+					) {
+						Row(
+							modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(8.dp),
+						) {
+							Box(
+								modifier = Modifier
+									.width(3.dp)
+									.height(14.dp)
+									.clip(RoundedCornerShape(1.5.dp))
+									.background(Color(0xFF34D399))
+							)
+							Text(
+								text = currentMemo ?: "",
+								fontSize = 13.sp,
+								lineHeight = 17.sp,
+								color = Color(0xFFF1F5F9),
+								maxLines = 2,
+								overflow = TextOverflow.Ellipsis,
+							)
+						}
+					}
+				}
+			}
+		}
+
 		// 底部图片属性与参数抽屉
 		if (showInfoDialog) {
 			ModalBottomSheet(
@@ -526,6 +903,170 @@ fun ImageViewer(
 				},
 			)
 		}
+
+		// 照片文字备注修改对话框
+		if (showMemoDialog) {
+			AlertDialog(
+				onDismissRequest = { showMemoDialog = false },
+				title = { Text("照片故事与备注") },
+				text = {
+					Column {
+						OutlinedTextField(
+							value = memoInput,
+							onValueChange = { memoInput = it },
+							placeholder = { Text("记录这张照片背后的故事…") },
+							modifier = Modifier.fillMaxWidth(),
+							maxLines = 5,
+						)
+					}
+				},
+				confirmButton = {
+					Button(
+						onClick = {
+							showMemoDialog = false
+							val cleanText = memoInput.trim()
+							if (cleanText.isNotEmpty()) {
+								PhotoMetadataStore.updateMemo(current.path, cleanText)
+								onSaveMemo?.invoke(current, cleanText)
+								Toast.makeText(context, "备注已保存", Toast.LENGTH_SHORT).show()
+							} else {
+								PhotoMetadataStore.updateMemo(current.path, null)
+								onDeleteMemo?.invoke(current)
+								Toast.makeText(context, "备注已清空", Toast.LENGTH_SHORT).show()
+							}
+						}
+					) {
+						Text("保存")
+					}
+				},
+				dismissButton = {
+					Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+						if (!current.memoText.isNullOrEmpty()) {
+							TextButton(
+								onClick = {
+									showMemoDialog = false
+									PhotoMetadataStore.updateMemo(current.path, null)
+									onDeleteMemo?.invoke(current)
+									Toast.makeText(context, "备注已清空", Toast.LENGTH_SHORT).show()
+								}
+							) {
+								Text("清空删除", color = MaterialTheme.colorScheme.error)
+							}
+						}
+						TextButton(onClick = { showMemoDialog = false }) {
+							Text("取消")
+						}
+					}
+				}
+			)
+		}
+
+		// 照片录音中浮层 Sheet
+		if (showRecordSheet) {
+			ModalBottomSheet(
+				onDismissRequest = { showRecordSheet = false },
+				containerColor = MaterialTheme.colorScheme.surface,
+			) {
+				Column(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(horizontal = 24.dp)
+						.padding(bottom = 36.dp),
+					horizontalAlignment = Alignment.CenterHorizontally,
+					verticalArrangement = Arrangement.spacedBy(16.dp),
+				) {
+					Text("为照片录制伴随旁白", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+					Text(
+						"录音文件存放在照片同级目录下以'.'开头（默认隐藏），数据库仅记指针，零二进制",
+						fontSize = 12.sp,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+					)
+
+					val seconds = audioRecorder.elapsedSeconds
+					Text(
+						text = String.format(java.util.Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60),
+						fontSize = 32.sp,
+						fontWeight = FontWeight.Bold,
+						fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+					)
+
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.SpaceEvenly,
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						TextButton(
+							onClick = {
+								audioRecorder.cancel()
+								showRecordSheet = false
+							}
+						) {
+							Text("取消")
+						}
+
+						Button(
+							onClick = {
+								if (!audioRecorder.isRecording) {
+									if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+										val ok = audioRecorder.start()
+										if (!ok) Toast.makeText(context, "无法启动录音", Toast.LENGTH_SHORT).show()
+									} else {
+										micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+									}
+								} else {
+									val result = audioRecorder.stop()
+									showRecordSheet = false
+									if (result != null) {
+										val (bytes, durMs) = result
+										val companionPath = PhotoMetadataStore.computeCompanionAudioPath(current.path)
+										PhotoMetadataStore.updateAudio(current.path, companionPath, durMs)
+										onSaveAudio?.invoke(current, bytes, durMs) { ok, err ->
+											Toast.makeText(context, if (ok) "伴随旁白已保存 (${durMs/1000}秒)" else (err ?: "保存失败"), Toast.LENGTH_SHORT).show()
+										}
+									} else {
+										Toast.makeText(context, "未录制有效声音", Toast.LENGTH_SHORT).show()
+									}
+								}
+							},
+							colors = ButtonDefaults.buttonColors(
+								containerColor = if (audioRecorder.isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+							)
+						) {
+							Text(if (audioRecorder.isRecording) "停止并保存" else "开始录制")
+						}
+					}
+				}
+			}
+		}
+
+		// 删除照片伴随录音确认对话框
+		if (showDeleteAudioConfirm) {
+			AlertDialog(
+				onDismissRequest = { showDeleteAudioConfirm = false },
+				title = { Text("确认删除伴随旁白？") },
+				text = { Text("将删除照片绑定的语音解说文件，照片本体保留完好。此操作不可撤销。") },
+				confirmButton = {
+					Button(
+						onClick = {
+							showDeleteAudioConfirm = false
+							audioPlayer.stop()
+							PhotoMetadataStore.updateAudio(current.path, null, 0L)
+							onDeleteAudio?.invoke(current) { ok, err ->
+								Toast.makeText(context, if (ok) "伴随旁白已删除" else (err ?: "删除失败"), Toast.LENGTH_SHORT).show()
+							}
+						},
+						colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+					) {
+						Text("确认删除")
+					}
+				},
+				dismissButton = {
+					TextButton(onClick = { showDeleteAudioConfirm = false }) {
+						Text("取消")
+					}
+				}
+			)
+		}
 	}
 }
 
@@ -602,104 +1143,56 @@ private fun ZoomableImage(
 		modifier = Modifier
 			.fillMaxSize()
 			.pointerInput(Unit) {
-				awaitEachGesture {
-					val down = awaitFirstDown(requireUnconsumed = false)
-					val startTime = System.currentTimeMillis()
-					val startPos = down.position
-					var isDragging = false
-					var isPinching = false
-					var initialDistance = 0f
-					var initialScale = scale
-					var lastCentroid = startPos
-
-					while (true) {
-						val event = awaitPointerEvent()
-						val activePointers = event.changes.filter { it.pressed }
-
-						if (activePointers.isEmpty()) {
-							// 所有手指离开屏幕
-							val elapsed = System.currentTimeMillis() - startTime
-							if (isPinching) {
-								isPinching = false
-							} else if (dismissOffsetY > 160f) {
+				detectTapGestures(
+					onDoubleTap = {
+						if (scale > 1.05f) {
+							scale = 1f
+							dx = 0f
+							dy = 0f
+						} else {
+							scale = 2.5f
+						}
+					},
+					onTap = {
+						onToggleControls()
+					}
+				)
+			}
+			.pointerInput(Unit) {
+				detectTransformGestures { _, pan, zoom, _ ->
+					if (zoom != 1f || scale > 1.05f) {
+						val newScale = (scale * zoom).coerceIn(1f, 5f)
+						scale = newScale
+						if (newScale > 1.05f) {
+							dx += pan.x
+							dy += pan.y
+						} else {
+							dx = 0f
+							dy = 0f
+						}
+					}
+				}
+			}
+			.pointerInput(scale) {
+				if (scale <= 1.05f) {
+					detectVerticalDragGestures(
+						onDragEnd = {
+							if (dismissOffsetY > 160f) {
 								onDismiss()
 							} else {
 								dismissOffsetY = 0f
-								if (!isDragging && elapsed < 450) {
-									val now = System.currentTimeMillis()
-									if (now - lastTapTime < 320) {
-										// 双击放大或复位手势
-										lastTapTime = 0L
-										if (scale > 1.05f) {
-											scale = 1f
-											dx = 0f
-											dy = 0f
-										} else {
-											scale = 2.5f
-										}
-									} else {
-										lastTapTime = now
-										onToggleControls()
-									}
-								}
 							}
-							break
-						}
-
-						if (activePointers.size >= 2) {
-							// 双指捏合自由缩放手势
-							isPinching = true
-							isDragging = true
+						},
+						onDragCancel = {
 							dismissOffsetY = 0f
-
-							val p1 = activePointers[0].position
-							val p2 = activePointers[1].position
-							val distance = kotlin.math.hypot(p1.x - p2.x, p1.y - p2.y)
-							val centroid = androidx.compose.ui.geometry.Offset((p1.x + p2.x) / 2f, (p1.y + p2.y) / 2f)
-
-							if (initialDistance <= 0f) {
-								initialDistance = distance
-								initialScale = scale
-								lastCentroid = centroid
-							} else {
-								val zoomFactor = distance / initialDistance
-								val newScale = (initialScale * zoomFactor).coerceIn(1f, 5f)
-								scale = newScale
-								val pan = centroid - lastCentroid
-								dx += pan.x
-								dy += pan.y
-								lastCentroid = centroid
-								activePointers.forEach { it.consume() }
-							}
-						} else if (activePointers.size == 1) {
-							// 单指手势
-							val change = activePointers[0]
-							val totalDeltaX = change.position.x - startPos.x
-							val totalDeltaY = change.position.y - startPos.y
-							val distSq = totalDeltaX * totalDeltaX + totalDeltaY * totalDeltaY
-
-							if (!isDragging && distSq > 1200) {
-								isDragging = true
-							}
-
-							if (isDragging && !isPinching) {
-								if (scale > 1.05f) {
-									// 放大状态下：单指滑动拖拽漫游图片画面
-									change.consume()
-									val moveDelta = change.position - change.previousPosition
-									dx += moveDelta.x
-									dy += moveDelta.y
-								} else {
-									// 原始 1x 比例下：下拉滑动手势退出大图（带防抖死区）
-									if ((totalDeltaY > 35 && totalDeltaY > kotlin.math.abs(totalDeltaX) * 1.3f) || dismissOffsetY > 0f) {
-										change.consume()
-										val moveDeltaY = change.position.y - change.previousPosition.y
-										dismissOffsetY = (dismissOffsetY + moveDeltaY).coerceAtLeast(0f)
-									}
-								}
+						},
+						onVerticalDrag = { change, dragAmount ->
+							if ((dragAmount > 0 && dismissOffsetY == 0f) || dismissOffsetY > 0f) {
+								change.consume()
+								dismissOffsetY = (dismissOffsetY + dragAmount).coerceAtLeast(0f)
 							}
 						}
-					}
+					)
 				}
 			},
 		contentAlignment = Alignment.Center,
@@ -999,14 +1492,20 @@ private fun setImmersiveFullscreen(activity: Activity?, enabled: Boolean) {
 fun VideoPlayer(
 	entry: DavEntry,
 	url: String?,
+	audioUrlOf: ((String) -> String?)? = null,
 	onBack: () -> Unit,
 	onSaveToGallery: ((DavEntry, (Boolean, String) -> Unit) -> Unit)? = null,
+	onSaveAudio: ((DavEntry, ByteArray, Long, (Boolean, String?) -> Unit) -> Unit)? = null,
+	onDeleteAudio: ((DavEntry, (Boolean, String?) -> Unit) -> Unit)? = null,
+	onSaveMemo: ((DavEntry, String) -> Unit)? = null,
+	onDeleteMemo: ((DavEntry) -> Unit)? = null,
 ) {
 	val context = LocalContext.current
 	val activity = context as? Activity
 	val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 	val http = context.app.repo.http()
 
+	var currentEntry by remember(entry) { mutableStateOf(entry) }
 	var showControls by remember { mutableStateOf(true) }
 	var isPlaying by remember { mutableStateOf(true) }
 	var isSaving by remember { mutableStateOf(false) }
@@ -1019,6 +1518,38 @@ fun VideoPlayer(
 	var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
 	var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 	var showCastSheet by remember { mutableStateOf(false) }
+
+	// 视频记忆资产状态
+	var showMemoDialog by remember { mutableStateOf(false) }
+	var memoInput by remember { mutableStateOf("") }
+	var showRecordSheet by remember { mutableStateOf(false) }
+	var showDeleteAudioConfirm by remember { mutableStateOf(false) }
+	var isMemoryExpanded by remember(currentEntry.path) { mutableStateOf(false) }
+
+	val audioPlayer = remember { com.nasdrop.CompanionAudioPlayer(context) }
+	val audioRecorder = remember { com.nasdrop.CompanionAudioRecorder(context) }
+
+	val micPermissionLauncher = rememberLauncherForActivityResult(
+		ActivityResultContracts.RequestPermission()
+	) { isGranted ->
+		if (isGranted) {
+			audioRecorder.start()
+		} else {
+			Toast.makeText(context, "需要麦克风权限才能录制伴随解说", Toast.LENGTH_SHORT).show()
+		}
+	}
+
+	DisposableEffect(currentEntry.path) {
+		val companionPath = PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
+		val directAudioUrl = audioUrlOf?.invoke(companionPath) ?: audioUrlOf?.invoke(currentEntry.path) ?: ""
+		if (currentEntry.hasAudio && directAudioUrl.isNotEmpty()) {
+			audioPlayer.prepare(directAudioUrl)
+		}
+		onDispose {
+			audioPlayer.stop()
+			audioRecorder.cancel()
+		}
+	}
 
 	val configuration = androidx.compose.ui.platform.LocalConfiguration.current
 	val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -1418,6 +1949,37 @@ fun VideoPlayer(
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
+						// 视频文字备注按钮
+						IconButton(
+							onClick = {
+								lastInteractionTime = System.currentTimeMillis()
+								memoInput = currentEntry.memoText ?: ""
+								showMemoDialog = true
+							}
+						) {
+							Icon(
+								Icons.Rounded.EditNote,
+								contentDescription = "视频备注",
+								tint = if (currentEntry.hasMemo) Color(0xFF34D399) else OnMediaBackdrop,
+								modifier = Modifier.size(24.dp),
+							)
+						}
+
+						// 视频伴随录音解说按钮
+						IconButton(
+							onClick = {
+								lastInteractionTime = System.currentTimeMillis()
+								showRecordSheet = true
+							}
+						) {
+							Icon(
+								Icons.Rounded.Mic,
+								contentDescription = "录制视频旁白",
+								tint = if (currentEntry.hasAudio) Color(0xFF38BDF8) else OnMediaBackdrop,
+								modifier = Modifier.size(24.dp),
+							)
+						}
+
 						// 保存到手机本地相册/视频目录
 						IconButton(
 							onClick = {
@@ -1657,6 +2219,294 @@ fun VideoPlayer(
 									modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
 								)
 							}
+						}
+					}
+				}
+			}
+		}
+
+		// ==========================================
+		// 视频伴随记忆资产（方案 1：右下角极简常驻微胶囊 + 按需展开）
+		// ==========================================
+		val currentAudioText = currentEntry.audioDurationText
+		val currentMemo = currentEntry.memoText
+		val hasAudio = currentEntry.hasAudio && !currentAudioText.isNullOrEmpty()
+		val hasMemo = currentEntry.hasMemo && !currentMemo.isNullOrEmpty()
+
+		// 1. 折叠状态：右下角 26dp 呼吸微胶囊（零遮挡，轻触即播/展开）
+		AnimatedVisibility(
+			visible = showControls && (hasAudio || hasMemo) && !isMemoryExpanded,
+			enter = fadeIn() + scaleIn(),
+			exit = fadeOut() + scaleOut(),
+			modifier = Modifier
+				.align(Alignment.BottomEnd)
+				.padding(end = 16.dp, bottom = 116.dp),
+		) {
+			Surface(
+				shape = RoundedCornerShape(14.dp),
+				color = Color(0xDD0F172A),
+				border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
+				shadowElevation = 6.dp,
+			) {
+				Row(
+					modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
+				) {
+					if (hasAudio) {
+						// 原地播放/暂停小圆钮
+						Surface(
+							shape = CircleShape,
+							color = MaterialTheme.colorScheme.primary,
+							onClick = { audioPlayer.togglePlayPause() },
+							modifier = Modifier.size(22.dp),
+						) {
+							Box(contentAlignment = Alignment.Center) {
+								Icon(
+									imageVector = if (audioPlayer.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+									contentDescription = if (audioPlayer.isPlaying) "暂停" else "播放",
+									tint = Color.White,
+									modifier = Modifier.size(13.dp),
+								)
+							}
+						}
+						// 播放状态与时长
+						val curSec = audioPlayer.currentPositionMs / 1000
+						val totalSec = ((if (audioPlayer.durationMs > 0) audioPlayer.durationMs.toLong() else currentEntry.photoMeta?.audioDurationMs ?: 0L) / 1000).toInt()
+						Text(
+							text = if (audioPlayer.isPlaying) {
+								String.format(java.util.Locale.ROOT, "%02d:%02d", curSec / 60, curSec % 60)
+							} else {
+								currentAudioText ?: String.format(java.util.Locale.ROOT, "%02d:%02d", totalSec / 60, totalSec % 60)
+							},
+							fontSize = 11.sp,
+							fontWeight = FontWeight.SemiBold,
+							color = Color.White,
+							modifier = Modifier.clickable { isMemoryExpanded = true },
+						)
+					}
+
+					if (hasAudio && hasMemo) {
+						Box(
+							modifier = Modifier
+								.width(1.dp)
+								.height(10.dp)
+								.background(Color.White.copy(alpha = 0.25f))
+						)
+					}
+
+					if (hasMemo) {
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(4.dp),
+							modifier = Modifier.clickable { isMemoryExpanded = true },
+						) {
+							Text("📝", fontSize = 11.sp)
+							Text(
+								text = "故事",
+								fontSize = 11.sp,
+								fontWeight = FontWeight.Medium,
+								color = Color(0xFF38BDF8),
+							)
+						}
+					}
+
+					Icon(
+						imageVector = Icons.Rounded.KeyboardArrowUp,
+						contentDescription = "展开详情",
+						tint = Color(0xFF94A3B8),
+						modifier = Modifier
+							.size(14.dp)
+							.clickable { isMemoryExpanded = true },
+					)
+				}
+			}
+		}
+
+		// 2. 展开状态：微型悬浮控制条与故事备注（按需呼出，支持收起）
+		AnimatedVisibility(
+			visible = showControls && (hasAudio || hasMemo) && isMemoryExpanded,
+			enter = fadeIn() + slideInVertically { it / 2 },
+			exit = fadeOut() + slideOutVertically { it / 2 },
+			modifier = Modifier
+				.align(Alignment.BottomCenter)
+				.padding(horizontal = 16.dp)
+				.padding(bottom = 116.dp)
+				.fillMaxWidth(),
+		) {
+			Column(
+				verticalArrangement = Arrangement.spacedBy(8.dp),
+				modifier = Modifier.fillMaxWidth(),
+			) {
+				// 顶部收起栏
+				Row(
+					modifier = Modifier.fillMaxWidth(),
+					horizontalArrangement = Arrangement.End,
+					verticalAlignment = Alignment.CenterVertically,
+				) {
+					Surface(
+						shape = RoundedCornerShape(10.dp),
+						color = Color(0xDE0F172A),
+						border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+						onClick = { isMemoryExpanded = false },
+					) {
+						Row(
+							modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(4.dp),
+						) {
+							Text("收起记忆", fontSize = 11.sp, color = Color(0xFF94A3B8))
+							Icon(
+								Icons.Rounded.KeyboardArrowDown,
+								contentDescription = "收起",
+								tint = Color(0xFF94A3B8),
+								modifier = Modifier.size(14.dp),
+							)
+						}
+					}
+				}
+
+				if (hasAudio) {
+					Surface(
+						shape = RoundedCornerShape(20.dp),
+						color = Color(0xDE0F172A),
+						border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+						shadowElevation = 8.dp,
+						modifier = Modifier
+							.fillMaxWidth()
+							.height(56.dp),
+					) {
+						Row(
+							modifier = Modifier
+								.fillMaxSize()
+								.padding(horizontal = 12.dp, vertical = 6.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(10.dp),
+						) {
+							// 播放 / 暂停按钮
+							Surface(
+								shape = CircleShape,
+								color = MaterialTheme.colorScheme.primary,
+								onClick = { audioPlayer.togglePlayPause() },
+								modifier = Modifier.size(36.dp),
+							) {
+								Box(contentAlignment = Alignment.Center) {
+									Icon(
+										imageVector = if (audioPlayer.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+										contentDescription = if (audioPlayer.isPlaying) "暂停伴随解说" else "播放伴随解说",
+										tint = Color.White,
+										modifier = Modifier.size(20.dp),
+									)
+								}
+							}
+
+							// 进度与微轨
+							Column(modifier = Modifier.weight(1f)) {
+								BoxWithConstraints(
+									modifier = Modifier
+										.fillMaxWidth()
+										.height(24.dp)
+										.pointerInput(audioPlayer.durationMs) {
+											detectTapGestures { offset ->
+												val frac = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+												audioPlayer.seekTo(frac)
+											}
+										}
+										.pointerInput(audioPlayer.durationMs) {
+											detectDragGestures { change, _ ->
+												change.consume()
+												val frac = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
+												audioPlayer.seekTo(frac)
+											}
+										},
+									contentAlignment = Alignment.CenterStart,
+								) {
+									val wPx = constraints.maxWidth.toFloat()
+									val progress = audioPlayer.progress.coerceIn(0f, 1f)
+									val playW = (progress * wPx).coerceIn(0f, wPx)
+
+									Box(
+										modifier = Modifier
+											.fillMaxWidth()
+											.height(4.dp)
+											.clip(RoundedCornerShape(2.dp))
+											.background(Color.White.copy(alpha = 0.22f))
+									)
+									Box(
+										modifier = Modifier
+											.width(with(androidx.compose.ui.platform.LocalDensity.current) { playW.toDp() })
+											.height(4.dp)
+											.clip(RoundedCornerShape(2.dp))
+											.background(MaterialTheme.colorScheme.primary)
+									)
+								}
+
+								Spacer(Modifier.height(2.dp))
+								Row(
+									modifier = Modifier.fillMaxWidth(),
+									horizontalArrangement = Arrangement.SpaceBetween,
+								) {
+									Text("伴随语音旁白", fontSize = 10.sp, color = Color(0xFF94A3B8))
+									val curSec = audioPlayer.currentPositionMs / 1000
+									val totalSec = ((if (audioPlayer.durationMs > 0) audioPlayer.durationMs.toLong() else currentEntry.photoMeta?.audioDurationMs ?: 0L) / 1000).toInt()
+									Text(
+										text = String.format(java.util.Locale.ROOT, "%02d:%02d / %02d:%02d", curSec / 60, curSec % 60, totalSec / 60, totalSec % 60),
+										fontSize = 10.sp,
+										color = Color(0xFF94A3B8),
+									)
+								}
+							}
+
+							// 单独删除伴随录音
+							androidx.compose.material3.IconButton(
+								onClick = { showDeleteAudioConfirm = true },
+								modifier = Modifier.size(32.dp),
+							) {
+								Icon(
+									Icons.Rounded.DeleteOutline,
+									contentDescription = "删除伴随录音",
+									tint = Color(0xFFEF4444),
+									modifier = Modifier.size(18.dp),
+								)
+							}
+						}
+					}
+				}
+
+				if (hasMemo) {
+					Surface(
+						shape = RoundedCornerShape(16.dp),
+						color = Color(0xDE0F172A),
+						border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+						shadowElevation = 6.dp,
+						modifier = Modifier
+							.fillMaxWidth()
+							.clip(RoundedCornerShape(16.dp))
+							.clickable {
+								memoInput = currentMemo ?: ""
+								showMemoDialog = true
+							},
+					) {
+						Row(
+							modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(8.dp),
+						) {
+							Box(
+								modifier = Modifier
+									.width(3.dp)
+									.height(14.dp)
+									.clip(RoundedCornerShape(1.5.dp))
+									.background(Color(0xFF38BDF8))
+							)
+							Text(
+								text = currentMemo ?: "",
+								fontSize = 13.sp,
+								lineHeight = 17.sp,
+								color = Color(0xFFF1F5F9),
+								maxLines = 2,
+								overflow = TextOverflow.Ellipsis,
+							)
 						}
 					}
 				}
@@ -1963,6 +2813,170 @@ fun VideoPlayer(
 					}
 				}
 			}
+		}
+
+		// 视频备注修改对话框
+		if (showMemoDialog) {
+			androidx.compose.material3.AlertDialog(
+				onDismissRequest = { showMemoDialog = false },
+				title = { Text("视频故事与备注") },
+				text = {
+					Column {
+						OutlinedTextField(
+							value = memoInput,
+							onValueChange = { memoInput = it },
+							placeholder = { Text("记录这段视频背后的难忘故事…") },
+							modifier = Modifier.fillMaxWidth(),
+							maxLines = 5,
+						)
+					}
+				},
+				confirmButton = {
+					Button(
+						onClick = {
+							showMemoDialog = false
+							val cleanText = memoInput.trim()
+							if (cleanText.isNotEmpty()) {
+								PhotoMetadataStore.updateMemo(currentEntry.path, cleanText)
+								onSaveMemo?.invoke(currentEntry, cleanText)
+								Toast.makeText(context, "视频备注已保存", Toast.LENGTH_SHORT).show()
+							} else {
+								PhotoMetadataStore.updateMemo(currentEntry.path, null)
+								onDeleteMemo?.invoke(currentEntry)
+								Toast.makeText(context, "视频备注已清空", Toast.LENGTH_SHORT).show()
+							}
+						}
+					) {
+						Text("保存")
+					}
+				},
+				dismissButton = {
+					Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+						if (!currentEntry.memoText.isNullOrEmpty()) {
+							TextButton(
+								onClick = {
+									showMemoDialog = false
+									PhotoMetadataStore.updateMemo(currentEntry.path, null)
+									onDeleteMemo?.invoke(currentEntry)
+									Toast.makeText(context, "视频备注已清空", Toast.LENGTH_SHORT).show()
+								}
+							) {
+								Text("清空删除", color = MaterialTheme.colorScheme.error)
+							}
+						}
+						TextButton(onClick = { showMemoDialog = false }) {
+							Text("取消")
+						}
+					}
+				}
+			)
+		}
+
+		// 视频录音中浮层 Sheet
+		if (showRecordSheet) {
+			ModalBottomSheet(
+				onDismissRequest = { showRecordSheet = false },
+				containerColor = MaterialTheme.colorScheme.surface,
+			) {
+				Column(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(horizontal = 24.dp)
+						.padding(bottom = 36.dp),
+					horizontalAlignment = Alignment.CenterHorizontally,
+					verticalArrangement = Arrangement.spacedBy(16.dp),
+				) {
+					Text("为视频录制伴随旁白", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+					Text(
+						"录音文件存放在视频同级目录下以'.'开头（默认隐藏），数据库仅记指针，零二进制",
+						fontSize = 12.sp,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+					)
+
+					val seconds = audioRecorder.elapsedSeconds
+					Text(
+						text = String.format(java.util.Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60),
+						fontSize = 32.sp,
+						fontWeight = FontWeight.Bold,
+						fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+					)
+
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.SpaceEvenly,
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						TextButton(
+							onClick = {
+								audioRecorder.cancel()
+								showRecordSheet = false
+							}
+						) {
+							Text("取消")
+						}
+
+						Button(
+							onClick = {
+								if (!audioRecorder.isRecording) {
+									if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+										val ok = audioRecorder.start()
+										if (!ok) Toast.makeText(context, "无法启动录音", Toast.LENGTH_SHORT).show()
+									} else {
+										micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+									}
+								} else {
+									val result = audioRecorder.stop()
+									showRecordSheet = false
+									if (result != null) {
+										val (bytes, durMs) = result
+										val companionPath = PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
+										PhotoMetadataStore.updateAudio(currentEntry.path, companionPath, durMs)
+										onSaveAudio?.invoke(currentEntry, bytes, durMs) { ok, err ->
+											Toast.makeText(context, if (ok) "伴随旁白已保存 (${durMs/1000}秒)" else (err ?: "保存失败"), Toast.LENGTH_SHORT).show()
+										}
+									} else {
+										Toast.makeText(context, "未录制有效声音", Toast.LENGTH_SHORT).show()
+									}
+								}
+							},
+							colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+								containerColor = if (audioRecorder.isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+							)
+						) {
+							Text(if (audioRecorder.isRecording) "停止并保存" else "开始录制")
+						}
+					}
+				}
+			}
+		}
+
+		// 删除伴随录音确认对话框
+		if (showDeleteAudioConfirm) {
+			androidx.compose.material3.AlertDialog(
+				onDismissRequest = { showDeleteAudioConfirm = false },
+				title = { Text("确认删除伴随旁白？") },
+				text = { Text("将删除视频绑定的语音解说文件，视频本体保留完好。此操作不可撤销。") },
+				confirmButton = {
+					Button(
+						onClick = {
+							showDeleteAudioConfirm = false
+							audioPlayer.stop()
+							PhotoMetadataStore.updateAudio(currentEntry.path, null, 0L)
+							onDeleteAudio?.invoke(currentEntry) { ok, err ->
+								Toast.makeText(context, if (ok) "伴随旁白已删除" else (err ?: "删除失败"), Toast.LENGTH_SHORT).show()
+							}
+						},
+						colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+					) {
+						Text("确认删除")
+					}
+				},
+				dismissButton = {
+					TextButton(onClick = { showDeleteAudioConfirm = false }) {
+						Text("取消")
+					}
+				}
+			)
 		}
 	}
 }

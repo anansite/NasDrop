@@ -49,8 +49,7 @@ data class DavEntry(
 	 */
 	val effectiveDate: Long get() = when {
 		takenAt > 0L -> takenAt
-		created > 0L -> created
-		else -> modified
+		else -> PhotoTimeParser.parseFromFilename(name) ?: (if (created > 0L) created else modified)
 	}
 	val ext: String get() = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
 	val sizeHuman: String get() {

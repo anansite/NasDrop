@@ -167,6 +167,32 @@ class NasDb private constructor(context: Context) : SQLiteOpenHelper(
 	}
 
 	/**
+	 * 当某张照片被删除时，若其曾被选为某个相册的自定义封面（icon_key == path），自动解绑清除，杜绝死链。
+	 */
+	fun clearIconIfMatching(path: String) {
+		val p = path.trim('/')
+		if (p.isEmpty()) return
+		try {
+			writableDatabase.delete(TABLE_FOLDER_ICONS, "$COL_ICON_KEY = ?", arrayOf(p))
+		} catch (e: Exception) {
+			android.util.Log.w("NasDb", "Failed to clear icon matching $path: ${e.message}")
+		}
+	}
+
+	/**
+	 * 当某个相册或目录被删除时，清除其对应的图标/封面映射。
+	 */
+	fun clearIconsForDir(dirPath: String) {
+		val p = dirPath.trim('/')
+		if (p.isEmpty()) return
+		try {
+			writableDatabase.delete(TABLE_FOLDER_ICONS, "$COL_PATH = ? OR $COL_PATH LIKE ?", arrayOf(p, "$p/%"))
+		} catch (e: Exception) {
+			android.util.Log.w("NasDb", "Failed to clear icons for dir $dirPath: ${e.message}")
+		}
+	}
+
+	/**
 	 * 获取所有文件夹自定义图标映射表
 	 */
 	fun getAllFolderIcons(): Map<String, String> {
