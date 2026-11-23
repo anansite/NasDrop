@@ -108,10 +108,36 @@ class Repository(private val context: Context) {
 	private fun imageClient(client: OkHttpClient): OkHttpClient = client.newBuilder()
 			.dispatcher(Dispatcher().apply {
 				maxRequests = 64
-				maxRequestsPerHost = 24
+				maxRequestsPerHost = 16
 			})
-			.connectTimeout(15, TimeUnit.SECONDS)
-			.readTimeout(45, TimeUnit.SECONDS)
+			.connectTimeout(20, TimeUnit.SECONDS)
+			.readTimeout(90, TimeUnit.SECONDS)
+			.writeTimeout(30, TimeUnit.SECONDS)
+			.retryOnConnectionFailure(true)
+			.addInterceptor { chain ->
+				val request = chain.request()
+				var response = chain.proceed(request)
+				// 若 /p/ 直链签名过期或失效返回 401/403/404，自动降级回退到标准 WebDAV /dav/ 接口重试，绝不白屏报错
+				if (!response.isSuccessful && response.code in listOf(401, 403, 404) && request.url.encodedPath.contains("/p/")) {
+					val auth = authHeader
+					val rawPath = request.url.encodedPath.substringAfter("/p/")
+					val fallbackUrl = request.url.newBuilder()
+						.encodedPath(if (request.url.encodedPath.contains("/dav/")) request.url.encodedPath else "/dav/$rawPath")
+						.removeAllQueryParameters("sign")
+						.build()
+					val retryReq = request.newBuilder()
+						.url(fallbackUrl)
+						.apply { if (auth != null) header("Authorization", auth) }
+						.build()
+					try {
+						response.close()
+						response = chain.proceed(retryReq)
+					} catch (_: Exception) {
+						// 若回退仍抛异常则保留原失败响应
+					}
+				}
+				response
+			}
 			.addNetworkInterceptor { chain ->
 				val response = chain.proceed(chain.request())
 				if (response.isSuccessful) {

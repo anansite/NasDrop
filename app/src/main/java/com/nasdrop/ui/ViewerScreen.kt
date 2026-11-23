@@ -183,6 +183,7 @@ fun ImageViewer(
 	images: List<DavEntry>,
 	startIndex: Int,
 	urlOf: (String) -> String?,
+	fallbackUrlOf: ((String) -> String?)? = null,
 	/** 列表已加载的服务端缩略图直链，作为原图加载期间/失败时的即时垫底图 */
 	thumbOf: ((String) -> String?)? = null,
 	audioUrlOf: ((String) -> String?)? = null,
@@ -271,19 +272,18 @@ fun ImageViewer(
 			Size(maxWidth.roundToPx().coerceAtLeast(1), maxHeight.roundToPx().coerceAtLeast(1))
 		}
 
-		// 预热：进入看图/翻页时轻量预拉取相邻两张原图（延迟 600ms，优先把全部网络带宽留给当前主图）
+		// 预热：进入看图/翻页时仅预取相邻两张的极速缩略图（每张仅约20KB，30ms极速就绪，绝不抢占当前主图的高清大图网络带宽）
 		val imageLoader = context.app.repo.imageLoader
 		val currentPage = pager.currentPage
-		LaunchedEffect(currentPage, targetSize) {
-			delay(600L)
+		LaunchedEffect(currentPage) {
 			val center = currentPage.coerceIn(0, imageList.lastIndex)
 			for (i in listOf(center + 1, center - 1)) {
 				val e = imageList.getOrNull(i) ?: continue
-				val u = urlOf(e.path) ?: continue
+				val tu = thumbOf?.invoke(e.path) ?: continue
 				imageLoader.enqueue(
 					ImageRequest.Builder(context)
-						.data(u)
-						.size(targetSize)
+						.data(tu)
+						.memoryCacheKey("thumb:${e.path}")
 						.build()
 				)
 			}
@@ -296,7 +296,9 @@ fun ImageViewer(
 			val entry = imageList.getOrNull(page) ?: return@HorizontalPager
 			ZoomableImage(
 				url = urlOf(entry.path),
+				fallbackUrl = fallbackUrlOf?.invoke(entry.path),
 				thumbUrl = thumbOf?.invoke(entry.path),
+				path = entry.path,
 				name = entry.name,
 				sizeHuman = entry.sizeHuman,
 				targetSize = targetSize,
@@ -1114,7 +1116,9 @@ private fun ImageDetailItem(
 @Composable
 private fun ZoomableImage(
 	url: String?,
+	fallbackUrl: String? = null,
 	thumbUrl: String?,
+	path: String = "",
 	name: String,
 	sizeHuman: String = "",
 	targetSize: Size,
@@ -1135,21 +1139,26 @@ private fun ZoomableImage(
 	val context = LocalContext.current
 
 	// 点开默认立即拉取原图；原图就绪前以缩略图垫底秒开展示，并附带轻巧加载指示
-	var isFullLoading by remember(url) { mutableStateOf(true) }
-	var isFullLoaded by remember(url) { mutableStateOf(false) }
-	var fullLoadFailed by remember(url) { mutableStateOf(false) }
-	var retryKey by remember(url) { mutableIntStateOf(0) }
+	var activeUrl by remember(url) { mutableStateOf(url) }
+	var triedFallback by remember(url) { mutableStateOf(false) }
+	var isFullLoading by remember(activeUrl) { mutableStateOf(true) }
+	var isFullLoaded by remember(activeUrl) { mutableStateOf(false) }
+	var fullLoadFailed by remember(activeUrl) { mutableStateOf(false) }
+	var retryKey by remember(activeUrl) { mutableIntStateOf(0) }
 
 	LaunchedEffect(scale) {
 		onZoomChanged(scale > 1.05f)
 	}
 
-	// 每次 url / retryKey 变化重建请求；支持重试与坏缓存穿透
-	val fullRequest = remember(url, retryKey, targetSize) {
+	// 每次 activeUrl / retryKey 变化重建请求；支持重试与坏缓存穿透
+	val fullRequest = remember(activeUrl, retryKey, targetSize) {
 		ImageRequest.Builder(context)
-			.data(url)
+			.data(activeUrl)
 			.size(targetSize)
+			.precision(coil.size.Precision.INEXACT)
+			.allowHardware(true)
 			.crossfade(true)
+			.placeholderMemoryCacheKey("thumb:$path")
 			.memoryCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
 			.diskCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
 			.build()
@@ -1234,6 +1243,8 @@ private fun ZoomableImage(
 			AsyncImage(
 				model = ImageRequest.Builder(LocalContext.current)
 					.data(thumbUrl)
+					.memoryCacheKey("thumb:$path")
+					.placeholderMemoryCacheKey("thumb:$path")
 					.crossfade(false)
 					.build(),
 				contentDescription = null,
@@ -1251,14 +1262,25 @@ private fun ZoomableImage(
 		}
 
 		// 第 2 层：高清原图（默认立即拉取，到位后自然淡入取代缩略图，提供极致清晰度）
-		if (!url.isNullOrBlank() && !fullLoadFailed) {
+		if (!activeUrl.isNullOrBlank() && !fullLoadFailed) {
 			AsyncImage(
 				model = fullRequest,
 				contentDescription = name,
 				contentScale = ContentScale.Fit,
 				onLoading = { isFullLoading = true; fullLoadFailed = false },
 				onSuccess = { isFullLoading = false; isFullLoaded = true; fullLoadFailed = false },
-				onError = { isFullLoading = false; fullLoadFailed = true },
+				onError = { errorState ->
+					android.util.Log.e("NasDropViewer", "Full image load failed: url=$activeUrl (fallback=$fallbackUrl)", errorState.result.throwable)
+					if (!triedFallback && !fallbackUrl.isNullOrBlank() && fallbackUrl != activeUrl) {
+						triedFallback = true
+						activeUrl = fallbackUrl
+						isFullLoading = true
+						fullLoadFailed = false
+					} else {
+						isFullLoading = false
+						fullLoadFailed = true
+					}
+				},
 				modifier = Modifier
 					.fillMaxSize()
 					.graphicsLayer {
@@ -1315,6 +1337,8 @@ private fun ZoomableImage(
 						.clickable {
 							fullLoadFailed = false
 							isFullLoading = true
+							triedFallback = false
+							activeUrl = url
 							retryKey++
 						},
 				) {
@@ -1342,6 +1366,8 @@ private fun ZoomableImage(
 						.clickable {
 							fullLoadFailed = false
 							isFullLoading = true
+							triedFallback = false
+							activeUrl = url
 							retryKey++
 						}
 						.padding(horizontal = 24.dp, vertical = 18.dp),

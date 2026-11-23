@@ -174,7 +174,8 @@ class MainActivity : ComponentActivity() {
 						images = r.list,
 						startIndex = r.index,
 						urlOf = { path -> vm.directUrlFor(path) },
-						thumbOf = { vm.serverThumbUrlFor(it) },
+						fallbackUrlOf = { path -> vm.urlFor(path) },
+						thumbOf = { vm.thumbnailUrlFor(it) },
 						audioUrlOf = { path -> vm.audioUrlFor(path) },
 						onBack = { currentEntry ->
 							if (currentEntry != null && currentEntry.path != vm.viewerInitialEntry?.path) {
