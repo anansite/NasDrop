@@ -231,6 +231,32 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	var showUpdateDialog by mutableStateOf(false)
 
+	// ========== NAS 系统运行指标监控 ==========
+	var systemInfo by mutableStateOf<NasSystemInfo?>(null)
+		private set
+	var isRefreshingSystem by mutableStateOf(false)
+		private set
+
+	fun refreshSystemInfo() {
+		viewModelScope.launch(Dispatchers.IO) {
+			if (isRefreshingSystem) return@launch
+			isRefreshingSystem = true
+			try {
+				val info = client?.fetchSystemInfo()
+				if (info != null) {
+					withContext(Dispatchers.Main) {
+						systemInfo = info
+					}
+				}
+			} catch (_: Exception) {
+			} finally {
+				withContext(Dispatchers.Main) {
+					isRefreshingSystem = false
+				}
+			}
+		}
+	}
+
 	// ========== 批量多选状态 ==========
 	var isPunching by mutableStateOf(false)
 		private set
@@ -447,6 +473,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 		startUnifiedLinkMonitor()
 		cleanupOldCache()
+		viewModelScope.launch {
+			refreshSystemInfo()
+		}
 		viewModelScope.launch {
 			app.prefs.settings.collect { s ->
 				connectionMode = s.connectionMode
@@ -1557,7 +1586,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 							ensureMediaScanned(force = true)
 							mediaScanJob?.join()
 						}
-					} else doRefresh()
+					} else {
+						if (currentTab == MainTab.Home) {
+							refreshSystemInfo()
+						}
+						doRefresh()
+					}
 				val elapsed = System.currentTimeMillis() - start
 				if (elapsed < 500) {
 					delay(500 - elapsed)

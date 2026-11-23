@@ -471,6 +471,7 @@ fun BrowserScreen(
 								onOpenVideo = onOpenVideo,
 								urlOf = { vm.thumbnailUrlFor(it) },
 								directUrlOf = { vm.directUrlFor(it) },
+								onOpenSettings = onOpenSettings,
 							)
 						}
 
@@ -3058,6 +3059,7 @@ private fun HomeScreenContent(
 	onOpenVideo: (DavEntry) -> Unit,
 	urlOf: (String) -> String?,
 	directUrlOf: (String) -> String?,
+	onOpenSettings: () -> Unit = {},
 ) {
 	val allMedia = remember(vm.allPhotos, vm.allVideos) {
 		(vm.allPhotos + vm.allVideos).distinctBy { it.path }
@@ -3077,15 +3079,18 @@ private fun HomeScreenContent(
 			verticalArrangement = Arrangement.spacedBy(16.dp),
 			contentPadding = PaddingValues(top = 12.dp, bottom = 96.dp),
 		) {
-			// 1. NAS 运行概览与数据统计卡片
+			// 1. NAS 运行概览与数据统计卡片（点击直达系统与设置监控中心）
 			item(key = "home_stats_card") {
 				Surface(
 					shape = RoundedCornerShape(20.dp),
 					color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
 					border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-					modifier = Modifier.fillMaxWidth(),
+					modifier = Modifier
+						.fillMaxWidth()
+						.clip(RoundedCornerShape(20.dp))
+						.clickable { onOpenSettings() },
 				) {
-					Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+					Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
 						Row(
 							modifier = Modifier.fillMaxWidth(),
 							verticalAlignment = Alignment.CenterVertically,
@@ -3102,7 +3107,7 @@ private fun HomeScreenContent(
 									modifier = Modifier.size(20.dp),
 								)
 								Text(
-									"家庭私有云存储",
+									text = vm.systemInfo?.hostname?.ifBlank { "家庭私有云存储" } ?: "家庭私有云存储",
 									style = MaterialTheme.typography.titleMedium,
 									fontWeight = FontWeight.Bold,
 								)
@@ -3111,12 +3116,56 @@ private fun HomeScreenContent(
 								shape = RoundedCornerShape(12.dp),
 								color = Color(0xFF10B981).copy(alpha = 0.15f),
 							) {
-								Text(
-									"运行正常",
-									fontSize = 11.sp,
-									fontWeight = FontWeight.SemiBold,
-									color = Color(0xFF059669),
-									modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+								Row(
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.spacedBy(4.dp),
+									modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+								) {
+									Box(
+										modifier = Modifier
+											.size(6.dp)
+											.clip(CircleShape)
+											.background(Color(0xFF10B981)),
+									)
+									Text(
+										text = if (vm.systemInfo != null) "运行正常 · 查看系统" else "运行正常",
+										fontSize = 11.sp,
+										fontWeight = FontWeight.SemiBold,
+										color = Color(0xFF059669),
+									)
+								}
+							}
+						}
+
+						// 若有 systemInfo，展示直观的存储空间池进度条与 CPU/内存指标
+						val sys = vm.systemInfo
+						if (sys != null && sys.disk.total > 0) {
+							val diskPct = (sys.disk.percent / 100.0).toFloat().coerceIn(0f, 1f)
+							Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+								Row(
+									modifier = Modifier.fillMaxWidth(),
+									horizontalArrangement = Arrangement.SpaceBetween,
+								) {
+									Text(
+										"存储空间: 已用 ${NasSystemInfo.formatBytes(sys.disk.used)} / ${NasSystemInfo.formatBytes(sys.disk.total)}",
+										fontSize = 11.sp,
+										color = MaterialTheme.colorScheme.onSurfaceVariant,
+									)
+									Text(
+										"CPU ${String.format("%.0f%%", sys.cpuPercent)} · 内存 ${String.format("%.0f%%", sys.memory.percent)}",
+										fontSize = 11.sp,
+										fontWeight = FontWeight.Medium,
+										color = MaterialTheme.colorScheme.primary,
+									)
+								}
+								LinearProgressIndicator(
+									progress = { diskPct },
+									modifier = Modifier
+										.fillMaxWidth()
+										.height(4.dp)
+										.clip(RoundedCornerShape(2.dp)),
+									color = MaterialTheme.colorScheme.primary,
+									trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
 								)
 							}
 						}
@@ -3149,7 +3198,7 @@ private fun HomeScreenContent(
 							}
 							HomeStatItem(
 								number = memoCount.toString(),
-								label = "记忆伴随语",
+								label = "伴随语音",
 								onClick = {},
 							)
 						}

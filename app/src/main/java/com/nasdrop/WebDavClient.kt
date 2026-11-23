@@ -383,6 +383,55 @@ class WebDavClient(
 		}
 	}
 
+	/** 获取 NAS 宿主机系统资源与运行状态指标（CPU、内存、存储池空间、运行时间、主机名等） */
+	fun fetchSystemInfo(): NasSystemInfo? {
+		return try {
+			val url = effectiveBase.newBuilder().encodedPath("/api/system").build()
+			val req = Request.Builder().url(url).get().build()
+			metaCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return null
+				val body = resp.body?.string() ?: return null
+				val obj = org.json.JSONObject(body)
+				val memObj = obj.optJSONObject("memory")
+				val diskObj = obj.optJSONObject("disk")
+				val loadAvgArr = obj.optJSONArray("load_avg")
+				val loadAvg = mutableListOf<Double>()
+				if (loadAvgArr != null) {
+					for (i in 0 until loadAvgArr.length()) {
+						loadAvg.add(loadAvgArr.optDouble(i, 0.0))
+					}
+				}
+				NasSystemInfo(
+					service = obj.optString("service", "nasdrop-server"),
+					version = obj.optString("version", ""),
+					hostname = obj.optString("hostname", ""),
+					os = obj.optString("os", ""),
+					arch = obj.optString("arch", ""),
+					cpuCores = obj.optInt("cpu_cores", 0),
+					cpuPercent = obj.optDouble("cpu_percent", 0.0),
+					loadAvg = loadAvg,
+					uptimeSeconds = obj.optLong("uptime_seconds", 0L),
+					serverUptimeSeconds = obj.optLong("server_uptime_seconds", 0L),
+					memory = NasSystemInfo.MemoryMetrics(
+						total = memObj?.optLong("total", 0L) ?: 0L,
+						used = memObj?.optLong("used", 0L) ?: 0L,
+						available = memObj?.optLong("available", 0L) ?: 0L,
+						percent = memObj?.optDouble("percent", 0.0) ?: 0.0,
+					),
+					disk = NasSystemInfo.DiskMetrics(
+						path = diskObj?.optString("path", "") ?: "",
+						total = diskObj?.optLong("total", 0L) ?: 0L,
+						used = diskObj?.optLong("used", 0L) ?: 0L,
+						free = diskObj?.optLong("free", 0L) ?: 0L,
+						percent = diskObj?.optDouble("percent", 0.0) ?: 0.0,
+					),
+				)
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
+
 	/** 列目录。path 为空表示根。只做 PROPFIND，绝不在此阻塞拉缩略图。 */
 	fun list(path: String): List<DavEntry> {
 		val req = Request.Builder()

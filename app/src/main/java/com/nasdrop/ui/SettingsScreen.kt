@@ -3,13 +3,11 @@ package com.nasdrop.ui
 import android.widget.Toast
 import android.util.Log
 import androidx.activity.compose.BackHandler
-import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -22,20 +20,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.net.toUri
 import com.nasdrop.BrowserViewModel
 import com.nasdrop.ConnectionMode
+import com.nasdrop.NasSystemInfo
 import com.nasdrop.Settings
 import com.nasdrop.app
 import kotlinx.coroutines.Dispatchers
@@ -102,6 +98,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 		currentPalette = s.themePalette
 		loaded = true
 		calculateCacheSize()
+		vm.refreshSystemInfo()
 	}
 
 	fun save(s: Settings) {
@@ -114,8 +111,8 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 					// 保留其他流程最近更新的上传目录，所有连接字段通过一次事务提交。
 					app.prefs.save(s.copy(lastDir = app.prefs.current().lastDir))
 				}
-					// 所有存活页面观察同一配置流，由各自缓存失效流程重新加载。
-					Toast.makeText(context, "设置已保存", Toast.LENGTH_SHORT).show()
+				Toast.makeText(context, "设置已保存并生效", Toast.LENGTH_SHORT).show()
+				vm.refreshSystemInfo()
 				onBack()
 			} catch (e: CancellationException) {
 				throw e
@@ -134,7 +131,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 			TopAppBar(
 				title = {
 					Text(
-						text = "服务器与偏好设置",
+						text = "系统与设置",
 						fontSize = 17.sp,
 						fontWeight = FontWeight.Bold,
 						color = colors.onSurface,
@@ -146,6 +143,18 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 					}
 				},
 				actions = {
+					// 刷新系统指标按钮
+					IconButton(
+						onClick = { vm.refreshSystemInfo() },
+						enabled = !vm.isRefreshingSystem,
+					) {
+						if (vm.isRefreshingSystem) {
+							CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = colors.primary)
+						} else {
+							Icon(Icons.Rounded.Refresh, contentDescription = "刷新系统指标", tint = colors.onSurfaceVariant)
+						}
+					}
+					// 诊断日志按钮
 					IconButton(onClick = {
 						scope.launch(Dispatchers.IO) {
 							val text = vm.logs().ifEmpty { "（暂无日志）" }
@@ -167,7 +176,381 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 				.padding(horizontal = 16.dp, vertical = 8.dp),
 			verticalArrangement = Arrangement.spacedBy(14.dp),
 		) {
-			// ==================== 卡片 1: NAS 主机与品牌预设 ====================
+			// ==================== 卡片 1: NAS 硬件与系统监控看板 ====================
+			Card(
+				shape = RoundedCornerShape(18.dp),
+				colors = CardDefaults.cardColors(containerColor = colors.surface),
+				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+				modifier = Modifier.fillMaxWidth(),
+			) {
+				Column(modifier = Modifier.padding(16.dp)) {
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.SpaceBetween,
+					) {
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(8.dp),
+						) {
+							Box(
+								modifier = Modifier
+									.size(32.dp)
+									.clip(RoundedCornerShape(8.dp))
+									.background(colors.primary.copy(alpha = 0.12f)),
+								contentAlignment = Alignment.Center,
+							) {
+								Icon(
+									imageVector = Icons.Rounded.Dns,
+									contentDescription = null,
+									tint = colors.primary,
+									modifier = Modifier.size(18.dp),
+								)
+							}
+							Column {
+								Text(
+									text = "NAS 系统运行看板",
+									fontSize = 14.sp,
+									fontWeight = FontWeight.ExtraBold,
+									color = colors.onSurface,
+								)
+								Text(
+									text = if (vm.systemInfo != null) "已连接 · 实时动态更新" else "正在获取系统资源指标…",
+									fontSize = 11.sp,
+									color = colors.onSurfaceVariant,
+								)
+							}
+						}
+
+						if (vm.isRefreshingSystem) {
+							CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = colors.primary)
+						} else {
+							Surface(
+								shape = RoundedCornerShape(8.dp),
+								color = if (vm.systemInfo != null) Color(0xFF10B981).copy(alpha = 0.15f) else colors.surfaceVariant.copy(alpha = 0.5f),
+								modifier = Modifier.clickable { vm.refreshSystemInfo() },
+							) {
+								Row(
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.spacedBy(4.dp),
+									modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+								) {
+									Box(
+										modifier = Modifier
+											.size(6.dp)
+											.clip(CircleShape)
+											.background(if (vm.systemInfo != null) Color(0xFF10B981) else colors.onSurfaceVariant),
+									)
+									Text(
+										text = if (vm.systemInfo != null) "在线" else "探测中",
+										fontSize = 10.sp,
+										fontWeight = FontWeight.SemiBold,
+										color = if (vm.systemInfo != null) Color(0xFF059669) else colors.onSurfaceVariant,
+									)
+								}
+							}
+						}
+					}
+
+					Spacer(modifier = Modifier.height(14.dp))
+
+					val info = vm.systemInfo
+					if (info != null) {
+						// 1. 存储空间使用率
+						val disk = info.disk
+						val diskPct = (disk.percent / 100.0).toFloat().coerceIn(0f, 1f)
+						Surface(
+							shape = RoundedCornerShape(12.dp),
+							color = colors.surfaceVariant.copy(alpha = 0.35f),
+							modifier = Modifier.fillMaxWidth(),
+						) {
+							Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+								Row(
+									modifier = Modifier.fillMaxWidth(),
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.SpaceBetween,
+								) {
+									Row(
+										verticalAlignment = Alignment.CenterVertically,
+										horizontalArrangement = Arrangement.spacedBy(6.dp),
+									) {
+										Icon(Icons.Rounded.Storage, contentDescription = null, tint = colors.primary, modifier = Modifier.size(16.dp))
+										Text("存储空间池", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = colors.onSurface)
+									}
+									Text(
+										String.format("%.1f%%", disk.percent),
+										fontSize = 13.sp,
+										fontWeight = FontWeight.ExtraBold,
+										color = if (disk.percent > 90.0) colors.error else colors.primary,
+									)
+								}
+								LinearProgressIndicator(
+									progress = { diskPct },
+									modifier = Modifier
+										.fillMaxWidth()
+										.height(6.dp)
+										.clip(RoundedCornerShape(3.dp)),
+									color = if (disk.percent > 90.0) colors.error else colors.primary,
+									trackColor = colors.outlineVariant.copy(alpha = 0.3f),
+								)
+								Row(
+									modifier = Modifier.fillMaxWidth(),
+									horizontalArrangement = Arrangement.SpaceBetween,
+								) {
+									Text(
+										"已用 ${NasSystemInfo.formatBytes(disk.used)} / 总计 ${NasSystemInfo.formatBytes(disk.total)}",
+										fontSize = 11.sp,
+										color = colors.onSurfaceVariant,
+									)
+									Text(
+										"剩余 ${NasSystemInfo.formatBytes(disk.free)} 可用",
+										fontSize = 11.sp,
+										fontWeight = FontWeight.Medium,
+										color = colors.primary,
+									)
+								}
+							}
+						}
+
+						Spacer(modifier = Modifier.height(10.dp))
+
+						// 2. CPU 负载与内存 RAM 双卡
+						Row(
+							modifier = Modifier.fillMaxWidth(),
+							horizontalArrangement = Arrangement.spacedBy(10.dp),
+						) {
+							// CPU 卡片
+							Surface(
+								shape = RoundedCornerShape(12.dp),
+								color = colors.surfaceVariant.copy(alpha = 0.35f),
+								modifier = Modifier.weight(1f),
+							) {
+								Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+									Row(
+										modifier = Modifier.fillMaxWidth(),
+										verticalAlignment = Alignment.CenterVertically,
+										horizontalArrangement = Arrangement.SpaceBetween,
+									) {
+										Text("CPU 负载", fontSize = 11.5.sp, color = colors.onSurfaceVariant)
+										Text(
+											String.format("%.1f%%", info.cpuPercent),
+											fontSize = 13.sp,
+											fontWeight = FontWeight.Bold,
+											color = colors.primary,
+										)
+									}
+									LinearProgressIndicator(
+										progress = { (info.cpuPercent / 100.0).toFloat().coerceIn(0f, 1f) },
+										modifier = Modifier
+											.fillMaxWidth()
+											.height(5.dp)
+											.clip(RoundedCornerShape(2.5.dp)),
+										color = colors.primary,
+										trackColor = colors.outlineVariant.copy(alpha = 0.3f),
+									)
+									Text(
+										"${info.cpuCores} 核 · 负载 ${info.loadAvg.firstOrNull()?.let { String.format("%.2f", it) } ?: "--"}",
+										fontSize = 10.sp,
+										color = colors.onSurfaceVariant.copy(alpha = 0.8f),
+										maxLines = 1,
+									)
+								}
+							}
+
+							// RAM 卡片
+							Surface(
+								shape = RoundedCornerShape(12.dp),
+								color = colors.surfaceVariant.copy(alpha = 0.35f),
+								modifier = Modifier.weight(1f),
+							) {
+								Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+									Row(
+										modifier = Modifier.fillMaxWidth(),
+										verticalAlignment = Alignment.CenterVertically,
+										horizontalArrangement = Arrangement.SpaceBetween,
+									) {
+										Text("运行内存 RAM", fontSize = 11.5.sp, color = colors.onSurfaceVariant)
+										Text(
+											String.format("%.1f%%", info.memory.percent),
+											fontSize = 13.sp,
+											fontWeight = FontWeight.Bold,
+											color = colors.primary,
+										)
+									}
+									LinearProgressIndicator(
+										progress = { (info.memory.percent / 100.0).toFloat().coerceIn(0f, 1f) },
+										modifier = Modifier
+											.fillMaxWidth()
+											.height(5.dp)
+											.clip(RoundedCornerShape(2.5.dp)),
+										color = colors.primary,
+										trackColor = colors.outlineVariant.copy(alpha = 0.3f),
+									)
+									Text(
+										"${NasSystemInfo.formatBytes(info.memory.used)} / ${NasSystemInfo.formatBytes(info.memory.total)}",
+										fontSize = 10.sp,
+										color = colors.onSurfaceVariant.copy(alpha = 0.8f),
+										maxLines = 1,
+									)
+								}
+							}
+						}
+
+						Spacer(modifier = Modifier.height(10.dp))
+
+						// 3. 宿主机系统属性与运行时间条目
+						Column(
+							modifier = Modifier
+								.fillMaxWidth()
+								.clip(RoundedCornerShape(12.dp))
+								.background(colors.surfaceVariant.copy(alpha = 0.25f))
+								.padding(horizontal = 12.dp, vertical = 8.dp),
+							verticalArrangement = Arrangement.spacedBy(6.dp),
+						) {
+							SystemDetailRow(label = "设备主机名", value = info.hostname.ifBlank { "iStoreOS" })
+							SystemDetailRow(label = "操作系统与架构", value = "${info.os} (${info.arch})")
+							SystemDetailRow(label = "系统持续运行", value = info.formattedUptime())
+							SystemDetailRow(label = "后台核心服务", value = "${info.service} v${info.version.ifBlank { "1.0.0" }}")
+						}
+					} else {
+						// 当探测未完成或网络尚未连通时的展示
+						Surface(
+							shape = RoundedCornerShape(12.dp),
+							color = colors.surfaceVariant.copy(alpha = 0.3f),
+							modifier = Modifier.fillMaxWidth(),
+						) {
+							Row(
+								modifier = Modifier.padding(14.dp),
+								verticalAlignment = Alignment.CenterVertically,
+								horizontalArrangement = Arrangement.spacedBy(10.dp),
+							) {
+								Icon(Icons.Rounded.Info, contentDescription = null, tint = colors.primary, modifier = Modifier.size(20.dp))
+								Column(modifier = Modifier.weight(1f)) {
+									Text("点击探测获取 NAS 宿主机系统监控信息", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = colors.onSurface)
+									Text("支持 CPU、内存、存储空间池、持续运行时间监控", fontSize = 11.sp, color = colors.onSurfaceVariant)
+								}
+								TextButton(onClick = { vm.refreshSystemInfo() }) {
+									Text("探测", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// ==================== 卡片 2: 直连与局域网传输 (网络链路) ====================
+			Card(
+				shape = RoundedCornerShape(16.dp),
+				colors = CardDefaults.cardColors(containerColor = colors.surface),
+				elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+				modifier = Modifier.fillMaxWidth(),
+			) {
+				Column(modifier = Modifier.padding(14.dp)) {
+					val isLan = routeInfo.isLan || routeInfo.isLanDirect
+					val isDirect = routeInfo.isDirect && !routeInfo.isRelay
+					val statusDotColor = when {
+						isLan -> Color(0xFF2E7D32)
+						isDirect -> Color(0xFF00796B)
+						routeInfo.isRelay -> Color(0xFFE65100)
+						else -> colors.onSurfaceVariant
+					}
+					val statusBgColor = when {
+						isLan -> Color(0xFFE8F5E9)
+						isDirect -> Color(0xFFE0F2F1)
+						routeInfo.isRelay -> Color(0xFFFFF3E0)
+						else -> colors.surfaceVariant.copy(alpha = 0.5f)
+					}
+					val statusLabel = when {
+						isLan -> "局域网直连"
+						isDirect -> "极速直连 (P2P)"
+						routeInfo.isRelay -> "远程中继"
+						else -> "未连接"
+					}
+
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.SpaceBetween,
+					) {
+						Text(
+							text = "网络链路与传输模式",
+							fontSize = 14.sp,
+							fontWeight = FontWeight.Bold,
+							color = colors.onSurface,
+						)
+
+						// 紧凑链路状态胶囊
+						Box(
+							modifier = Modifier
+								.clip(RoundedCornerShape(6.dp))
+								.background(statusBgColor)
+								.clickable { vm.reloadSettings() }
+								.padding(horizontal = 6.dp, vertical = 2.dp),
+						) {
+							Row(
+								verticalAlignment = Alignment.CenterVertically,
+								horizontalArrangement = Arrangement.spacedBy(3.dp),
+							) {
+								Box(
+									modifier = Modifier
+										.size(4.dp)
+										.clip(CircleShape)
+										.background(statusDotColor),
+								)
+								Text(
+									text = statusLabel,
+									fontSize = 10.sp,
+									fontWeight = FontWeight.Medium,
+									color = statusDotColor,
+								)
+							}
+						}
+					}
+
+					Spacer(modifier = Modifier.height(10.dp))
+
+					// 模式选择：聚焦直连与智能模式
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.spacedBy(8.dp),
+					) {
+						FilterChip(
+							selected = connMode == ConnectionMode.Direct,
+							onClick = { connMode = ConnectionMode.Direct },
+							enabled = !saving,
+							label = { Text("⚡ 强制直连", fontSize = 12.sp) },
+							modifier = Modifier.weight(1f),
+						)
+						FilterChip(
+							selected = connMode != ConnectionMode.Direct,
+							onClick = { connMode = ConnectionMode.Auto },
+							enabled = !saving,
+							label = { Text("🏠 智能自适应", fontSize = 12.sp) },
+							modifier = Modifier.weight(1f),
+						)
+					}
+
+					HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.4f), thickness = 0.5.dp, modifier = Modifier.padding(vertical = 8.dp))
+
+					// 信任自签 SSL 证书
+					SettingItemRow(
+						icon = Icons.Rounded.Security,
+						iconBg = colors.primary,
+						title = "放行自签 SSL 证书",
+						desc = "仅用于可信私有 WebDAV 服务",
+						trailing = {
+							Switch(
+								checked = trustAll,
+								enabled = !saving,
+								onCheckedChange = { trustAll = it },
+								colors = SwitchDefaults.colors(checkedThumbColor = colors.onPrimary, checkedTrackColor = colors.primary),
+							)
+						},
+					)
+				}
+			}
+
+			// ==================== 卡片 3: WebDAV 服务配置 ====================
 			Card(
 				shape = RoundedCornerShape(18.dp),
 				colors = CardDefaults.cardColors(containerColor = colors.surface),
@@ -176,7 +559,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 			) {
 				Column(modifier = Modifier.padding(16.dp)) {
 					Text(
-						text = "WebDAV 服务配置",
+						text = "WebDAV 服务接入配置",
 						fontSize = 14.sp,
 						fontWeight = FontWeight.ExtraBold,
 						color = colors.onSurface,
@@ -254,168 +637,9 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 				}
 			}
 
-			// ==================== 卡片 3: 直连与局域网传输 (极简紧凑) ====================
-			Card(
-				shape = RoundedCornerShape(16.dp),
-				colors = CardDefaults.cardColors(containerColor = colors.surface),
-				elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
-				modifier = Modifier.fillMaxWidth(),
-			) {
-				Column(modifier = Modifier.padding(14.dp)) {
-					val isLan = routeInfo.isLan || routeInfo.isLanDirect
-					val isDirect = routeInfo.isDirect && !routeInfo.isRelay
-					val statusDotColor = when {
-						isLan -> Color(0xFF2E7D32)
-						isDirect -> Color(0xFF00796B)
-						routeInfo.isRelay -> Color(0xFFE65100)
-						else -> colors.onSurfaceVariant
-					}
-					val statusBgColor = when {
-						isLan -> Color(0xFFE8F5E9)
-						isDirect -> Color(0xFFE0F2F1)
-						routeInfo.isRelay -> Color(0xFFFFF3E0)
-						else -> colors.surfaceVariant.copy(alpha = 0.5f)
-					}
-					val statusLabel = when {
-						isLan -> "局域网直连"
-						isDirect -> "极速直连"
-						routeInfo.isRelay -> "远程中继"
-						else -> "未连接"
-					}
-
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.SpaceBetween,
-					) {
-						Text(
-							text = "直连与局域网传输",
-							fontSize = 14.sp,
-							fontWeight = FontWeight.Bold,
-							color = colors.onSurface,
-						)
-
-						// 紧凑链路状态胶囊
-						Box(
-							modifier = Modifier
-								.clip(RoundedCornerShape(6.dp))
-								.background(statusBgColor)
-								.clickable { vm.reloadSettings() }
-								.padding(horizontal = 6.dp, vertical = 2.dp),
-						) {
-							Row(
-								verticalAlignment = Alignment.CenterVertically,
-								horizontalArrangement = Arrangement.spacedBy(3.dp),
-							) {
-								Box(
-									modifier = Modifier
-										.size(4.dp)
-										.clip(CircleShape)
-										.background(statusDotColor),
-								)
-								Text(
-									text = statusLabel,
-									fontSize = 10.sp,
-									fontWeight = FontWeight.Medium,
-									color = statusDotColor,
-								)
-							}
-						}
-					}
-
-					Spacer(modifier = Modifier.height(10.dp))
-
-					// 模式选择：聚焦直连与智能模式
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						horizontalArrangement = Arrangement.spacedBy(8.dp),
-					) {
-						FilterChip(
-							selected = connMode == ConnectionMode.Direct,
-							onClick = { connMode = ConnectionMode.Direct },
-							enabled = !saving,
-							label = { Text("⚡ 强制直连", fontSize = 12.sp) },
-							modifier = Modifier.weight(1f),
-						)
-						FilterChip(
-							selected = connMode != ConnectionMode.Direct,
-							onClick = { connMode = ConnectionMode.Auto },
-							enabled = !saving,
-							label = { Text("🏠 智能自适应", fontSize = 12.sp) },
-							modifier = Modifier.weight(1f),
-						)
-					}
-
-					HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.4f), thickness = 0.5.dp, modifier = Modifier.padding(vertical = 8.dp))
-
-					// 信任自签 SSL 证书
-					SettingItemRow(
-						icon = Icons.Rounded.Security,
-						iconBg = colors.primary,
-						title = "放行自签 SSL 证书",
-						desc = "仅用于可信私有 WebDAV 服务",
-						trailing = {
-							Switch(
-								checked = trustAll,
-								enabled = !saving,
-								onCheckedChange = { trustAll = it },
-								colors = SwitchDefaults.colors(checkedThumbColor = colors.onPrimary, checkedTrackColor = colors.primary),
-							)
-						},
-					)
-				}
-			}
-
-			// ==================== 卡片 4: 本地缓存管理 ====================
-			Card(
-				shape = RoundedCornerShape(18.dp),
-				colors = CardDefaults.cardColors(containerColor = colors.surface),
-				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-				modifier = Modifier.fillMaxWidth(),
-			) {
-				Column(modifier = Modifier.padding(16.dp)) {
-					Text(
-						text = "本地离线与缩略图缓存",
-						fontSize = 14.sp,
-						fontWeight = FontWeight.ExtraBold,
-						color = colors.onSurface,
-					)
-					Spacer(modifier = Modifier.height(12.dp))
-
-					SettingItemRow(
-						icon = Icons.Rounded.CleaningServices,
-						iconBg = colors.primary,
-							title = "清理缩略图缓存",
-						desc = "当前占用 $cacheSizeStr",
-						trailing = {
-							TextButton(enabled = !clearingCache && !saving, onClick = {
-								clearingCache = true
-								scope.launch {
-									try {
-										withContext(Dispatchers.IO) { app.repo.clearImageCache() }
-										calculateCacheSize()
-										Toast.makeText(context, "缩略图缓存已清理", Toast.LENGTH_SHORT).show()
-									} catch (e: CancellationException) {
-										throw e
-									} catch (e: Exception) {
-										Log.e("SettingsScreen", "缩略图缓存清理失败", e)
-										Toast.makeText(context, "清理失败，请稍后重试", Toast.LENGTH_SHORT).show()
-									} finally {
-										clearingCache = false
-									}
-								}
-							}) {
-								Text(if (clearingCache) "正在清理…" else "立即清理", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = colors.primary)
-							}
-						},
-					)
-				}
-			}
-
-			Spacer(modifier = Modifier.height(6.dp))
+			// ==================== 卡片 4: 底部主要操作（保存与连通性测试） ====================
 			saveError?.let { Text(it, color = colors.error, style = MaterialTheme.typography.bodySmall) }
 
-			// ==================== 底部主操作按钮 ====================
 			Button(
 				onClick = {
 					val s = Settings(
@@ -442,26 +666,22 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 					CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = colors.onPrimary)
 					Spacer(Modifier.width(8.dp))
 				}
-				Text(if (saving) "正在保存…" else "保存并应用", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = colors.onPrimary)
+				Text(if (saving) "正在保存并生效…" else "保存并应用配置", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = colors.onPrimary)
 			}
 
 			OutlinedButton(
 				onClick = {
-					// 只读探测：绝不 save / invalidate / 停隧道。旧版一点测试就 save(s)，
-					// 触发 invalidate→stop 隧道→重建 client→全量扫描，测试动作本身把连接搞断、
-					// 让页面假死无响应。现在测试只验证"当前生效配置"能否连通。
 					testing = true
 					scope.launch {
 						val result = withTimeoutOrNull(12_000) {
 							withContext(Dispatchers.IO) {
 								val effective = app.prefs.current()
-								// 用户改了配置但没保存时，明确提示，避免"测的是旧配置"的错觉
 								val dirty = effective.baseUrl != baseUrl || effective.user != user ||
 									effective.password != password || effective.useTailscale != useTs ||
 									effective.connectionMode != connMode || effective.hostname != hostname ||
 									effective.authKey != authKey.trim() || effective.trustAllCerts != trustAll
 								if (dirty) {
-									"配置已修改但尚未保存，请先点「保存并立即应用」再测试"
+									"配置已修改但尚未保存，请先点「保存并应用配置」再测试"
 								} else {
 									runCatching { app.repo.probeConnection(effective) }
 										.fold(
@@ -488,7 +708,53 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 				Text(if (testing) "正在测试…" else "测试连通性", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
 			}
 
-			// ==================== 外观与全局统一配色方案 ====================
+			// ==================== 卡片 5: 本地离线与缩略图缓存 ====================
+			Card(
+				shape = RoundedCornerShape(18.dp),
+				colors = CardDefaults.cardColors(containerColor = colors.surface),
+				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+				modifier = Modifier.fillMaxWidth(),
+			) {
+				Column(modifier = Modifier.padding(16.dp)) {
+					Text(
+						text = "本地离线与缩略图缓存",
+						fontSize = 14.sp,
+						fontWeight = FontWeight.ExtraBold,
+						color = colors.onSurface,
+					)
+					Spacer(modifier = Modifier.height(12.dp))
+
+					SettingItemRow(
+						icon = Icons.Rounded.CleaningServices,
+						iconBg = colors.primary,
+						title = "清理本地缩略图缓存",
+						desc = "当前占用 $cacheSizeStr",
+						trailing = {
+							TextButton(enabled = !clearingCache && !saving, onClick = {
+								clearingCache = true
+								scope.launch {
+									try {
+										withContext(Dispatchers.IO) { app.repo.clearImageCache() }
+										calculateCacheSize()
+										Toast.makeText(context, "缩略图缓存已清理", Toast.LENGTH_SHORT).show()
+									} catch (e: CancellationException) {
+										throw e
+									} catch (e: Exception) {
+										Log.e("SettingsScreen", "缩略图缓存清理失败", e)
+										Toast.makeText(context, "清理失败，请稍后重试", Toast.LENGTH_SHORT).show()
+									} finally {
+										clearingCache = false
+									}
+								}
+							}) {
+								Text(if (clearingCache) "正在清理…" else "立即清理", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = colors.primary)
+							}
+						},
+					)
+				}
+			}
+
+			// ==================== 卡片 6: 外观与全局统一配色方案 ====================
 			Card(
 				shape = RoundedCornerShape(18.dp),
 				colors = CardDefaults.cardColors(containerColor = colors.surface),
@@ -556,7 +822,7 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 				}
 			}
 
-			// ==================== 极简沉底: 版本检测与一键更新 ====================
+			// ==================== 卡片 7: 极简沉底: 版本检测与一键更新 ====================
 			Card(
 				shape = RoundedCornerShape(16.dp),
 				colors = CardDefaults.cardColors(
@@ -707,7 +973,18 @@ fun SettingsScreen(vm: BrowserViewModel, onBack: () -> Unit) {
 	}
 }
 
-
+@Composable
+private fun SystemDetailRow(label: String, value: String) {
+	val colors = MaterialTheme.colorScheme
+	Row(
+		modifier = Modifier.fillMaxWidth(),
+		verticalAlignment = Alignment.CenterVertically,
+		horizontalArrangement = Arrangement.SpaceBetween,
+	) {
+		Text(text = label, fontSize = 11.5.sp, color = colors.onSurfaceVariant)
+		Text(text = value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = colors.onSurface)
+	}
+}
 
 @Composable
 private fun SettingItemRow(
