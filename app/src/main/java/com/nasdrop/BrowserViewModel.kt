@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -316,44 +317,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	 * 后台异步补齐某目录的缩略图直链。列目录先返回、UI 先渲染，缩略图随后流入，
 	 * 两条链路解耦——慢速隧道里不再互相拖累。
 	 */
-	/** 正在进行缩略图自愈修复的任务集合，去重防并发 */
-	private val healingPaths = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-
 	fun repairThumbnailAsync(entry: DavEntry) {
-		val key = entry.path.trim('/')
-		if (key.isEmpty() || !healingPaths.add(key)) return
-		val c = client ?: return
-		viewModelScope.launch(Dispatchers.IO) {
-			try {
-				val bytes = LocalThumbs.generateRemoteThumbnail(app, c, entry)
-				if (bytes != null && bytes.isNotEmpty()) {
-					LocalThumbs.put(app, entry.path, bytes)
-					val d = parentOf(entry.path)
-					val thumbDir = if (d.isEmpty()) ".thumbnails" else "$d/.thumbnails"
-					runCatching { c.mkcol(thumbDir) }
-					val uploaded = runCatching { c.uploadBytes(bytes, thumbDir, entry.name) }.isSuccess
-					if (uploaded) {
-						PhotoMetadataStore.markThumbnail(entry.path, true)
-						val meta = PhotoMetadataStore.get(entry.path) ?: PhotoMetadata(
-							path = entry.path,
-							name = entry.name,
-							dir = d,
-							size = entry.size,
-							modified = entry.modified,
-							takenAt = entry.effectiveDate,
-							hasThumbnail = true,
-						)
-						c.reportMetadata(listOf(meta.copy(hasThumbnail = true)))
-					}
-					c.unmarkThumbnailFailed(entry.path)
-					thumbRevision++
-				}
-			} catch (t: Throwable) {
-				Log.w("BrowserViewModel", "自愈修复缩略图异常 path=${entry.path}", t)
-			} finally {
-				healingPaths.remove(key)
-			}
-		}
+		// 严禁客户端后台静默拉取几十MB原图自愈，避免跑满带宽
 	}
 
 	private fun prefetchThumbsAsync(path: String, items: List<DavEntry>) {
@@ -361,17 +326,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			val s = app.prefs.current()
 			val c = clientOf(s)
 			c.prefetchThumbnails(path, items)
-			// 扫描缺失伴生缩略图的项目，静默触发后台自愈补齐并同步到远端
-			for (item in items) {
-				if (item.isImage || item.isVideo) {
-					val meta = PhotoMetadataStore.get(item.path)
-					if (meta == null || !meta.hasThumbnail) {
-						if (LocalThumbs.get(item.path) == null) {
-							repairThumbnailAsync(item)
-						}
-					}
-				}
-			}
 		}
 	}
 
@@ -452,11 +406,43 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	val mediaTimelineGroups: List<TimelineGroup>
 		get() = groupEntriesForTimeline(currentMediaVideos)
 
+	fun loadMediaFromLocalDb() {
+		val all = PhotoMetadataStore.getAllEntries()
+		if (all.isEmpty()) return
+		val photos = all.filter { it.isImage }
+		val videos = all.filter { it.isVideo }
+		val albumDirs = all.map { it.path.substringBeforeLast('/', "") }
+			.filter { it.isNotBlank() }
+			.distinct()
+			.map { dirPath ->
+				val dirName = dirPath.substringAfterLast('/')
+				DavEntry(name = dirName, path = dirPath, isDir = true, modified = 0L)
+			}
+		allPhotos = (allPhotos + photos).distinctBy { it.path }
+		allVideos = (allVideos + videos).distinctBy { it.path }
+		if (albumDirs.isNotEmpty()) {
+			val defaultAlbum = DavEntry(name = "默认相册", path = "Photos/默认相册", isDir = true, modified = 0L)
+			val combined = (listOf(defaultAlbum) + allAlbumFolders + albumDirs).filterNot {
+				it.name.startsWith(".") || it.path.contains(".thumbnails") ||
+					it.name == "默认影集" || it.name == "默认影音" ||
+					it.path == "movies/默认影集" || it.path == "movies/默认影音" ||
+					it.path.endsWith("/默认影集") || it.path.endsWith("/默认影音")
+			}.distinctBy { it.path }
+			allAlbumFolders = sortAlbums(combined, albumOrder)
+		}
+	}
+
 	init {
 		PhotoMetadataStore.init(app)
 		loadUserPreferences()
 		open("")
-		ensureMediaScanned()
+		// 优先从本地 SQLite 数据库加载已有的媒体元数据，0ms 秒开无网络等待
+		viewModelScope.launch {
+			loadMediaFromLocalDb()
+			snapshotFlow { PhotoMetadataStore.revision }.collect {
+				loadMediaFromLocalDb()
+			}
+		}
 		startUnifiedLinkMonitor()
 		cleanupOldCache()
 		viewModelScope.launch {
@@ -956,11 +942,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	fun markThumbnailFailed(entryPath: String) {
 		client?.markThumbnailFailed(entryPath)
 		thumbRevision++
-		// 自动触发缺失缩略图的后台自愈修复与远端同步
-		val found = (allPhotos + allVideos + entries).firstOrNull { it.path == entryPath }
-		if (found != null) {
-			repairThumbnailAsync(found)
-		}
 	}
 
 	/** 记录进入大图查看器时的初始图片，退出时若未翻页则保持原位置绝对不动 */

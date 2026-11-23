@@ -66,18 +66,13 @@ fun FileThumbnail(
 	val cornerRadius = 6.dp
 
 	when {
-		// 1. 图片真实缩略图（服务端缩略图 -> 原图直链下采样多级回退，零黑块）
+		// 1. 图片真实缩略图（仅加载 20KB 微缩图，严禁在列表拉取几十MB原图）
 		entry.isImage -> {
 			val thumbTarget = urlOf(entry.path)
 			var thumbFailed by remember(entry.path) { mutableStateOf(false) }
-			var directFailed by remember(entry.path) { mutableStateOf(false) }
-			val actualData = if (thumbFailed && directUrlOf != null) {
-				if (!directFailed) directUrlOf(entry.path) else null
-			} else {
-				thumbTarget ?: directUrlOf?.invoke(entry.path)
-			}
+			val actualData = if (!thumbFailed) thumbTarget else null
 
-			if (!directFailed && !actualData.isNullOrBlank()) {
+			if (!actualData.isNullOrBlank()) {
 				Box(
 					modifier = modifier
 						.size(size)
@@ -104,12 +99,8 @@ fun FileThumbnail(
 						contentDescription = entry.name,
 						contentScale = ContentScale.Crop,
 						onError = {
-							if (!thumbFailed) {
-								thumbFailed = true
-								onThumbnailError?.invoke(entry.path)
-							} else {
-								directFailed = true
-							}
+							thumbFailed = true
+							onThumbnailError?.invoke(entry.path)
 						},
 						modifier = Modifier.fillMaxSize(),
 					)

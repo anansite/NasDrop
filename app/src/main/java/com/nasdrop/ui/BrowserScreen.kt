@@ -2803,13 +2803,8 @@ private fun FileBrowserContent(
 							if (entry.isImage) {
 								val thumbTarget = vm.thumbnailUrlFor(entry.path)
 								var thumbFailed by remember(entry.path) { mutableStateOf(false) }
-								var directFailed by remember(entry.path) { mutableStateOf(false) }
-								val actualData = if (thumbFailed) {
-									if (!directFailed) vm.directUrlFor(entry.path) else null
-								} else {
-									thumbTarget ?: vm.directUrlFor(entry.path)
-								}
-								if (!directFailed && !actualData.isNullOrBlank()) {
+								val actualData = if (!thumbFailed) thumbTarget else null
+								if (!actualData.isNullOrBlank()) {
 									AsyncImage(
 										model = ImageRequest.Builder(LocalContext.current)
 											.data(actualData)
@@ -2822,12 +2817,8 @@ private fun FileBrowserContent(
 										contentDescription = entry.name,
 										contentScale = ContentScale.Crop,
 										onError = {
-											if (!thumbFailed) {
-												thumbFailed = true
-												vm.markThumbnailFailed(entry.path)
-											} else {
-												directFailed = true
-											}
+											thumbFailed = true
+											vm.markThumbnailFailed(entry.path)
 										},
 										modifier = Modifier
 											.fillMaxWidth()
@@ -2841,7 +2832,7 @@ private fun FileBrowserContent(
 										size = 52.dp,
 										customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null,
 										urlOf = { vm.thumbnailUrlFor(it) },
-										directUrlOf = { vm.directUrlFor(it) },
+										directUrlOf = null,
 									)
 								}
 							} else {
@@ -3346,13 +3337,8 @@ private fun PhotoTimelineContent(
 									) {
 										val thumbTarget = urlOf(item.path)
 										var thumbFailed by remember(item.path) { mutableStateOf(false) }
-										var directFailed by remember(item.path) { mutableStateOf(false) }
-										val actualData = if (thumbFailed && directUrlOf != null) {
-											if (!directFailed) directUrlOf(item.path) else null
-										} else {
-											thumbTarget ?: directUrlOf?.invoke(item.path)
-										}
-										if (!directFailed && !actualData.isNullOrBlank()) {
+										val actualData = if (!thumbFailed) thumbTarget else null
+										if (!actualData.isNullOrBlank()) {
 											AsyncImage(
 												model = ImageRequest.Builder(LocalContext.current)
 													.data(actualData)
@@ -3363,12 +3349,8 @@ private fun PhotoTimelineContent(
 													.crossfade(false)
 													.build(),
 												onError = {
-													if (!thumbFailed) {
-														thumbFailed = true
-														onThumbnailError?.invoke(item.path)
-													} else {
-														directFailed = true
-													}
+													thumbFailed = true
+													onThumbnailError?.invoke(item.path)
 												},
 												contentDescription = item.name,
 												contentScale = ContentScale.Crop,
@@ -5922,7 +5904,7 @@ private fun MemoriesBanner(
 				) {
 					Box(modifier = Modifier.fillMaxSize()) {
 						// 封面图
-						val coverTarget = urlOf(group.coverEntry.path) ?: directUrlOf?.invoke(group.coverEntry.path)
+						val coverTarget = urlOf(group.coverEntry.path)
 						if (!coverTarget.isNullOrBlank()) {
 							AsyncImage(
 								model = coverTarget,
@@ -6145,7 +6127,7 @@ private fun MemoryDetailModalSheet(
 										.background(MaterialTheme.colorScheme.surfaceVariant)
 										.clickable { onOpenImage(item) },
 								) {
-									val thumbUrl = urlOf(item.path) ?: directUrlOf?.invoke(item.path)
+									val thumbUrl = urlOf(item.path)
 									if (!thumbUrl.isNullOrBlank()) {
 										AsyncImage(
 											model = thumbUrl,

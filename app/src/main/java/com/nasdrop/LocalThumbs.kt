@@ -105,68 +105,14 @@ object LocalThumbs {
 	}
 
 	/**
-	 * 从远程 NAS 流式/截帧生成 360px 高画质微缩图 (支持图片流式降采样与视频 MediaMetadataRetriever 关键帧截取)
-	 * 纯增量、轻量化，绝不拉取几十MB原视频或原图，极速完成。
+	 * 严禁客户端后台静默拉取几十MB原视频或高清大图来生成缩略图，避免消耗巨量网络带宽与服务端计算资源。
 	 */
 	fun generateRemoteThumbnail(
 		context: Context,
 		client: WebDavClient,
 		entry: DavEntry,
 	): ByteArray? {
-		val key = entry.path.trim('/')
-		if (key.isEmpty()) return null
-		val fileUrl = client.urlFor(entry.path)
-
-		return try {
-			val bmp: Bitmap? = if (entry.isVideo) {
-				val mmr = MediaMetadataRetriever()
-				try {
-					val headers = HashMap<String, String>()
-					val auth = client.authHeaderValue()
-					if (auth != null) headers["Authorization"] = auth
-					mmr.setDataSource(fileUrl.toString(), headers)
-					val raw = mmr.getFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-						?: mmr.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-						?: mmr.frameAtTime
-					raw?.let { scaleDown(it, 360) }
-				} finally {
-					runCatching { mmr.release() }
-				}
-			} else if (entry.isImage) {
-				val req = okhttp3.Request.Builder().url(fileUrl).get().build()
-				client.metaCall(req).execute().use { resp ->
-					if (!resp.isSuccessful) return null
-					val stream = resp.body?.byteStream() ?: return null
-					val bytes = stream.readBytes()
-					val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-					BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-					val w = bounds.outWidth
-					val h = bounds.outHeight
-					if (w <= 0 || h <= 0) return null
-					var sample = 1
-					while (w / (sample * 2) >= 360 && h / (sample * 2) >= 360) sample *= 2
-					val opts = BitmapFactory.Options().apply {
-						inSampleSize = sample
-						inPreferredConfig = Bitmap.Config.RGB_565
-					}
-					val raw = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-					raw?.let { scaleDown(it, 360) }
-				}
-			} else {
-				null
-			}
-
-			if (bmp != null) {
-				val stream = java.io.ByteArrayOutputStream()
-				bmp.compress(Bitmap.CompressFormat.JPEG, 85, stream)
-				bmp.recycle()
-				stream.toByteArray()
-			} else {
-				null
-			}
-		} catch (_: Throwable) {
-			null
-		}
+		return null
 	}
 
 	/** 清掉某个路径的本地图（删除/移动时调用，避免旧图被复用） */

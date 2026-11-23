@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
 data class PhotoMetadata(
@@ -118,8 +119,24 @@ object PhotoMetadataStore {
 				}
 			}
 			Log.i(TAG, "已加载 ${cache.size} 条图片元数据到内存缓存")
+			notifyUpdated()
 		} catch (e: Exception) {
 			Log.e(TAG, "加载图片元数据缓存失败", e)
+		}
+	}
+
+	fun getAll(): List<PhotoMetadata> = cache.values.toList()
+
+	fun getAllEntries(): List<DavEntry> {
+		return cache.values.map { m ->
+			DavEntry(
+				name = m.name,
+				path = m.path,
+				isDir = false,
+				size = m.size,
+				modified = m.modified,
+				takenAt = m.takenAt,
+			)
 		}
 	}
 
