@@ -845,6 +845,7 @@ fun ModernVideoScrubber(
 	onSeek: (Long) -> Unit,
 	modifier: Modifier = Modifier,
 	onInteraction: () -> Unit = {},
+	onSeeking: ((Long, Boolean) -> Unit)? = null,
 ) {
 	var isDragging by remember { mutableStateOf(false) }
 	var dragFraction by remember { mutableFloatStateOf(0f) }
@@ -872,7 +873,9 @@ fun ModernVideoScrubber(
 				detectTapGestures { offset ->
 					if (duration > 0 && size.width > 0) {
 						val frac = (offset.x / size.width).coerceIn(0f, 1f)
-						onSeek((frac * duration).toLong())
+						val target = (frac * duration).toLong()
+						onSeek(target)
+						onSeeking?.invoke(target, false)
 						onInteraction()
 					}
 				}
@@ -883,6 +886,7 @@ fun ModernVideoScrubber(
 						isDragging = true
 						if (duration > 0 && size.width > 0) {
 							dragFraction = (offset.x / size.width).coerceIn(0f, 1f)
+							onSeeking?.invoke((dragFraction * duration).toLong(), true)
 						}
 						onInteraction()
 					},
@@ -890,18 +894,22 @@ fun ModernVideoScrubber(
 						change.consume()
 						if (duration > 0 && size.width > 0) {
 							dragFraction = (change.position.x / size.width).coerceIn(0f, 1f)
+							onSeeking?.invoke((dragFraction * duration).toLong(), true)
 						}
 						onInteraction()
 					},
 					onDragEnd = {
 						isDragging = false
 						if (duration > 0) {
-							onSeek((dragFraction * duration).toLong())
+							val target = (dragFraction * duration).toLong()
+							onSeek(target)
+							onSeeking?.invoke(target, false)
 						}
 						onInteraction()
 					},
 					onDragCancel = {
 						isDragging = false
+						onSeeking?.invoke(0L, false)
 					}
 				)
 			},
@@ -1521,6 +1529,15 @@ fun VideoPlayer(
 							onSeek = { target ->
 								player.seekTo(target)
 								currentPosition = target
+							},
+							onSeeking = { target, active ->
+								if (active) {
+									hudText = "${formatTime(target)} / ${formatTime(duration)}"
+									hudVisible = true
+								} else {
+									hudVisible = false
+								}
+								lastInteractionTime = System.currentTimeMillis()
 							},
 							onInteraction = { lastInteractionTime = System.currentTimeMillis() },
 							modifier = Modifier

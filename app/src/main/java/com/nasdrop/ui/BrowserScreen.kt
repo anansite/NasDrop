@@ -1341,6 +1341,11 @@ private fun CollectionTopBar(
 						)
 					}
 					DropdownMenuItem(
+						text = { Text(if (uploadLabel.contains("视频")) "新建影集" else "新建相册") },
+						onClick = { menuOpen = false; onCreate() },
+						leadingIcon = { Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp)) },
+					)
+					DropdownMenuItem(
 						text = { Text(uploadLabel) },
 						onClick = { menuOpen = false; onUpload() },
 						leadingIcon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp)) },
@@ -1356,6 +1361,7 @@ private fun CollectionTopBar(
 							}
 						},
 						onClick = { menuOpen = false; onSettings() },
+						leadingIcon = { Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(18.dp)) },
 					)
 				}
 			}
@@ -1559,9 +1565,20 @@ private fun FilesTopBar(
 					)
 					CompactNetworkBadge(routeInfo = routeInfo, onClick = onShowNetworkSheet)
 				}
+				val count = vm.filteredEntries.size
 				Text(
-					if (parts.isEmpty()) "私有云极速直连 · ${vm.entries.size} 项文件"
-					else "${vm.entries.size} 项文件与目录",
+					if (parts.isEmpty()) {
+						when (vm.selectedCategory) {
+							FileCategory.Image -> "全部照片 · 共 $count 项"
+							FileCategory.Video -> "全部视频 · 共 $count 项"
+							FileCategory.Document -> "全部文档 · 共 $count 项"
+							FileCategory.Audio -> "全部音频 · 共 $count 项"
+							FileCategory.Archive -> "全部压缩包 · 共 $count 项"
+							else -> "私有云极速直连 · 共 $count 项内容"
+						}
+					} else {
+						"${vm.filteredEntries.size} 项文件与目录"
+					},
 					style = MaterialTheme.typography.bodySmall,
 					fontSize = 11.sp,
 					fontWeight = FontWeight.Medium,
@@ -2172,7 +2189,7 @@ private fun Modifier.dragSelectableGrid(
 			var isDragging = false
 			val touchSlop = viewConfiguration.touchSlop
 			val isMultiAtStart = currentIsMulti
-			val longPressTimeout = if (isMultiAtStart) 110L else 220L
+			val longPressTimeout = if (isMultiAtStart) 120L else 280L
 
 			var isTriggered = false
 			try {
@@ -2375,7 +2392,7 @@ private fun Modifier.dragSelectableList(
 			var isDragging = false
 			val touchSlop = viewConfiguration.touchSlop
 			val isMultiAtStart = currentIsMulti
-			val longPressTimeout = if (isMultiAtStart) 110L else 220L
+			val longPressTimeout = if (isMultiAtStart) 120L else 280L
 
 			var isTriggered = false
 			try {
