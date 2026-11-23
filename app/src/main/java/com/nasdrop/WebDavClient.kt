@@ -90,7 +90,7 @@ data class DavEntry(
 	companion object {
 		val IMAGES = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg")
 		val VIDEOS = setOf("mp4", "mkv", "mov", "webm", "avi", "m4v", "ts", "flv", "3gp", "rmvb", "wmv")
-		val DOCUMENTS = setOf("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md", "csv", "json", "xml", "log")
+		val DOCUMENTS = setOf("pdf", "doc", "docx", "xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx", "ppt", "pptx", "txt", "md", "csv", "tsv", "json", "xml", "log", "wps", "et", "dps", "rtf", "odt", "ods", "odp")
 		val AUDIOS = setOf("mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "ape")
 		val ARCHIVES = setOf("zip", "rar", "7z", "tar", "gz", "bz2", "xz")
 	}

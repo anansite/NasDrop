@@ -120,6 +120,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var allVideos by mutableStateOf<List<DavEntry>>(emptyList())
 		private set
 
+	/** 全局聚合文档池（跨目录汇总所有文档，支持根目录筛选 xls/pdf/doc 等） */
+	var allDocuments by mutableStateOf<List<DavEntry>>(emptyList())
+		private set
+
 	// ========== 相册与影音子分类浏览系统 ==========
 	/** 当前选中的子相册路径："" 表示查看全部时光流，若为具体路径如 "Photos/云南自驾" 则浏览该子相册，"__ALL_FOLDERS__" 表示查看相册文件夹概览 */
 	var selectedAlbumPath by mutableStateOf("")
@@ -362,7 +366,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					if (allVideos.isNotEmpty()) allVideos
 					else entries.filter { !it.isDir && it.isVideo }
 				}
-				FileCategory.Document -> entries.filter { !it.isDir && it.isDocument }
+				FileCategory.Document -> {
+					if (path.isEmpty()) (allDocuments + entries.filter { !it.isDir && it.isDocument }).distinctBy { it.path }
+					else entries.filter { !it.isDir && it.isDocument }
+				}
 				FileCategory.Audio -> entries.filter { !it.isDir && it.isAudio }
 				FileCategory.Archive -> entries.filter { !it.isDir && it.isArchive }
 			}
@@ -629,6 +636,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		if (path.trim('/') == cleanDir) entries = visible
 		allPhotos = (allPhotos.filterNot { parentOf(it.path) == cleanDir || it.path.contains(".thumbnails") } + visible.filter { !it.isDir && it.isImage && !it.path.contains(".thumbnails") }).distinctBy { it.path }
 		allVideos = (allVideos.filterNot { parentOf(it.path) == cleanDir || it.path.contains(".thumbnails") } + visible.filter { !it.isDir && it.isVideo && !it.path.contains(".thumbnails") }).distinctBy { it.path }
+		allDocuments = (allDocuments.filterNot { parentOf(it.path) == cleanDir } + visible.filter { !it.isDir && it.isDocument }).distinctBy { it.path }
 	}
 
 	/** 保存服务器原始列表，再合并仍未被目录确认的上传项；所有 UI 状态在主线程更新。 */
@@ -941,7 +949,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	fun selectCategory(cat: FileCategory) {
 		selectedCategory = cat
-		if (cat == FileCategory.Image || cat == FileCategory.Video || cat == FileCategory.All) {
+		if (cat == FileCategory.Image || cat == FileCategory.Video || cat == FileCategory.Document || cat == FileCategory.All) {
 			ensureMediaScanned()
 		}
 	}
@@ -1228,6 +1236,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		entries = entries.filterNot { hit(it.path) }
 		allPhotos = allPhotos.filterNot { hit(it.path) }
 		allVideos = allVideos.filterNot { hit(it.path) }
+		allDocuments = allDocuments.filterNot { hit(it.path) }
 		allAlbumFolders = allAlbumFolders.filterNot { hit(it.path) }
 		allMediaFolders = allMediaFolders.filterNot { hit(it.path) }
 		allFolderPaths = allFolderPaths.filterNot { hit(it) }
@@ -1275,6 +1284,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		entries = entries.filterNot { hit(it.path) }
 		allPhotos = allPhotos.filterNot { hit(it.path) }
 		allVideos = allVideos.filterNot { hit(it.path) }
+		allDocuments = allDocuments.filterNot { hit(it.path) }
 		allAlbumFolders = allAlbumFolders.filterNot { hit(it.path) }
 		allMediaFolders = allMediaFolders.filterNot { hit(it.path) }
 		allFolderPaths = allFolderPaths.filterNot { hit(it) }
@@ -1708,12 +1718,18 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** 删除成功后同步撤销跨页面的上传覆盖；删除失败不使原文件的上传记录失效。 */
 	fun delete(entry: DavEntry, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+		if (entry.name == "默认相册" || entry.name == "默认影集" || entry.name == "默认影音" || entry.path == "Photos/默认相册" || entry.path == "movies/默认影集" || entry.path == "movies/默认影音") {
+			uiMessage = "默认系统目录不允许删除"
+			onResult(false, "默认系统目录不允许删除")
+			return
+		}
 		val p = entry.path
 		fun hit(target: String) = target == p || target.startsWith("$p/")
 		// 乐观 UI 立即清除，包括文件列表、相册/影音胶囊栏和全部媒体池，告别删除迟钝/需要手动刷新的问题
 		entries = entries.filterNot { hit(it.path) }
 		allPhotos = allPhotos.filterNot { hit(it.path) }
 		allVideos = allVideos.filterNot { hit(it.path) }
+		allDocuments = allDocuments.filterNot { hit(it.path) }
 		allAlbumFolders = allAlbumFolders.filterNot { hit(it.path) }
 		allMediaFolders = allMediaFolders.filterNot { hit(it.path) }
 		allFolderPaths = allFolderPaths.filterNot { hit(it) }
@@ -1745,6 +1761,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	fun rename(entry: DavEntry, newName: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+		if (entry.name == "默认相册" || entry.name == "默认影集" || entry.name == "默认影音" || entry.path == "Photos/默认相册" || entry.path == "movies/默认影集" || entry.path == "movies/默认影音") {
+			uiMessage = "默认系统目录不允许修改"
+			onResult(false, "默认系统目录不允许修改")
+			return
+		}
 		val dest = join(entry.path.substringBeforeLast('/', ""), newName)
 		val oldPath = entry.path
 		fun hit(target: String) = target == oldPath || target.startsWith("$oldPath/")
@@ -1893,6 +1914,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		fun hit(p: String) = paths.any { p == it || p.startsWith("$it/") }
 		allPhotos = allPhotos.filterNot { hit(it.path) }
 		allVideos = allVideos.filterNot { hit(it.path) }
+		allDocuments = allDocuments.filterNot { hit(it.path) }
 		allAlbumFolders = allAlbumFolders.filterNot { hit(it.path) }
 		allMediaFolders = allMediaFolders.filterNot { hit(it.path) }
 		allFolderPaths = allFolderPaths.filterNot { hit(it) }
@@ -1967,6 +1989,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val rootEntries = loadDirectory("")
 		val albums = mutableListOf<DavEntry>()
 		val mediaAlbums = mutableListOf<DavEntry>()
+		val allDocs = mutableListOf<DavEntry>()
+		allDocs.addAll(rootEntries.filter { !it.isDir && it.isDocument })
 
 		// 默认相册与默认影集初始化确保存在（不在根目录直接传文件，满足需求13与语义对齐）
 		val defaultAlbum = DavEntry(name = "默认相册", path = "Photos/默认相册", isDir = true, modified = System.currentTimeMillis())
@@ -1976,6 +2000,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 		for (dir in rootEntries.filter { it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }) {
 			val sub = scanMediaDirectory(dir.path) ?: continue
+			allDocs.addAll(sub.filter { !it.isDir && it.isDocument })
 			if (dir.name.equals("Photos", true) || dir.name == "相册") {
 				// 深度递归扫描相册目录，确保各层级照片与子文件夹完整入池（满足需求14）
 				scanRecursiveMedia(dir.path, maxDepth = 4) { subDir ->
@@ -1995,6 +2020,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val distinctMedia = mediaAlbums.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
 		allAlbumFolders = sortAlbums(distinctAlbums, albumOrder)
 		allMediaFolders = sortAlbums(distinctMedia, mediaOrder)
+		withContext(Dispatchers.Main) {
+			allDocuments = (allDocuments + allDocs).distinctBy { it.path }
+		}
 	}
 
 	private suspend fun scanRecursiveMedia(baseDir: String, maxDepth: Int = 4, onFoundDir: (DavEntry) -> Unit) {

@@ -162,12 +162,9 @@ object PhotoMetadataStore {
 		if (prefix.isEmpty()) {
 			cache.clear()
 		} else {
-			val it = cache.keys().asIterator()
-			while (it.hasNext()) {
-				val k = it.next()
-				if (k == prefix || k.startsWith("$prefix/")) {
-					cache.remove(k)
-				}
+			val toRemove = cache.keys.filter { it == prefix || it.startsWith("$prefix/") }
+			for (k in toRemove) {
+				cache.remove(k)
 			}
 		}
 		ioScope.launch {

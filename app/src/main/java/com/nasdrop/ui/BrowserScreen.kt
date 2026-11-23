@@ -349,9 +349,11 @@ fun BrowserScreen(
 							onUploadPhoto = { photoPicker.launch(arrayOf("image/*")) },
 							onUpAlbum = { vm.upAlbum() },
 							onCreateAlbum = { activeCreateType = CreateDialogType.Album },
-							onDeleteCurrentAlbum = {
-								val cur = vm.allAlbumFolders.find { it.path == vm.selectedAlbumPath }
-								if (cur != null) activeFolderForDelete = Pair(cur, true)
+							onDeleteCurrentAlbum = if (vm.selectedAlbumPath == "Photos/默认相册" || vm.selectedAlbumPath.endsWith("/默认相册")) null else {
+								{
+									val cur = vm.allAlbumFolders.find { it.path == vm.selectedAlbumPath }
+									if (cur != null) activeFolderForDelete = Pair(cur, true)
+								}
 							},
 							onOpenTransferSheet = { showTransferSheet = true },
 							routeInfo = routeInfo,
@@ -371,9 +373,11 @@ fun BrowserScreen(
 							onUploadVideo = { videoPicker.launch(arrayOf("video/*")) },
 							onUpMedia = { vm.upMedia() },
 							onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
-							onDeleteCurrentMedia = {
-								val cur = vm.allMediaFolders.find { it.path == vm.selectedMediaPath }
-								if (cur != null) activeFolderForDelete = Pair(cur, false)
+							onDeleteCurrentMedia = if (vm.selectedMediaPath == "movies/默认影集" || vm.selectedMediaPath.endsWith("/默认影集") || vm.selectedMediaPath.endsWith("/默认影音")) null else {
+								{
+									val cur = vm.allMediaFolders.find { it.path == vm.selectedMediaPath }
+									if (cur != null) activeFolderForDelete = Pair(cur, false)
+								}
 							},
 							onOpenTransferSheet = { showTransferSheet = true },
 							routeInfo = routeInfo,
@@ -925,9 +929,18 @@ fun BrowserScreen(
 			confirmButton = {
 				Button(
 					onClick = {
-						if (isAlbum) vm.deleteAlbum(folder) else vm.deleteMediaFolder(folder)
+						val target = folder
 						activeFolderForDelete = null
-						Toast.makeText(context, "已删除: ${folder.name}", Toast.LENGTH_SHORT).show()
+						if (target.name == "默认相册" || target.name == "默认影集" || target.name == "默认影音") {
+							Toast.makeText(context, "默认系统目录不允许删除", Toast.LENGTH_SHORT).show()
+							return@Button
+						}
+						runCatching {
+							if (isAlbum) vm.deleteAlbum(target) else vm.deleteMediaFolder(target)
+							Toast.makeText(context, "已删除: ${target.name}", Toast.LENGTH_SHORT).show()
+						}.onFailure { err ->
+							Toast.makeText(context, "删除异常: ${err.message}", Toast.LENGTH_SHORT).show()
+						}
 					},
 					colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
 				) { Text("确认删除") }
@@ -1342,16 +1355,6 @@ private fun CollectionTopBar(
 						)
 					}
 					DropdownMenuItem(
-						text = { Text(if (uploadLabel.contains("视频")) "新建影集" else "新建相册") },
-						onClick = { menuOpen = false; onCreate() },
-						leadingIcon = { Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp)) },
-					)
-					DropdownMenuItem(
-						text = { Text(uploadLabel) },
-						onClick = { menuOpen = false; onUpload() },
-						leadingIcon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp)) },
-					)
-					DropdownMenuItem(
 						text = {
 							Row(verticalAlignment = Alignment.CenterVertically) {
 								Text("设置")
@@ -1640,26 +1643,6 @@ private fun FilesTopBar(
 							onClick = { menuOpen = false; vm.openUpdateDialog() }
 						)
 					}
-					DropdownMenuItem(
-						text = { Text("上传文件") },
-						onClick = { menuOpen = false; onUpload() },
-						leadingIcon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp)) },
-					)
-					DropdownMenuItem(
-						text = { Text("新建文件夹") },
-						onClick = { menuOpen = false; onCreateFolder() },
-						leadingIcon = { Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp)) },
-					)
-					DropdownMenuItem(
-						text = { Text("多选文件") },
-						onClick = { menuOpen = false; onToggleMultiSelect() },
-						leadingIcon = { Icon(Icons.Rounded.Checklist, contentDescription = null, modifier = Modifier.size(18.dp)) },
-					)
-					DropdownMenuItem(
-						text = { Text("刷新") },
-						onClick = { menuOpen = false; vm.refresh() },
-						leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(18.dp)) },
-					)
 					DropdownMenuItem(
 						text = {
 							Row(verticalAlignment = Alignment.CenterVertically) {
@@ -3135,21 +3118,26 @@ private fun PhotoTimelineContent(
 								expanded = menuOpen,
 								onDismissRequest = { menuOpen = false },
 							) {
-								DropdownMenuItem(
-									text = { Text("重命名相册") },
-									onClick = { menuOpen = false; onRenameAlbum(album) },
-									leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, null) },
-								)
+								val isDefault = album.name == "默认相册" || album.path == "Photos/默认相册" || album.path.endsWith("/默认相册")
+								if (!isDefault) {
+									DropdownMenuItem(
+										text = { Text("重命名相册") },
+										onClick = { menuOpen = false; onRenameAlbum(album) },
+										leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, null) },
+									)
+								}
 								DropdownMenuItem(
 									text = { Text("更换图标") },
 									onClick = { menuOpen = false; onChangeIcon(album) },
 									leadingIcon = { Icon(Icons.Rounded.Edit, null) },
 								)
-								DropdownMenuItem(
-									text = { Text("删除相册", color = MaterialTheme.colorScheme.error) },
-									onClick = { menuOpen = false; onDeleteAlbum(album) },
-									leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
-								)
+								if (!isDefault) {
+									DropdownMenuItem(
+										text = { Text("删除相册", color = MaterialTheme.colorScheme.error) },
+										onClick = { menuOpen = false; onDeleteAlbum(album) },
+										leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
+									)
+								}
 							}
 						}
 					}
@@ -3486,6 +3474,50 @@ private fun AlbumFoldersGrid(
 			verticalArrangement = Arrangement.spacedBy(12.dp),
 			modifier = Modifier.fillMaxSize(),
 		) {
+			item(key = "__CREATE_ALBUM__") {
+				Card(
+					shape = RoundedCornerShape(16.dp),
+					colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
+					border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+					modifier = Modifier
+						.fillMaxWidth()
+						.clip(RoundedCornerShape(16.dp))
+						.clickable { onCreateAlbum() },
+				) {
+					Column(modifier = Modifier.padding(14.dp)) {
+						Box(
+							modifier = Modifier
+								.size(46.dp)
+								.clip(RoundedCornerShape(12.dp))
+								.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+							contentAlignment = Alignment.Center,
+						) {
+							Icon(
+								Icons.Rounded.Add,
+								contentDescription = "新建相册",
+								tint = MaterialTheme.colorScheme.primary,
+								modifier = Modifier.size(26.dp),
+							)
+						}
+						Spacer(modifier = Modifier.height(12.dp))
+						Text(
+							text = "新建相册",
+							fontSize = 15.sp,
+							fontWeight = FontWeight.Bold,
+							color = MaterialTheme.colorScheme.primary,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+						)
+						Spacer(modifier = Modifier.height(4.dp))
+						Text(
+							text = "创建专属相册",
+							fontSize = 12.sp,
+							color = MaterialTheme.colorScheme.onSurfaceVariant,
+						)
+					}
+				}
+			}
+
 			items(allAlbums, key = { it.path }) { album ->
 				var menuOpen by remember { mutableStateOf(false) }
 				val photoCount = remember(album.path, allPhotos) {
@@ -3547,21 +3579,26 @@ private fun AlbumFoldersGrid(
 									expanded = menuOpen,
 									onDismissRequest = { menuOpen = false },
 								) {
-									DropdownMenuItem(
-										text = { Text("重命名相册") },
-										onClick = { menuOpen = false; onRenameAlbum(album) },
-										leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, null) },
-									)
+									val isDefault = album.name == "默认相册" || album.path == "Photos/默认相册" || album.path.endsWith("/默认相册")
+									if (!isDefault) {
+										DropdownMenuItem(
+											text = { Text("重命名相册") },
+											onClick = { menuOpen = false; onRenameAlbum(album) },
+											leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, null) },
+										)
+									}
 									DropdownMenuItem(
 										text = { Text("更换图标") },
 										onClick = { menuOpen = false; onChangeIcon(album) },
 										leadingIcon = { Icon(Icons.Rounded.Edit, null) },
 									)
-									DropdownMenuItem(
-										text = { Text("删除相册", color = MaterialTheme.colorScheme.error) },
-										onClick = { menuOpen = false; onDeleteAlbum(album) },
-										leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
-									)
+									if (!isDefault) {
+										DropdownMenuItem(
+											text = { Text("删除相册", color = MaterialTheme.colorScheme.error) },
+											onClick = { menuOpen = false; onDeleteAlbum(album) },
+											leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
+										)
+									}
 								}
 							}
 						}
@@ -4106,21 +4143,26 @@ private fun MediaStreamContent(
 								expanded = menuOpen,
 								onDismissRequest = { menuOpen = false },
 							) {
-								DropdownMenuItem(
-									text = { Text("重命名影集") },
-									onClick = { menuOpen = false; onRenameMediaFolder(folder) },
-									leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, null) },
-								)
+								val isDefault = folder.name == "默认影集" || folder.name == "默认影音" || folder.path == "movies/默认影集" || folder.path == "movies/默认影音" || folder.path.endsWith("/默认影集") || folder.path.endsWith("/默认影音")
+								if (!isDefault) {
+									DropdownMenuItem(
+										text = { Text("重命名影集") },
+										onClick = { menuOpen = false; onRenameMediaFolder(folder) },
+										leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, null) },
+									)
+								}
 								DropdownMenuItem(
 									text = { Text("更换图标") },
 									onClick = { menuOpen = false; onChangeIcon(folder) },
 									leadingIcon = { Icon(Icons.Rounded.Edit, null) },
 								)
-								DropdownMenuItem(
-									text = { Text("删除影集", color = MaterialTheme.colorScheme.error) },
-									onClick = { menuOpen = false; onDeleteMediaFolder(folder) },
-									leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
-								)
+								if (!isDefault) {
+									DropdownMenuItem(
+										text = { Text("删除影集", color = MaterialTheme.colorScheme.error) },
+										onClick = { menuOpen = false; onDeleteMediaFolder(folder) },
+										leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
+									)
+								}
 							}
 						}
 					}
@@ -4415,6 +4457,50 @@ private fun MediaFoldersGrid(
 			verticalArrangement = Arrangement.spacedBy(12.dp),
 			modifier = Modifier.fillMaxSize(),
 		) {
+			item(key = "__CREATE_MEDIA__") {
+				Card(
+					shape = RoundedCornerShape(16.dp),
+					colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
+					border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+					modifier = Modifier
+						.fillMaxWidth()
+						.clip(RoundedCornerShape(16.dp))
+						.clickable { onCreateMediaFolder() },
+				) {
+					Column(modifier = Modifier.padding(14.dp)) {
+						Box(
+							modifier = Modifier
+								.size(46.dp)
+								.clip(RoundedCornerShape(12.dp))
+								.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+							contentAlignment = Alignment.Center,
+						) {
+							Icon(
+								Icons.Rounded.Add,
+								contentDescription = "新建影集",
+								tint = MaterialTheme.colorScheme.primary,
+								modifier = Modifier.size(26.dp),
+							)
+						}
+						Spacer(modifier = Modifier.height(12.dp))
+						Text(
+							text = "新建影集",
+							fontSize = 15.sp,
+							fontWeight = FontWeight.Bold,
+							color = MaterialTheme.colorScheme.primary,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+						)
+						Spacer(modifier = Modifier.height(4.dp))
+						Text(
+							text = "创建专属影音分类",
+							fontSize = 12.sp,
+							color = MaterialTheme.colorScheme.onSurfaceVariant,
+						)
+					}
+				}
+			}
+
 			items(allMediaFolders, key = { it.path }) { folder ->
 				var menuOpen by remember { mutableStateOf(false) }
 				val videoCount = remember(folder.path, allVideos) {
@@ -4476,21 +4562,26 @@ private fun MediaFoldersGrid(
 									expanded = menuOpen,
 									onDismissRequest = { menuOpen = false },
 								) {
-									DropdownMenuItem(
-										text = { Text("重命名分类") },
-										onClick = { menuOpen = false; onRenameMediaFolder(folder) },
-										leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, null) },
-									)
+									val isDefault = folder.name == "默认影集" || folder.name == "默认影音" || folder.path == "movies/默认影集" || folder.path == "movies/默认影音" || folder.path.endsWith("/默认影集") || folder.path.endsWith("/默认影音")
+									if (!isDefault) {
+										DropdownMenuItem(
+											text = { Text("重命名分类") },
+											onClick = { menuOpen = false; onRenameMediaFolder(folder) },
+											leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, null) },
+										)
+									}
 									DropdownMenuItem(
 										text = { Text("更换图标") },
 										onClick = { menuOpen = false; onChangeIcon(folder) },
 										leadingIcon = { Icon(Icons.Rounded.Edit, null) },
 									)
-									DropdownMenuItem(
-										text = { Text("删除分类", color = MaterialTheme.colorScheme.error) },
-										onClick = { menuOpen = false; onDeleteMediaFolder(folder) },
-										leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
-									)
+									if (!isDefault) {
+										DropdownMenuItem(
+											text = { Text("删除分类", color = MaterialTheme.colorScheme.error) },
+											onClick = { menuOpen = false; onDeleteMediaFolder(folder) },
+											leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
+										)
+									}
 								}
 							}
 						}
@@ -4508,39 +4599,6 @@ private fun MediaFoldersGrid(
 							text = "$videoCount 部视频",
 							fontSize = 12.sp,
 							color = MaterialTheme.colorScheme.onSurfaceVariant,
-						)
-					}
-				}
-			}
-
-			// 末尾增加“新建影集”卡片
-			item {
-				Surface(
-					shape = RoundedCornerShape(16.dp),
-					color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-					border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-					onClick = onCreateMediaFolder,
-					modifier = Modifier
-						.fillMaxWidth()
-						.height(130.dp),
-				) {
-					Column(
-						modifier = Modifier.fillMaxSize(),
-						verticalArrangement = Arrangement.Center,
-						horizontalAlignment = Alignment.CenterHorizontally,
-					) {
-						Icon(
-							Icons.Rounded.Add,
-							contentDescription = "新建影集",
-							tint = MaterialTheme.colorScheme.primary,
-							modifier = Modifier.size(32.dp),
-						)
-						Spacer(modifier = Modifier.height(6.dp))
-						Text(
-							text = "新建影集",
-							fontSize = 14.sp,
-							fontWeight = FontWeight.Bold,
-							color = MaterialTheme.colorScheme.primary,
 						)
 					}
 				}

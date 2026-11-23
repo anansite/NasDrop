@@ -621,27 +621,26 @@ private fun ZoomableImage(
 							val elapsed = System.currentTimeMillis() - startTime
 							if (isPinching) {
 								isPinching = false
-							} else if (dismissOffsetY > 0f) {
-								if (dismissOffsetY > 160f) {
-									onDismiss()
-								} else {
-									dismissOffsetY = 0f
-								}
-							} else if (!isDragging && elapsed < 350) {
-								val now = System.currentTimeMillis()
-								if (now - lastTapTime < 320) {
-									// 双击放大或复位手势
-									lastTapTime = 0L
-									if (scale > 1.05f) {
-										scale = 1f
-										dx = 0f
-										dy = 0f
+							} else if (dismissOffsetY > 160f) {
+								onDismiss()
+							} else {
+								dismissOffsetY = 0f
+								if (!isDragging && elapsed < 450) {
+									val now = System.currentTimeMillis()
+									if (now - lastTapTime < 320) {
+										// 双击放大或复位手势
+										lastTapTime = 0L
+										if (scale > 1.05f) {
+											scale = 1f
+											dx = 0f
+											dy = 0f
+										} else {
+											scale = 2.5f
+										}
 									} else {
-										scale = 2.5f
+										lastTapTime = now
+										onToggleControls()
 									}
-								} else {
-									lastTapTime = now
-									onToggleControls()
 								}
 							}
 							break
@@ -679,7 +678,7 @@ private fun ZoomableImage(
 							val totalDeltaY = change.position.y - startPos.y
 							val distSq = totalDeltaX * totalDeltaX + totalDeltaY * totalDeltaY
 
-							if (!isDragging && distSq > 300) {
+							if (!isDragging && distSq > 1200) {
 								isDragging = true
 							}
 
@@ -691,8 +690,8 @@ private fun ZoomableImage(
 									dx += moveDelta.x
 									dy += moveDelta.y
 								} else {
-									// 原始 1x 比例下：下拉滑动手势退出大图
-									if ((totalDeltaY > 0 && totalDeltaY > kotlin.math.abs(totalDeltaX) * 1.2f) || dismissOffsetY > 0f) {
+									// 原始 1x 比例下：下拉滑动手势退出大图（带防抖死区）
+									if ((totalDeltaY > 35 && totalDeltaY > kotlin.math.abs(totalDeltaX) * 1.3f) || dismissOffsetY > 0f) {
 										change.consume()
 										val moveDeltaY = change.position.y - change.previousPosition.y
 										dismissOffsetY = (dismissOffsetY + moveDeltaY).coerceAtLeast(0f)
