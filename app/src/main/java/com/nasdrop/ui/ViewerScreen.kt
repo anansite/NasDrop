@@ -162,6 +162,10 @@ import com.nasdrop.hasMemo
 import com.nasdrop.memoText
 import com.nasdrop.audioDurationText
 import com.nasdrop.photoMeta
+import androidx.compose.material.icons.rounded.CameraAlt
+import androidx.compose.material.icons.rounded.Place
+import com.nasdrop.MediaExifHelper
+import com.nasdrop.MediaExifData
 import com.nasdrop.NasDb
 import com.nasdrop.DavEntry
 import com.nasdrop.DlnaDevice
@@ -224,6 +228,17 @@ fun ImageViewer(
 
 	var controlsVisible by remember { mutableStateOf(true) }
 	var showInfoDialog by remember { mutableStateOf(false) }
+	var exifData by remember(current.path) { mutableStateOf<MediaExifData?>(null) }
+	var loadingExif by remember(current.path) { mutableStateOf(false) }
+
+	LaunchedEffect(showInfoDialog, current.path) {
+		if (showInfoDialog && exifData == null) {
+			loadingExif = true
+			val activeUrl = activeDirectUrls[current.path] ?: fallbackUrls[current.path] ?: directUrlOf?.invoke(current.path)
+			exifData = MediaExifHelper.extractExif(context, current, activeUrl, context.app.repo.http())
+			loadingExif = false
+		}
+	}
 	var showDeleteDialog by remember { mutableStateOf(false) }
 	var isSaving by remember { mutableStateOf(false) }
 	var isSharing by remember { mutableStateOf(false) }
@@ -283,7 +298,8 @@ fun ImageViewer(
 				imageLoader.enqueue(
 					ImageRequest.Builder(context)
 						.data(tu)
-						.memoryCacheKey("thumb:${e.path}")
+						.memoryCacheKey("thumb:${e.path.trim('/')}")
+						.diskCacheKey("thumb:${e.path.trim('/')}")
 						.build()
 				)
 			}
@@ -824,9 +840,11 @@ fun ImageViewer(
 				onDismissRequest = { showInfoDialog = false },
 				containerColor = MaterialTheme.colorScheme.surface,
 			) {
+				val scrollState = rememberScrollState()
 				Column(
 					modifier = Modifier
 						.fillMaxWidth()
+						.verticalScroll(scrollState)
 						.padding(horizontal = 24.dp)
 						.padding(bottom = 36.dp),
 					verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -842,12 +860,15 @@ fun ImageViewer(
 						}
 					}
 
+					// 1. 基础属性卡片
 					Surface(
 						shape = RoundedCornerShape(16.dp),
 						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
 						modifier = Modifier.fillMaxWidth(),
 					) {
 						Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+							Text("基础属性", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+
 							ImageDetailItem(label = "文件名称", value = current.name)
 
 							val rawSize = current.size
@@ -873,17 +894,128 @@ fun ImageViewer(
 							val createTimeStr = if (createTime > 0) {
 								SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(createTime))
 							} else "未知"
-							ImageDetailItem(label = "创建时间", value = createTimeStr)
+							ImageDetailItem(label = "创建/拍摄时间", value = createTimeStr)
 
 							if (current.modified > 0 && kotlin.math.abs(current.modified - createTime) > 60_000L) {
 								val uploadTimeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(current.modified))
 								ImageDetailItem(label = "修改/上传时间", value = uploadTimeStr)
 							}
 
+							val res = exifData?.resolution
+							val mp = exifData?.megapixels
+							val resStr = if (res != null && mp != null) "$res ($mp)" else res
+							if (resStr != null) {
+								ImageDetailItem(label = "图像分辨率", value = resStr)
+							}
+
 							ImageDetailItem(
 								label = "文件类型",
 								value = current.name.substringAfterLast('.', "未知").uppercase(Locale.ROOT)
 							)
+						}
+					}
+
+					// 2. 拍摄参数卡片（EXIF）
+					Surface(
+						shape = RoundedCornerShape(16.dp),
+						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+						modifier = Modifier.fillMaxWidth(),
+					) {
+						Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+							Row(
+								verticalAlignment = Alignment.CenterVertically,
+								horizontalArrangement = Arrangement.spacedBy(6.dp),
+							) {
+								Icon(Icons.Rounded.CameraAlt, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+								Text("拍摄参数", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+							}
+
+							if (loadingExif) {
+								LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+								Text("正在提取 EXIF 参数...", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+							} else if (exifData != null && exifData!!.hasShootingParams) {
+								val d = exifData!!
+								if (!d.camera.isNullOrBlank()) {
+									ImageDetailItem(label = "相机型号", value = d.camera)
+								}
+								if (!d.lens.isNullOrBlank()) {
+									ImageDetailItem(label = "镜头型号", value = d.lens)
+								}
+								if (!d.aperture.isNullOrBlank()) {
+									ImageDetailItem(label = "光圈大小", value = d.aperture)
+								}
+								if (!d.shutterSpeed.isNullOrBlank()) {
+									ImageDetailItem(label = "快门速度", value = d.shutterSpeed)
+								}
+								if (!d.iso.isNullOrBlank()) {
+									ImageDetailItem(label = "感光度", value = d.iso)
+								}
+								if (!d.focalLength.isNullOrBlank()) {
+									ImageDetailItem(label = "镜头焦距", value = d.focalLength)
+								}
+							} else {
+								Text("未读取到该图片的相机拍摄参数", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+							}
+						}
+					}
+
+					// 3. 拍摄地点卡片（GPS）
+					Surface(
+						shape = RoundedCornerShape(16.dp),
+						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+						modifier = Modifier.fillMaxWidth(),
+					) {
+						Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+							Row(
+								verticalAlignment = Alignment.CenterVertically,
+								horizontalArrangement = Arrangement.spacedBy(6.dp),
+							) {
+								Icon(Icons.Rounded.Place, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+								Text("拍摄地点", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+							}
+
+							if (loadingExif) {
+								LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+							} else if (exifData != null && exifData!!.hasGps) {
+								val d = exifData!!
+								ImageDetailItem(
+									label = "GPS 坐标",
+									value = d.gpsFormatted ?: "${d.latitude}, ${d.longitude}",
+									canCopy = true,
+									onCopy = {
+										val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+										clipboard?.setPrimaryClip(ClipData.newPlainText("GPS Coordinates", "${d.latitude}, ${d.longitude}"))
+										Toast.makeText(context, "已复制 GPS 坐标", Toast.LENGTH_SHORT).show()
+									}
+								)
+								if (d.altitude != null) {
+									ImageDetailItem(label = "海拔高度", value = String.format(Locale.ROOT, "%.1f 米", d.altitude))
+								}
+
+								Row(
+									modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+									horizontalArrangement = Arrangement.End,
+								) {
+									OutlinedButton(
+										onClick = {
+											try {
+												val geoUri = Uri.parse("geo:${d.latitude},${d.longitude}?q=${d.latitude},${d.longitude}(${Uri.encode(current.name)})")
+												val mapIntent = Intent(Intent.ACTION_VIEW, geoUri)
+												context.startActivity(mapIntent)
+											} catch (_: Exception) {
+												Toast.makeText(context, "未找到可用地图应用", Toast.LENGTH_SHORT).show()
+											}
+										},
+										contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+									) {
+										Icon(Icons.Rounded.Place, contentDescription = null, modifier = Modifier.size(16.dp))
+										Spacer(Modifier.width(6.dp))
+										Text("在地图中查看", fontSize = 13.sp)
+									}
+								}
+							} else {
+								Text("未读取到该图片的地理位置信息", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+							}
 						}
 					}
 				}
@@ -1243,8 +1375,9 @@ private fun ZoomableImage(
 			AsyncImage(
 				model = ImageRequest.Builder(LocalContext.current)
 					.data(thumbUrl)
-					.memoryCacheKey("thumb:$path")
-					.placeholderMemoryCacheKey("thumb:$path")
+					.memoryCacheKey("thumb:${path.trim('/')}")
+					.diskCacheKey("thumb:${path.trim('/')}")
+					.placeholderMemoryCacheKey("thumb:${path.trim('/')}")
 					.crossfade(false)
 					.build(),
 				contentDescription = null,

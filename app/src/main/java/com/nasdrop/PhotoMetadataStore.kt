@@ -616,3 +616,12 @@ val DavEntry.videoDurationMs: Long get() {
 	@Suppress("UNUSED_VARIABLE") val rev = PhotoMetadataStore.revision
 	return PhotoMetadataStore.get(path)?.videoDurationMs ?: 0L
 }
+val DavEntry.videoDurationText: String? get() {
+	@Suppress("UNUSED_VARIABLE") val rev = PhotoMetadataStore.revision
+	val ms = PhotoMetadataStore.get(path)?.videoDurationMs ?: 0L
+	if (ms <= 0L) return null
+	val totalSec = ms / 1000
+	val min = totalSec / 60
+	val sec = totalSec % 60
+	return String.format(java.util.Locale.ROOT, "%d:%02d", min, sec)
+}

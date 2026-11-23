@@ -135,17 +135,17 @@ class MainActivity : ComponentActivity() {
 
 			when (val r = route) {
 				Route.Browser -> {
-					BackHandler(enabled = vm.isMultiSelectMode || vm.currentTab != MainTab.Files || !vm.isRoot) {
+					BackHandler(enabled = vm.isMultiSelectMode || vm.currentTab != MainTab.Home || (!vm.isRoot && vm.currentTab == MainTab.Files)) {
 						if (vm.isMultiSelectMode) {
 							vm.exitMultiSelect()
 						} else if (vm.currentTab == MainTab.Photos && vm.selectedAlbumPath.isNotBlank()) {
 							vm.upAlbum()
 						} else if (vm.currentTab == MainTab.Media && vm.selectedMediaPath.isNotBlank()) {
 							vm.upMedia()
-						} else if (vm.currentTab != MainTab.Files) {
-							vm.currentTab = MainTab.Files
-						} else {
+						} else if (vm.currentTab == MainTab.Files && !vm.isRoot) {
 							vm.up()
+						} else if (vm.currentTab != MainTab.Home) {
+							vm.currentTab = MainTab.Home
 						}
 					}
 					BrowserScreen(

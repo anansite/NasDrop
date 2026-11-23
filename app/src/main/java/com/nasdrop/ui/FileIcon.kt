@@ -42,6 +42,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material3.Surface
+import com.nasdrop.hasAudio
+import com.nasdrop.hasMemo
+import com.nasdrop.audioDurationText
+import com.nasdrop.videoDurationText
 import coil.compose.AsyncImage
 import com.nasdrop.DavEntry
 import com.nasdrop.FileCategory
@@ -90,7 +97,8 @@ fun FileThumbnail(
 					AsyncImage(
 						model = ImageRequest.Builder(LocalContext.current)
 							.data(actualData)
-							.memoryCacheKey("thumb:${entry.path}")
+							.memoryCacheKey("thumb:${entry.path.trim('/')}")
+							.diskCacheKey("thumb:${entry.path.trim('/')}")
 							.size(240, 240)
 							.precision(coil.size.Precision.INEXACT)
 							.allowRgb565(true)
@@ -104,6 +112,13 @@ fun FileThumbnail(
 						},
 						modifier = Modifier.fillMaxSize(),
 					)
+					if (size >= 36.dp) {
+						MediaThumbBadges(
+							entry = entry,
+							modifier = Modifier.fillMaxSize().padding(if (size >= 64.dp) 4.dp else 2.dp),
+							compact = size < 64.dp,
+						)
+					}
 				}
 			} else {
 				FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, urlOf = urlOf, directUrlOf = directUrlOf, modifier = modifier)
@@ -135,7 +150,8 @@ fun FileThumbnail(
 					AsyncImage(
 						model = ImageRequest.Builder(LocalContext.current)
 							.data(url)
-							.memoryCacheKey("thumb:${entry.path}")
+							.memoryCacheKey("thumb:${entry.path.trim('/')}")
+							.diskCacheKey("thumb:${entry.path.trim('/')}")
 							.size(240, 240)
 							.precision(coil.size.Precision.INEXACT)
 							.allowRgb565(true)
@@ -148,6 +164,12 @@ fun FileThumbnail(
 							onThumbnailError?.invoke(entry.path)
 						},
 						modifier = Modifier.fillMaxSize(),
+					)
+					// 视频播放指示标与徽章：置于 AsyncImage 之上，缩略图加载完成后永不消失！
+					MediaThumbBadges(
+						entry = entry,
+						modifier = Modifier.fillMaxSize().padding(if (size >= 64.dp) 4.dp else 2.dp),
+						compact = size < 64.dp,
 					)
 				}
 			} else {
@@ -525,6 +547,115 @@ fun FolderVectorIcon(
 				end = Offset(w * 0.40f, h * 0.38f),
 				strokeWidth = 1.5.dp.toPx(),
 			)
+		}
+	}
+}
+
+/**
+ * 媒体缩略图精致角标：
+ * - 视频：右下角常驻半透明深色微胶囊（播放图标 + 时长）
+ * - 伴随录音：左下角浅蓝高辨识徽标（麦克风图标 + 时长）
+ * - 记事备忘：橙色笔记本微徽标
+ */
+@Composable
+fun MediaThumbBadges(
+	entry: DavEntry,
+	modifier: Modifier = Modifier,
+	compact: Boolean = false,
+) {
+	val hasAudio = entry.hasAudio
+	val hasMemo = entry.hasMemo
+	val isVideo = entry.isVideo
+
+	if (!hasAudio && !hasMemo && !isVideo) return
+
+	Box(modifier = modifier) {
+		// 1. 视频角标：右下角常驻精致播放三角 + 时长
+		if (isVideo) {
+			val durationText = if (!compact) entry.videoDurationText else null
+			Surface(
+				shape = RoundedCornerShape(3.dp),
+				color = Color.Black.copy(alpha = 0.65f),
+				modifier = Modifier.align(Alignment.BottomEnd),
+			) {
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					modifier = Modifier.padding(horizontal = if (durationText != null) 3.5.dp else 2.dp, vertical = 1.5.dp),
+				) {
+					Icon(
+						imageVector = Icons.Rounded.PlayArrow,
+						contentDescription = "视频",
+						tint = Color.White,
+						modifier = Modifier.size(if (compact) 10.dp else 12.dp),
+					)
+					if (durationText != null) {
+						Text(
+							text = durationText,
+							color = Color.White,
+							fontSize = 9.sp,
+							fontWeight = FontWeight.SemiBold,
+							modifier = Modifier.padding(start = 1.dp),
+						)
+					}
+				}
+			}
+		}
+
+		// 2. 语音伴随语与文字笔记角标：左下角
+		if (hasAudio || hasMemo) {
+			Row(
+				modifier = Modifier.align(Alignment.BottomStart),
+				horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				if (hasAudio) {
+					val audioDur = if (!compact) entry.audioDurationText else null
+					Surface(
+						shape = RoundedCornerShape(3.dp),
+						color = Color(0xFF0284C7).copy(alpha = 0.90f),
+					) {
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							modifier = Modifier.padding(horizontal = if (audioDur != null) 3.5.dp else 2.dp, vertical = 1.5.dp),
+						) {
+							Icon(
+								imageVector = Icons.Rounded.Mic,
+								contentDescription = "伴随语音",
+								tint = Color.White,
+								modifier = Modifier.size(if (compact) 9.dp else 11.dp),
+							)
+							if (audioDur != null) {
+								Text(
+									text = audioDur,
+									color = Color.White,
+									fontSize = 9.sp,
+									fontWeight = FontWeight.SemiBold,
+									modifier = Modifier.padding(start = 1.dp),
+								)
+							}
+						}
+					}
+				}
+
+				if (hasMemo) {
+					Surface(
+						shape = RoundedCornerShape(3.dp),
+						color = Color(0xFFEA580C).copy(alpha = 0.90f),
+					) {
+						Box(
+							modifier = Modifier.padding(horizontal = 2.dp, vertical = 1.5.dp),
+							contentAlignment = Alignment.Center,
+						) {
+							Icon(
+								imageVector = Icons.Rounded.Description,
+								contentDescription = "文字记事",
+								tint = Color.White,
+								modifier = Modifier.size(if (compact) 9.dp else 11.dp),
+							)
+						}
+					}
+				}
+			}
 		}
 	}
 }

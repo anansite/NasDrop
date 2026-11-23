@@ -35,8 +35,9 @@ import java.util.concurrent.ConcurrentHashMap
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 enum class MainTab {
-	Files,
+	Home,
 	Photos,
+	Files,
 	Media,
 	Me,
 }
@@ -85,7 +86,7 @@ data class MemoryYearGroup(
 
 /** 文件浏览与传输展示状态；目录和媒体池合并待同步上传项，网络请求不阻塞状态接收。 */
 class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
-	var currentTab by mutableStateOf(MainTab.Files)
+	var currentTab by mutableStateOf(MainTab.Home)
 
 	var path by mutableStateOf("")
 		private set
@@ -394,6 +395,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/** 相册时间线分组数据（按拍摄/修改日期降序） */
 	val currentTabEntries: List<DavEntry>
 		get() = when (currentTab) {
+			MainTab.Home -> (allPhotos + allVideos).distinctBy { it.path }
 			MainTab.Files -> filteredEntries
 			MainTab.Photos -> currentAlbumPhotos
 			MainTab.Media -> currentMediaVideos
@@ -917,10 +919,25 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val meta = PhotoMetadataStore.get(key)
 		if (meta != null && meta.hasThumbnail) {
 			val thumbPath = if (meta.dir.isEmpty()) ".thumbnails/${meta.name}" else "${meta.dir}/.thumbnails/${meta.name}"
-			client?.directUrlFor(thumbPath)?.toString()?.let { return it }
+			val dUrl = client?.directUrlFor(thumbPath)?.toString()
+			if (dUrl != null) return dUrl
 		}
 
-		return client?.thumbnailUrl(key)?.toString()
+		val clientThumb = client?.thumbnailUrl(key)?.toString()
+		if (clientThumb != null) return clientThumb
+
+		// 核心冷启动降级：当 client 尚未就绪时，从 settings.baseUrl 构建确定性缩略图 URL，使 Coil 立即命中本地磁盘缓存
+		val baseUrlStr = app.repo.settings.value.baseUrl
+		val baseUrl = baseUrlStr.toHttpUrlOrNull()
+		if (baseUrl != null) {
+			val encoded = if (key.startsWith("/")) key else "/$key"
+			return baseUrl.newBuilder()
+				.encodedPath("/api/thumbnail")
+				.setQueryParameter("path", encoded)
+				.setQueryParameter("dim", "320")
+				.build().toString()
+		}
+		return null
 	}
 
 	/**
@@ -937,10 +954,24 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val meta = PhotoMetadataStore.get(key)
 		if (meta != null && meta.hasThumbnail) {
 			val thumbPath = if (meta.dir.isEmpty()) ".thumbnails/${meta.name}" else "${meta.dir}/.thumbnails/${meta.name}"
-			client?.directUrlFor(thumbPath)?.toString()?.let { return it }
+			val dUrl = client?.directUrlFor(thumbPath)?.toString()
+			if (dUrl != null) return dUrl
 		}
 
-		return client?.serverThumbUrl(key)?.toString()
+		val clientThumb = client?.serverThumbUrl(key)?.toString()
+		if (clientThumb != null) return clientThumb
+
+		val baseUrlStr = app.repo.settings.value.baseUrl
+		val baseUrl = baseUrlStr.toHttpUrlOrNull()
+		if (baseUrl != null) {
+			val encoded = if (key.startsWith("/")) key else "/$key"
+			return baseUrl.newBuilder()
+				.encodedPath("/api/thumbnail")
+				.setQueryParameter("path", encoded)
+				.setQueryParameter("dim", "320")
+				.build().toString()
+		}
+		return null
 	}
 
 	fun markThumbnailFailed(entryPath: String) {
