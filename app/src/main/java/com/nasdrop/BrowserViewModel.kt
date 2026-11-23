@@ -43,6 +43,13 @@ enum class MainTab {
 	Me,
 }
 
+enum class MediaFilterType(val label: String) {
+	All("全部"),
+	PhotosOnly("仅照片"),
+	VideosOnly("仅视频"),
+	WithAudioMemo("伴随语音/备忘"),
+}
+
 enum class ViewMode {
 	Cards,   // 夸克式极简纯净列表
 	Compact, // 紧凑列表
@@ -175,13 +182,22 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var memoryYearGroups by mutableStateOf<List<MemoryYearGroup>>(emptyList())
 		private set
 
+	/** 媒体筛选模式：全部、仅照片、仅视频、带语音/备忘 */
+	var mediaFilterType by mutableStateOf(MediaFilterType.All)
+
 	/** 当前所选子相册（或全部）照片与视频集合：全面整合照片与视频，按时间倒序统一呈现在相册中 */
 	val currentAlbumPhotos: List<DavEntry>
 		get() {
 			val allMedia = (allPhotos + allVideos).filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
 			val filtered = if (selectedAlbumPath.isBlank() || selectedAlbumPath == "__ALL_FOLDERS__") allMedia
 			else allMedia.filter { isPathWithin(it.path, selectedAlbumPath) }
-			return filtered.sortedByDescending { it.effectiveDate }
+			val typeFiltered = when (mediaFilterType) {
+				MediaFilterType.All -> filtered
+				MediaFilterType.PhotosOnly -> filtered.filter { it.isImage }
+				MediaFilterType.VideosOnly -> filtered.filter { it.isVideo }
+				MediaFilterType.WithAudioMemo -> filtered.filter { it.hasAudio || it.hasMemo }
+			}
+			return typeFiltered.sortedByDescending { it.effectiveDate }
 		}
 
 	/** 整合相册与影音目录列表（滤除冗余的默认影集残留，全面归入统一相册） */

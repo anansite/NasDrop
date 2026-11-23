@@ -2,7 +2,11 @@ package com.nasdrop.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -570,89 +574,92 @@ fun MediaThumbBadges(
 	if (!hasAudio && !hasMemo && !isVideo) return
 
 	Box(modifier = modifier) {
-		// 1. 视频角标：右下角常驻精致播放三角 + 时长
+		// 1. 视频角标：右下角常驻圆润半透明深色微胶囊（播放图标 + 时长）
 		if (isVideo) {
 			val durationText = if (!compact) entry.videoDurationText else null
 			Surface(
-				shape = RoundedCornerShape(3.dp),
-				color = Color.Black.copy(alpha = 0.65f),
-				modifier = Modifier.align(Alignment.BottomEnd),
+				shape = RoundedCornerShape(10.dp),
+				color = Color.Black.copy(alpha = 0.68f),
+				border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.20f)),
+				modifier = Modifier
+					.align(Alignment.BottomEnd)
+					.padding(bottom = 2.dp, end = 2.dp),
 			) {
 				Row(
 					verticalAlignment = Alignment.CenterVertically,
-					modifier = Modifier.padding(horizontal = if (durationText != null) 3.5.dp else 2.dp, vertical = 1.5.dp),
+					modifier = Modifier.padding(
+						horizontal = if (durationText != null) 5.dp else 4.dp,
+						vertical = 2.dp,
+					),
 				) {
 					Icon(
 						imageVector = Icons.Rounded.PlayArrow,
 						contentDescription = "视频",
 						tint = Color.White,
-						modifier = Modifier.size(if (compact) 10.dp else 12.dp),
+						modifier = Modifier.size(if (compact) 11.dp else 13.dp),
 					)
 					if (durationText != null) {
 						Text(
 							text = durationText,
 							color = Color.White,
-							fontSize = 9.sp,
+							fontSize = 9.5.sp,
 							fontWeight = FontWeight.SemiBold,
-							modifier = Modifier.padding(start = 1.dp),
+							modifier = Modifier.padding(start = 2.dp),
 						)
 					}
 				}
 			}
 		}
 
-		// 2. 语音伴随语与文字笔记角标：左下角
+		// 2. 伴随录音与文字备忘：左下角一体化圆润毛玻璃胶囊（排版统一规范）
 		if (hasAudio || hasMemo) {
-			Row(
-				modifier = Modifier.align(Alignment.BottomStart),
-				horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp),
-				verticalAlignment = Alignment.CenterVertically,
+			Surface(
+				shape = RoundedCornerShape(10.dp),
+				color = Color.Black.copy(alpha = 0.68f),
+				border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.20f)),
+				modifier = Modifier
+					.align(Alignment.BottomStart)
+					.padding(bottom = 2.dp, start = 2.dp),
 			) {
-				if (hasAudio) {
-					val audioDur = if (!compact) entry.audioDurationText else null
-					Surface(
-						shape = RoundedCornerShape(3.dp),
-						color = Color(0xFF0284C7).copy(alpha = 0.90f),
-					) {
-						Row(
-							verticalAlignment = Alignment.CenterVertically,
-							modifier = Modifier.padding(horizontal = if (audioDur != null) 3.5.dp else 2.dp, vertical = 1.5.dp),
-						) {
-							Icon(
-								imageVector = Icons.Rounded.Mic,
-								contentDescription = "伴随语音",
-								tint = Color.White,
-								modifier = Modifier.size(if (compact) 9.dp else 11.dp),
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+					horizontalArrangement = Arrangement.spacedBy(3.dp),
+				) {
+					if (hasAudio) {
+						val audioDur = if (!compact) entry.audioDurationText else null
+						Icon(
+							imageVector = Icons.Rounded.Mic,
+							contentDescription = "伴随录音",
+							tint = Color(0xFF38BDF8),
+							modifier = Modifier.size(if (compact) 10.dp else 12.dp),
+						)
+						if (audioDur != null) {
+							Text(
+								text = audioDur,
+								color = Color.White,
+								fontSize = 9.5.sp,
+								fontWeight = FontWeight.SemiBold,
 							)
-							if (audioDur != null) {
-								Text(
-									text = audioDur,
-									color = Color.White,
-									fontSize = 9.sp,
-									fontWeight = FontWeight.SemiBold,
-									modifier = Modifier.padding(start = 1.dp),
-								)
-							}
 						}
 					}
-				}
 
-				if (hasMemo) {
-					Surface(
-						shape = RoundedCornerShape(3.dp),
-						color = Color(0xFFEA580C).copy(alpha = 0.90f),
-					) {
+					if (hasAudio && hasMemo) {
 						Box(
-							modifier = Modifier.padding(horizontal = 2.dp, vertical = 1.5.dp),
-							contentAlignment = Alignment.Center,
-						) {
-							Icon(
-								imageVector = Icons.Rounded.Description,
-								contentDescription = "文字记事",
-								tint = Color.White,
-								modifier = Modifier.size(if (compact) 9.dp else 11.dp),
-							)
-						}
+							modifier = Modifier
+								.width(1.dp)
+								.height(9.dp)
+								.background(Color.White.copy(alpha = 0.25f)),
+						)
+					}
+
+					if (hasMemo) {
+						Icon(
+							imageVector = Icons.Rounded.EditNote,
+							contentDescription = "文字备忘",
+							tint = Color(0xFF34D399),
+							modifier = Modifier.size(if (compact) 11.dp else 13.dp),
+						)
 					}
 				}
 			}

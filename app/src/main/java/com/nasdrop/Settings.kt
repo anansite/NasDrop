@@ -11,6 +11,7 @@ enum class ConnectionMode(val title: String, val desc: String) {
 /** 持久化的服务、上传目录及网络配置；密码保留用户原始输入。 */
 data class Settings(
 	val baseUrl: String = "https://nas.205002.xyz/",
+	val navUrl: String = "https://nav.205002.xyz/",
 	val user: String = "admin",
 	val password: String = "admin",
 	val lastDir: String = "",
@@ -37,8 +38,10 @@ data class Settings(
 		require(url.query == null && url.fragment == null) { "服务地址不能包含查询参数或片段" }
 		require(user.trim().isNotEmpty()) { "请输入账号" }
 		val normalizedUrl = if (url.encodedPath.endsWith('/')) url else url.newBuilder().addPathSegment("").build()
+		val navTrim = navUrl.trim().ifBlank { "https://nav.205002.xyz/" }
+		val normalizedNav = if ("://" in navTrim) navTrim else "https://$navTrim"
 		return copy(
-			baseUrl = normalizedUrl.toString(), user = user.trim(), lastDir = lastDir.trim('/'),
+			baseUrl = normalizedUrl.toString(), navUrl = normalizedNav, user = user.trim(), lastDir = lastDir.trim('/'),
 			useTailscale = connectionMode != ConnectionMode.Direct,
 			hostname = hostname.trim().ifBlank { "nasdrop-android" }, authKey = authKey.trim(),
 			themePalette = themePalette.trim().ifBlank { "AURORA" },

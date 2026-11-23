@@ -19,6 +19,7 @@ class Prefs(private val context: Context) {
 
 	private object Keys {
 		val baseUrl = stringPreferencesKey("base_url")
+		val navUrl = stringPreferencesKey("nav_url")
 		val user = stringPreferencesKey("user")
 		val password = stringPreferencesKey("password")
 		val lastDir = stringPreferencesKey("last_dir")
@@ -45,6 +46,7 @@ class Prefs(private val context: Context) {
 		val normalized = settings.normalized()
 		context.dataStore.edit {
 			it[Keys.baseUrl] = normalized.baseUrl
+			it[Keys.navUrl] = normalized.navUrl
 			it[Keys.user] = normalized.user
 			it[Keys.password] = normalized.password
 			it[Keys.lastDir] = normalized.lastDir
@@ -115,6 +117,7 @@ class Prefs(private val context: Context) {
 
 		return Settings(
 			baseUrl = this[Keys.baseUrl] ?: Settings().baseUrl,
+			navUrl = this[Keys.navUrl] ?: Settings().navUrl,
 			user = this[Keys.user] ?: Settings().user,
 			password = this[Keys.password] ?: "admin",
 			lastDir = this[Keys.lastDir] ?: "",

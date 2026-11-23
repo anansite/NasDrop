@@ -372,7 +372,7 @@ fun BrowserScreen(
 							activeTransferCount = vm.activeTransferCount,
 							hasUpdate = vm.hasUpdate,
 							onOpenUpdateDialog = { vm.openUpdateDialog() },
-							onUploadPhoto = { photoPicker.launch(arrayOf("image/*")) },
+							onUploadPhoto = { photoPicker.launch(arrayOf("image/*", "video/*")) },
 							onUpAlbum = { vm.upAlbum() },
 							onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 							onDeleteCurrentAlbum = if (vm.selectedAlbumPath == "Photos/默认相册" || vm.selectedAlbumPath.endsWith("/默认相册")) null else {
@@ -526,6 +526,8 @@ fun BrowserScreen(
 								memoryYearGroups = vm.memoryYearGroups,
 								selectedAlbumPath = vm.selectedAlbumPath,
 								folderIcons = vm.folderIcons,
+								mediaFilterType = vm.mediaFilterType,
+								onClearFilter = { vm.mediaFilterType = BrowserViewModel.MediaFilterType.All },
 								isRefreshing = vm.isRefreshing,
 								onRefresh = { vm.pullRefresh() },
 								isMulti = vm.isMultiSelectMode,
@@ -610,7 +612,7 @@ fun BrowserScreen(
 					DraggableUploadFab(
 						currentTab = vm.currentTab,
 						onUploadFile = { filePicker.launch(arrayOf("*/*")) },
-						onUploadPhoto = { photoPicker.launch(arrayOf("image/*")) },
+						onUploadPhoto = { photoPicker.launch(arrayOf("image/*", "video/*")) },
 						onUploadVideo = { videoPicker.launch(arrayOf("video/*")) },
 					)
 				}
@@ -1383,48 +1385,6 @@ private fun CollectionTopBar(
 			if (hasUpdate && onOpenUpdateDialog != null) {
 				UpdateBadgeButton(onClick = onOpenUpdateDialog)
 			}
-			Box {
-				IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
-					Icon(Icons.Rounded.MoreVert, contentDescription = "更多操作")
-				}
-				if (hasUpdate) {
-					Box(
-						modifier = Modifier
-							.size(7.dp)
-							.clip(CircleShape)
-							.background(MaterialTheme.colorScheme.error)
-							.align(Alignment.TopEnd)
-							.padding(top = 4.dp, end = 4.dp),
-					)
-				}
-				DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-					if (hasUpdate && onOpenUpdateDialog != null) {
-						DropdownMenuItem(
-							text = {
-								Row(verticalAlignment = Alignment.CenterVertically) {
-									Icon(Icons.Rounded.Upgrade, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-									Spacer(Modifier.width(8.dp))
-									Text("发现新版本", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-								}
-							},
-							onClick = { menuOpen = false; onOpenUpdateDialog() }
-						)
-					}
-					DropdownMenuItem(
-						text = {
-							Row(verticalAlignment = Alignment.CenterVertically) {
-								Text("设置")
-								if (hasUpdate) {
-									Spacer(Modifier.width(6.dp))
-									Box(Modifier.size(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.error))
-								}
-							}
-						},
-						onClick = { menuOpen = false; onSettings() },
-						leadingIcon = { Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(18.dp)) },
-					)
-				}
-			}
 		}
 	}
 }
@@ -1762,10 +1722,6 @@ private fun HomeTopBar(
 				if (hasUpdate) {
 					UpdateBadgeButton(onClick = onOpenUpdateDialog)
 				}
-
-				IconButton(onClick = onOpenSettings) {
-					Icon(Icons.Rounded.Settings, contentDescription = "设置", tint = MaterialTheme.colorScheme.onSurface)
-				}
 			}
 		}
 	}
@@ -1840,48 +1796,6 @@ private fun FilesTopBar(
 			TransferButton(vm.activeTransferCount, onOpenTransferSheet)
 			if (vm.hasUpdate) {
 				UpdateBadgeButton(onClick = { vm.openUpdateDialog() })
-			}
-			Box {
-				IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
-					Icon(Icons.Rounded.MoreVert, contentDescription = "更多操作")
-				}
-				if (vm.hasUpdate) {
-					Box(
-						modifier = Modifier
-							.size(7.dp)
-							.clip(CircleShape)
-							.background(MaterialTheme.colorScheme.error)
-							.align(Alignment.TopEnd)
-							.padding(top = 4.dp, end = 4.dp),
-					)
-				}
-				DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-					if (vm.hasUpdate) {
-						DropdownMenuItem(
-							text = {
-								Row(verticalAlignment = Alignment.CenterVertically) {
-									Icon(Icons.Rounded.Upgrade, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-									Spacer(Modifier.width(8.dp))
-									Text("发现新版本", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-								}
-							},
-							onClick = { menuOpen = false; vm.openUpdateDialog() }
-						)
-					}
-					DropdownMenuItem(
-						text = {
-							Row(verticalAlignment = Alignment.CenterVertically) {
-								Text("设置")
-								if (vm.hasUpdate) {
-									Spacer(Modifier.width(6.dp))
-									Box(Modifier.size(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.error))
-								}
-							}
-						},
-						onClick = { menuOpen = false; onOpenSettings() },
-						leadingIcon = { Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(18.dp)) },
-					)
-				}
 			}
 		}
 
@@ -3149,22 +3063,18 @@ private fun HomeScreenContent(
 			verticalArrangement = Arrangement.spacedBy(16.dp),
 			contentPadding = PaddingValues(top = 12.dp, bottom = 96.dp),
 		) {
-			// 1. NAS 运行概览与数据统计卡片（点击直达系统与设置监控中心）
+			// 1. NAS 数据资产概览卡片（支持点击数字快捷筛选相册内容）
 			item(key = "home_stats_card") {
 				Surface(
 					shape = RoundedCornerShape(20.dp),
 					color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
 					border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-					modifier = Modifier
-						.fillMaxWidth()
-						.clip(RoundedCornerShape(20.dp))
-						.clickable { onOpenSettings() },
+					modifier = Modifier.fillMaxWidth(),
 				) {
-					Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+					Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
 						Row(
 							modifier = Modifier.fillMaxWidth(),
 							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.SpaceBetween,
 						) {
 							Row(
 								verticalAlignment = Alignment.CenterVertically,
@@ -3177,33 +3087,10 @@ private fun HomeScreenContent(
 									modifier = Modifier.size(20.dp),
 								)
 								Text(
-									text = "家庭私有云存储",
+									text = "NasDrop",
 									style = MaterialTheme.typography.titleMedium,
 									fontWeight = FontWeight.Bold,
 								)
-							}
-							Surface(
-								shape = RoundedCornerShape(12.dp),
-								color = Color(0xFF10B981).copy(alpha = 0.15f),
-							) {
-								Row(
-									verticalAlignment = Alignment.CenterVertically,
-									horizontalArrangement = Arrangement.spacedBy(4.dp),
-									modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-								) {
-									Box(
-										modifier = Modifier
-											.size(6.dp)
-											.clip(CircleShape)
-											.background(Color(0xFF10B981)),
-									)
-									Text(
-										text = "运行正常",
-										fontSize = 11.sp,
-										fontWeight = FontWeight.SemiBold,
-										color = Color(0xFF059669),
-									)
-								}
 							}
 						}
 
@@ -3215,19 +3102,31 @@ private fun HomeScreenContent(
 							HomeStatItem(
 								number = vm.allPhotos.size.toString(),
 								label = "照片",
-								onClick = { vm.currentTab = MainTab.Photos },
+								onClick = {
+									vm.currentTab = MainTab.Photos
+									vm.selectedAlbumPath = ""
+									vm.mediaFilterType = BrowserViewModel.MediaFilterType.PhotosOnly
+								},
 							)
 							HomeStatDivider()
 							HomeStatItem(
 								number = vm.allVideos.size.toString(),
 								label = "视频",
-								onClick = { vm.currentTab = MainTab.Photos },
+								onClick = {
+									vm.currentTab = MainTab.Photos
+									vm.selectedAlbumPath = ""
+									vm.mediaFilterType = BrowserViewModel.MediaFilterType.VideosOnly
+								},
 							)
 							HomeStatDivider()
 							HomeStatItem(
 								number = vm.allAlbumFolders.size.toString(),
 								label = "相册",
-								onClick = { vm.currentTab = MainTab.Photos },
+								onClick = {
+									vm.currentTab = MainTab.Photos
+									vm.selectedAlbumPath = "__ALL_FOLDERS__"
+									vm.mediaFilterType = BrowserViewModel.MediaFilterType.All
+								},
 							)
 							HomeStatDivider()
 							val memoCount = remember(vm.allPhotos, vm.allVideos) {
@@ -3236,7 +3135,11 @@ private fun HomeScreenContent(
 							HomeStatItem(
 								number = memoCount.toString(),
 								label = "伴随语音",
-								onClick = {},
+								onClick = {
+									vm.currentTab = MainTab.Photos
+									vm.selectedAlbumPath = ""
+									vm.mediaFilterType = BrowserViewModel.MediaFilterType.WithAudioMemo
+								},
 							)
 						}
 					}
@@ -3514,6 +3417,8 @@ private fun PhotoTimelineContent(
 	memoryYearGroups: List<com.nasdrop.MemoryYearGroup> = emptyList(),
 	selectedAlbumPath: String,
 	folderIcons: Map<String, String> = emptyMap(),
+	mediaFilterType: BrowserViewModel.MediaFilterType = BrowserViewModel.MediaFilterType.All,
+	onClearFilter: () -> Unit = {},
 	isRefreshing: Boolean = false,
 	onRefresh: () -> Unit = {},
 	isMulti: Boolean = false,
@@ -3792,6 +3697,66 @@ private fun PhotoTimelineContent(
 							fontWeight = FontWeight.SemiBold,
 							color = MaterialTheme.colorScheme.primary
 						)
+					}
+				}
+			}
+		}
+
+		if (mediaFilterType != BrowserViewModel.MediaFilterType.All) {
+			Surface(
+				shape = RoundedCornerShape(10.dp),
+				color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 14.dp, vertical = 4.dp),
+			) {
+				Row(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(horizontal = 12.dp, vertical = 6.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.SpaceBetween,
+				) {
+					Row(
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(6.dp),
+					) {
+						Icon(
+							imageVector = Icons.Rounded.FilterList,
+							contentDescription = null,
+							tint = MaterialTheme.colorScheme.primary,
+							modifier = Modifier.size(16.dp),
+						)
+						Text(
+							text = "当前筛选：${mediaFilterType.label} (${currentPhotos.size})",
+							fontSize = 12.sp,
+							fontWeight = FontWeight.SemiBold,
+							color = MaterialTheme.colorScheme.primary,
+						)
+					}
+					Surface(
+						shape = RoundedCornerShape(6.dp),
+						color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+						modifier = Modifier.clickable { onClearFilter() },
+					) {
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(2.dp),
+							modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+						) {
+							Icon(
+								imageVector = Icons.Rounded.Close,
+								contentDescription = "清除",
+								modifier = Modifier.size(12.dp),
+								tint = MaterialTheme.colorScheme.onSurfaceVariant,
+							)
+							Text(
+								text = "清除筛选",
+								fontSize = 10.5.sp,
+								fontWeight = FontWeight.Medium,
+								color = MaterialTheme.colorScheme.onSurfaceVariant,
+							)
+						}
 					}
 				}
 			}

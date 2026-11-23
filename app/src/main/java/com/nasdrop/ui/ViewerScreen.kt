@@ -108,6 +108,8 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import com.nasdrop.VideoCacheManager
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
@@ -1778,20 +1780,24 @@ fun VideoPlayer(
 
 	val player = remember(url) {
 		val factory = DefaultMediaSourceFactory(context)
-			.setDataSourceFactory(OkHttpDataSource.Factory(http))
-		// 缓冲调优：慢速隧道下默认起播门槛(2.5s)太高，一直转圈。
-		// 降到 0.5s 起播、0.75s 恢复，同时把最大缓冲拉到 30s 减少二次卡顿。
-		// 原生 /p/?sign= 直链支持 Range，配合大缓冲能稳定边下边播。
+			.setDataSourceFactory(VideoCacheManager.createDataSourceFactory(context, http))
+		// 缓冲深度与恢复调优：配合 256MB LRU 磁盘缓存，起播门槛拉到 1.5s 消除饥饿卡顿，
+		// 恢复门槛 3s，最大缓冲深度拉到 60s，并保留 15s 后向缓冲（回退拖动秒开无网络请求）
 		val loadControl = DefaultLoadControl.Builder()
 			.setBufferDurationsMs(
-				10_000,   // minBufferMs
-				30_000,   // maxBufferMs
-				500,      // bufferForPlaybackMs：攒够 0.5s 就起播
-				750,      // bufferForPlaybackAfterRebufferMs
+				15_000,   // minBufferMs (15s)
+				60_000,   // maxBufferMs (60s)
+				1_500,    // bufferForPlaybackMs (1.5s 安全起播)
+				3_000,    // bufferForPlaybackAfterRebufferMs (3s 稳定恢复)
 			)
+			.setBackBuffer(15_000, true)
 			.setPrioritizeTimeOverSizeThresholds(true)
 			.build()
-		ExoPlayer.Builder(context)
+
+		val renderersFactory = DefaultRenderersFactory(context)
+			.setEnableDecoderFallback(true)
+
+		ExoPlayer.Builder(context, renderersFactory)
 			.setMediaSourceFactory(factory)
 			.setLoadControl(loadControl)
 			.build()
@@ -1901,7 +1907,7 @@ fun VideoPlayer(
 					this.player = player
 					useController = false
 					this.resizeMode = resizeMode
-					setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
+					setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
 				}
 			},
 			update = { view ->
