@@ -186,6 +186,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.layout.offset
@@ -2964,15 +2965,13 @@ private fun PhotoTimelineContent(
 				Surface(
 					modifier = Modifier
 						.height(34.dp)
+						.zIndex(if (isDragging) 10f else 1f)
 						.graphicsLayer {
 							if (isDragging) {
 								translationX = dragOffsetXPx
 								scaleX = 1.08f
 								scaleY = 1.08f
 								shadowElevation = 8.dp.toPx()
-								zIndex = 10f
-							} else {
-								zIndex = 1f
 							}
 						}
 						.pointerInput(album.path, displayAlbums) {
@@ -3910,15 +3909,13 @@ private fun MediaStreamContent(
 				Surface(
 					modifier = Modifier
 						.height(34.dp)
+						.zIndex(if (isDragging) 10f else 1f)
 						.graphicsLayer {
 							if (isDragging) {
 								translationX = dragOffsetXPx
 								scaleX = 1.08f
 								scaleY = 1.08f
 								shadowElevation = 8.dp.toPx()
-								zIndex = 10f
-							} else {
-								zIndex = 1f
 							}
 						}
 						.pointerInput(folder.path, displayMediaFolders) {
