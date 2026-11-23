@@ -16,6 +16,7 @@ class NasDropApp : Application(), ImageLoaderFactory {
 		super.onCreate()
 		prefs = Prefs(this)
 		repo = Repository(this)
+		PhotoMetadataStore.init(this)
 	}
 
 	override fun newImageLoader(): ImageLoader = repo.imageLoader

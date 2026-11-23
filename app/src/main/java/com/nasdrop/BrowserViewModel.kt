@@ -434,11 +434,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	init {
 		PhotoMetadataStore.init(app)
+		// 构造瞬间同步读取本地 SQLite，0ms 秒开无任何等待
+		loadMediaFromLocalDb()
 		loadUserPreferences()
 		open("")
-		// 优先从本地 SQLite 数据库加载已有的媒体元数据，0ms 秒开无网络等待
 		viewModelScope.launch {
-			loadMediaFromLocalDb()
 			snapshotFlow { PhotoMetadataStore.revision }.collect {
 				loadMediaFromLocalDb()
 			}
@@ -778,7 +778,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		mediaScanJob?.cancel()
 		val version = ++mediaScanVersion
 		mediaDirty = false
-		mediaScanning = true
+		val hasLocalMedia = allPhotos.isNotEmpty() || allVideos.isNotEmpty()
+		if (!hasLocalMedia) {
+			mediaScanning = true
+		}
 		mediaError = null
 		mediaScanJob = viewModelScope.launch {
 			try {

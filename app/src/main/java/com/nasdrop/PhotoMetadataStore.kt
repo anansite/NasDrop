@@ -57,7 +57,13 @@ object PhotoMetadataStore {
 		private set
 
 	fun notifyUpdated() {
-		revision++
+		if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+			revision++
+		} else {
+			android.os.Handler(android.os.Looper.getMainLooper()).post {
+				revision++
+			}
+		}
 	}
 
 	fun init(context: Context) {
@@ -65,9 +71,8 @@ object PhotoMetadataStore {
 			synchronized(this) {
 				if (dbHelper == null) {
 					dbHelper = DBHelper(context.applicationContext)
-					ioScope.launch {
-						loadInitialCache()
-					}
+					// 同步毫秒级加载本地 SQLite 存量元数据，保证后续 ViewModel 初始化瞬间就能直接读到全部照片
+					loadInitialCache()
 				}
 			}
 		}
