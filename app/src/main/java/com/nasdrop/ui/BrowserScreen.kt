@@ -477,6 +477,7 @@ fun BrowserScreen(
 								groups = vm.photoTimelineGroups,
 								allAlbums = vm.allAlbumFolders,
 								allPhotos = vm.allPhotos,
+								memoryYearGroups = vm.memoryYearGroups,
 								selectedAlbumPath = vm.selectedAlbumPath,
 								folderIcons = vm.folderIcons,
 								isRefreshing = vm.isRefreshing,
@@ -2903,6 +2904,7 @@ private fun PhotoTimelineContent(
 	groups: List<com.nasdrop.TimelineGroup>,
 	allAlbums: List<DavEntry>,
 	allPhotos: List<DavEntry> = emptyList(),
+	memoryYearGroups: List<com.nasdrop.MemoryYearGroup> = emptyList(),
 	selectedAlbumPath: String,
 	folderIcons: Map<String, String> = emptyMap(),
 	isRefreshing: Boolean = false,
@@ -2919,7 +2921,7 @@ private fun PhotoTimelineContent(
 	onRenameAlbum: (DavEntry) -> Unit = {},
 	onChangeIcon: (DavEntry) -> Unit = {},
 	onDeleteAlbum: (DavEntry) -> Unit = {},
-	onReorderAlbums: (from: Int, to: Int) -> Unit = { _, _ -> },
+	onReorderAlbums: (fromPath: String, toPath: String) -> Unit = { _, _ -> },
 	onCreateAlbum: () -> Unit,
 	urlOf: (String) -> String?,
 	directUrlOf: ((String) -> String?)? = null,
@@ -2933,9 +2935,11 @@ private fun PhotoTimelineContent(
 		val defaults = visible.filter { it.name == "默认相册" || it.path == "Photos/默认相册" }
 		custom + defaults
 	}
+	val currentDisplayAlbums by rememberUpdatedState(displayAlbums)
 	val haptic = LocalHapticFeedback.current
 	var draggingIndex by remember { mutableStateOf<Int?>(null) }
 	var dragOffsetXPx by remember { mutableFloatStateOf(0f) }
+	var activeMemoryYearGroup by remember { mutableStateOf<com.nasdrop.MemoryYearGroup?>(null) }
 
 	Column(modifier = Modifier.fillMaxSize()) {
 		// 1. 顶部子相册分类横滑条（高质感 34dp 统一高度胶囊，彻底解决高度跳动）
@@ -3034,7 +3038,7 @@ private fun PhotoTimelineContent(
 								shadowElevation = 8.dp.toPx()
 							}
 						}
-						.pointerInput(album.path, displayAlbums) {
+						.pointerInput(album.path) {
 							detectDragGesturesAfterLongPress(
 								onDragStart = {
 									draggingIndex = index
@@ -3045,14 +3049,19 @@ private fun PhotoTimelineContent(
 									change.consume()
 									dragOffsetXPx += dragAmount.x
 									val curr = draggingIndex ?: return@detectDragGesturesAfterLongPress
+									val list = currentDisplayAlbums
 									val stepPx = 70.dp.toPx()
-									if (dragOffsetXPx > stepPx && curr < displayAlbums.size - 1) {
-										onReorderAlbums(curr, curr + 1)
+									if (dragOffsetXPx > stepPx && curr < list.size - 1) {
+										val fromPath = list[curr].path
+										val toPath = list[curr + 1].path
+										onReorderAlbums(fromPath, toPath)
 										draggingIndex = curr + 1
 										dragOffsetXPx -= stepPx
 										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 									} else if (dragOffsetXPx < -stepPx && curr > 0) {
-										onReorderAlbums(curr, curr - 1)
+										val fromPath = list[curr].path
+										val toPath = list[curr - 1].path
+										onReorderAlbums(fromPath, toPath)
 										draggingIndex = curr - 1
 										dragOffsetXPx += stepPx
 										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -3258,6 +3267,17 @@ private fun PhotoTimelineContent(
 									onUpdateSelectionPaths = { onUpdateSelectionPaths?.invoke(it) },
 								),
 						) {
+							// 顶部“那年今天”精选横向卡片（全部照片且有历史记录时呈现，支持多年代横滑预览）
+							if (selectedAlbumPath.isBlank() && memoryYearGroups.isNotEmpty()) {
+								item(span = { GridItemSpan(3) }, key = "memories_banner_carousel") {
+									MemoriesBanner(
+										memoryYearGroups = memoryYearGroups,
+										onClickGroup = { activeMemoryYearGroup = it },
+										urlOf = urlOf,
+										directUrlOf = directUrlOf,
+									)
+								}
+							}
 							groups.forEach { group ->
 								item(span = { GridItemSpan(3) }) {
 									Row(
@@ -3442,6 +3462,20 @@ private fun PhotoTimelineContent(
 				}
 			}
 		}
+	}
+
+	if (activeMemoryYearGroup != null) {
+		MemoryDetailModalSheet(
+			yearGroup = activeMemoryYearGroup!!,
+			onDismiss = { activeMemoryYearGroup = null },
+			onSelectAlbum = {
+				activeMemoryYearGroup = null
+				onSelectAlbum(it)
+			},
+			onOpenImage = onOpenImage,
+			urlOf = urlOf,
+			directUrlOf = directUrlOf,
+		)
 	}
 }
 
@@ -3912,7 +3946,7 @@ private fun MediaStreamContent(
 	onRenameMediaFolder: (DavEntry) -> Unit = {},
 	onChangeIcon: (DavEntry) -> Unit = {},
 	onDeleteMediaFolder: (DavEntry) -> Unit = {},
-	onReorderMediaFolders: (from: Int, to: Int) -> Unit = { _, _ -> },
+	onReorderMediaFolders: (fromPath: String, toPath: String) -> Unit = { _, _ -> },
 	onCreateMediaFolder: () -> Unit,
 	urlOf: (String) -> String?,
 	directUrlOf: ((String) -> String?)? = null,
@@ -3925,6 +3959,7 @@ private fun MediaStreamContent(
 		val defaults = visible.filter { it.name == "默认影集" || it.name == "默认影音" || it.path == "movies/默认影集" || it.path == "movies/默认影音" }
 		custom + defaults
 	}
+	val currentDisplayMediaFolders by rememberUpdatedState(displayMediaFolders)
 	val haptic = LocalHapticFeedback.current
 	var draggingIndex by remember { mutableStateOf<Int?>(null) }
 	var dragOffsetXPx by remember { mutableFloatStateOf(0f) }
@@ -4026,7 +4061,7 @@ private fun MediaStreamContent(
 								shadowElevation = 8.dp.toPx()
 							}
 						}
-						.pointerInput(folder.path, displayMediaFolders) {
+						.pointerInput(folder.path) {
 							detectDragGesturesAfterLongPress(
 								onDragStart = {
 									draggingIndex = index
@@ -4037,14 +4072,19 @@ private fun MediaStreamContent(
 									change.consume()
 									dragOffsetXPx += dragAmount.x
 									val curr = draggingIndex ?: return@detectDragGesturesAfterLongPress
+									val list = currentDisplayMediaFolders
 									val stepPx = 70.dp.toPx()
-									if (dragOffsetXPx > stepPx && curr < displayMediaFolders.size - 1) {
-										onReorderMediaFolders(curr, curr + 1)
+									if (dragOffsetXPx > stepPx && curr < list.size - 1) {
+										val fromPath = list[curr].path
+										val toPath = list[curr + 1].path
+										onReorderMediaFolders(fromPath, toPath)
 										draggingIndex = curr + 1
 										dragOffsetXPx -= stepPx
 										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 									} else if (dragOffsetXPx < -stepPx && curr > 0) {
-										onReorderMediaFolders(curr, curr - 1)
+										val fromPath = list[curr].path
+										val toPath = list[curr - 1].path
+										onReorderMediaFolders(fromPath, toPath)
 										draggingIndex = curr - 1
 										dragOffsetXPx += stepPx
 										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -5823,6 +5863,317 @@ private fun DraggableUploadFab(
 		) {
 			Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
 					Icon(imageVector = icon, contentDescription = label, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(24.dp))
+			}
+		}
+	}
+}
+
+@Composable
+private fun MemoriesBanner(
+	memoryYearGroups: List<com.nasdrop.MemoryYearGroup>,
+	onClickGroup: (com.nasdrop.MemoryYearGroup) -> Unit,
+	urlOf: (String) -> String?,
+	directUrlOf: ((String) -> String?)?,
+	modifier: Modifier = Modifier,
+) {
+	Column(
+		modifier = modifier
+			.fillMaxWidth()
+			.padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp)
+	) {
+		LazyRow(
+			horizontalArrangement = Arrangement.spacedBy(10.dp),
+			contentPadding = PaddingValues(horizontal = 2.dp),
+			modifier = Modifier.fillMaxWidth()
+		) {
+			items(memoryYearGroups, key = { it.year }) { group ->
+				Surface(
+					modifier = Modifier
+						.width(if (memoryYearGroups.size == 1) 320.dp else 260.dp)
+						.height(116.dp)
+						.clip(RoundedCornerShape(16.dp))
+						.clickable { onClickGroup(group) },
+					shape = RoundedCornerShape(16.dp),
+					shadowElevation = 3.dp,
+					color = MaterialTheme.colorScheme.surfaceVariant,
+				) {
+					Box(modifier = Modifier.fillMaxSize()) {
+						// 封面图
+						val coverTarget = urlOf(group.coverEntry.path) ?: directUrlOf?.invoke(group.coverEntry.path)
+						if (!coverTarget.isNullOrBlank()) {
+							AsyncImage(
+								model = coverTarget,
+								contentDescription = null,
+								contentScale = ContentScale.Crop,
+								modifier = Modifier.fillMaxSize(),
+							)
+						} else {
+							Box(
+								modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
+								contentAlignment = Alignment.Center,
+							) {
+								Icon(
+									Icons.Rounded.PhotoLibrary,
+									contentDescription = null,
+									tint = MaterialTheme.colorScheme.primary,
+									modifier = Modifier.size(36.dp)
+								)
+							}
+						}
+
+						// 半透明渐变遮罩，确保文字无论在任何背景下均极度清晰
+						Box(
+							modifier = Modifier
+								.fillMaxSize()
+								.background(
+									Brush.verticalGradient(
+										colors = listOf(
+											Color.Black.copy(alpha = 0.35f),
+											Color.Transparent,
+											Color.Black.copy(alpha = 0.82f),
+										)
+									)
+								)
+						)
+
+						// 顶部轻量标签
+						Row(
+							modifier = Modifier
+								.align(Alignment.TopStart)
+								.padding(8.dp)
+								.background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+								.padding(horizontal = 7.dp, vertical = 2.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(3.dp),
+						) {
+							Text(
+								"✨ 那年今天",
+								fontSize = 10.5.sp,
+								fontWeight = FontWeight.SemiBold,
+								color = Color.White
+							)
+						}
+
+						// 底部核心信息（精简空间，拒绝冗余文字）
+						Column(
+							modifier = Modifier
+								.align(Alignment.BottomStart)
+								.padding(horizontal = 10.dp, vertical = 8.dp)
+						) {
+							Text(
+								"${group.yearsAgo}年前 · ${group.year}",
+								fontSize = 15.sp,
+								fontWeight = FontWeight.Bold,
+								color = Color.White,
+								maxLines = 1,
+							)
+							Spacer(Modifier.height(2.dp))
+							val countsStr = buildString {
+								if (group.photoCount > 0) append("${group.photoCount}张照片")
+								if (group.videoCount > 0) {
+									if (isNotEmpty()) append(" · ")
+									append("${group.videoCount}个视频")
+								}
+								if (group.albumGroups.size > 1) {
+									if (isNotEmpty()) append(" · ")
+									append("${group.albumGroups.size}个相册")
+								}
+							}
+							Text(
+								countsStr,
+								fontSize = 11.5.sp,
+								color = Color.White.copy(alpha = 0.88f),
+								maxLines = 1,
+							)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MemoryDetailModalSheet(
+	yearGroup: com.nasdrop.MemoryYearGroup,
+	onDismiss: () -> Unit,
+	onSelectAlbum: (String) -> Unit,
+	onOpenImage: (DavEntry) -> Unit,
+	urlOf: (String) -> String?,
+	directUrlOf: ((String) -> String?)?,
+) {
+	ModalBottomSheet(
+		onDismissRequest = onDismiss,
+		sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+		containerColor = MaterialTheme.colorScheme.surface,
+		shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+	) {
+		Column(
+			modifier = Modifier
+				.fillMaxWidth()
+				.fillMaxHeight(0.85f)
+		) {
+			// 顶部栏
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 16.dp, vertical = 10.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Column(modifier = Modifier.weight(1f)) {
+					Text(
+						"${yearGroup.yearsAgo}年前的今天 · ${yearGroup.year}",
+						style = MaterialTheme.typography.titleMedium,
+						fontWeight = FontWeight.Bold,
+					)
+					Spacer(Modifier.height(2.dp))
+					Text(
+						buildString {
+							if (yearGroup.photoCount > 0) append("${yearGroup.photoCount}张照片")
+							if (yearGroup.videoCount > 0) {
+								if (isNotEmpty()) append(" · ")
+								append("${yearGroup.videoCount}个视频")
+							}
+						},
+						style = MaterialTheme.typography.bodySmall,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+					)
+				}
+				IconButton(onClick = onDismiss) {
+					Icon(Icons.Rounded.Close, contentDescription = "关闭")
+				}
+			}
+
+			HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+			LazyColumn(
+				modifier = Modifier.fillMaxSize(),
+				contentPadding = PaddingValues(bottom = 32.dp),
+			) {
+				for (album in yearGroup.albumGroups) {
+					// 相册分组标题栏
+					item(key = "album_header_${album.albumPath}") {
+						Row(
+							modifier = Modifier
+								.fillMaxWidth()
+								.padding(horizontal = 16.dp, vertical = 10.dp),
+							verticalAlignment = Alignment.CenterVertically,
+						) {
+							Icon(
+								Icons.Rounded.PhotoLibrary,
+								contentDescription = null,
+								tint = MaterialTheme.colorScheme.primary,
+								modifier = Modifier.size(18.dp)
+							)
+							Spacer(Modifier.width(8.dp))
+							Text(
+								album.albumName,
+								style = MaterialTheme.typography.titleSmall,
+								fontWeight = FontWeight.Bold,
+							)
+							Spacer(Modifier.width(6.dp))
+							Text(
+								"${album.items.size}项",
+								style = MaterialTheme.typography.bodySmall,
+								color = MaterialTheme.colorScheme.onSurfaceVariant,
+							)
+							Spacer(Modifier.weight(1f))
+							if (album.albumPath.isNotBlank()) {
+								Surface(
+									modifier = Modifier
+										.height(26.dp)
+										.clip(RoundedCornerShape(13.dp))
+										.clickable { onSelectAlbum(album.albumPath) },
+									color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+								) {
+									Row(
+										modifier = Modifier.padding(horizontal = 9.dp),
+										verticalAlignment = Alignment.CenterVertically,
+									) {
+										Text(
+											"相册 ➔",
+											fontSize = 11.sp,
+											fontWeight = FontWeight.SemiBold,
+											color = MaterialTheme.colorScheme.primary,
+										)
+									}
+								}
+							}
+						}
+					}
+
+					// 该相册内的照片/视频 3 列宫格展示
+					val rows = album.items.chunked(3)
+					items(rows.size, key = { "album_row_${album.albumPath}_$it" }) { rowIdx ->
+						val rowItems = rows[rowIdx]
+						Row(
+							modifier = Modifier
+								.fillMaxWidth()
+								.padding(horizontal = 14.dp, vertical = 2.dp),
+							horizontalArrangement = Arrangement.spacedBy(4.dp),
+						) {
+							for (item in rowItems) {
+								Box(
+									modifier = Modifier
+										.weight(1f)
+										.aspectRatio(1f)
+										.clip(RoundedCornerShape(8.dp))
+										.background(MaterialTheme.colorScheme.surfaceVariant)
+										.clickable { onOpenImage(item) },
+								) {
+									val thumbUrl = urlOf(item.path) ?: directUrlOf?.invoke(item.path)
+									if (!thumbUrl.isNullOrBlank()) {
+										AsyncImage(
+											model = thumbUrl,
+											contentDescription = item.name,
+											contentScale = ContentScale.Crop,
+											modifier = Modifier.fillMaxSize(),
+										)
+									} else {
+										Box(
+											modifier = Modifier.fillMaxSize(),
+											contentAlignment = Alignment.Center,
+										) {
+											FileIcon(
+												category = if (item.isVideo) FileCategory.Video else FileCategory.Image,
+												isDir = false,
+												size = 28.dp,
+											)
+										}
+									}
+
+									// 如果是视频，左下角显示微型播放角标
+									if (item.isVideo) {
+										Box(
+											modifier = Modifier
+												.align(Alignment.BottomStart)
+												.padding(4.dp)
+												.background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+												.padding(horizontal = 4.dp, vertical = 2.dp),
+											contentAlignment = Alignment.Center,
+										) {
+											Icon(
+												Icons.Rounded.PlayArrow,
+												contentDescription = null,
+												tint = Color.White,
+												modifier = Modifier.size(12.dp)
+											)
+										}
+									}
+								}
+							}
+							// 补齐占位
+							repeat(3 - rowItems.size) {
+								Spacer(Modifier.weight(1f))
+							}
+						}
+					}
+
+					item(key = "album_spacer_${album.albumPath}") {
+						Spacer(Modifier.height(10.dp))
+					}
+				}
 			}
 		}
 	}

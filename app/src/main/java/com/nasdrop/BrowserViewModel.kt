@@ -59,6 +59,22 @@ data class TimelineGroup(
 	val items: List<DavEntry>,
 )
 
+data class MemoryAlbumGroup(
+	val albumName: String,
+	val albumPath: String,
+	val items: List<DavEntry>,
+)
+
+data class MemoryYearGroup(
+	val year: Int,
+	val yearsAgo: Int,
+	val totalCount: Int,
+	val photoCount: Int,
+	val videoCount: Int,
+	val coverEntry: DavEntry,
+	val albumGroups: List<MemoryAlbumGroup>,
+)
+
 /** 文件浏览与传输展示状态；目录和媒体池合并待同步上传项，网络请求不阻塞状态接收。 */
 class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var currentTab by mutableStateOf(MainTab.Files)
@@ -143,6 +159,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** 所有已发现的影音分类文件夹列表 */
 	var allMediaFolders by mutableStateOf<List<DavEntry>>(emptyList())
+		private set
+
+	/** 那年今天分组集合（按年份倒序，包含每年下的相册分组） */
+	var memoryYearGroups by mutableStateOf<List<MemoryYearGroup>>(emptyList())
 		private set
 
 	/** 当前所选子相册（或全部）照片集合 */
@@ -757,6 +777,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		mediaScanJob = viewModelScope.launch {
 			try {
 				scanGlobalMedia()
+				loadMemories()
 				hasScannedMedia = mediaError == null
 			} catch (e: Exception) {
 				if (e is CancellationException) throw e
@@ -1555,24 +1576,138 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
-	fun reorderAlbums(fromIndex: Int, toIndex: Int) {
-		if (fromIndex !in allAlbumFolders.indices || toIndex !in allAlbumFolders.indices || fromIndex == toIndex) return
+	fun reorderAlbums(fromPath: String, toPath: String) {
+		if (fromPath == toPath) return
 		val mutable = allAlbumFolders.toMutableList()
-		val item = mutable.removeAt(fromIndex)
-		mutable.add(toIndex, item)
+		val fromIdx = mutable.indexOfFirst { it.path == fromPath }
+		val toIdx = mutable.indexOfFirst { it.path == toPath }
+		if (fromIdx == -1 || toIdx == -1) return
+		val item = mutable.removeAt(fromIdx)
+		mutable.add(toIdx, item)
 		allAlbumFolders = mutable
 		albumOrder = mutable.map { it.path }
 		syncRemoteMetadata()
 	}
 
-	fun reorderMediaFolders(fromIndex: Int, toIndex: Int) {
-		if (fromIndex !in allMediaFolders.indices || toIndex !in allMediaFolders.indices || fromIndex == toIndex) return
+	fun reorderAlbums(fromIndex: Int, toIndex: Int) {
+		if (fromIndex !in allAlbumFolders.indices || toIndex !in allAlbumFolders.indices || fromIndex == toIndex) return
+		val fromPath = allAlbumFolders.getOrNull(fromIndex)?.path ?: return
+		val toPath = allAlbumFolders.getOrNull(toIndex)?.path ?: return
+		reorderAlbums(fromPath, toPath)
+	}
+
+	fun reorderMediaFolders(fromPath: String, toPath: String) {
+		if (fromPath == toPath) return
 		val mutable = allMediaFolders.toMutableList()
-		val item = mutable.removeAt(fromIndex)
-		mutable.add(toIndex, item)
+		val fromIdx = mutable.indexOfFirst { it.path == fromPath }
+		val toIdx = mutable.indexOfFirst { it.path == toPath }
+		if (fromIdx == -1 || toIdx == -1) return
+		val item = mutable.removeAt(fromIdx)
+		mutable.add(toIdx, item)
 		allMediaFolders = mutable
 		mediaOrder = mutable.map { it.path }
 		syncRemoteMetadata()
+	}
+
+	fun reorderMediaFolders(fromIndex: Int, toIndex: Int) {
+		if (fromIndex !in allMediaFolders.indices || toIndex !in allMediaFolders.indices || fromIndex == toIndex) return
+		val fromPath = allMediaFolders.getOrNull(fromIndex)?.path ?: return
+		val toPath = allMediaFolders.getOrNull(toIndex)?.path ?: return
+		reorderMediaFolders(fromPath, toPath)
+	}
+
+	fun loadMemories() {
+		viewModelScope.launch(Dispatchers.IO) {
+			try {
+				val cal = Calendar.getInstance()
+				val currentYear = cal.get(Calendar.YEAR)
+				val currentMonth = cal.get(Calendar.MONTH) + 1
+				val currentDay = cal.get(Calendar.DAY_OF_MONTH)
+				val monthDayStr = String.format(Locale.US, "%02d-%02d", currentMonth, currentDay)
+
+				// 1. 尝试从服务端商用级 /api/memories 接口秒级拉取（零开销）
+				val serverItems = runCatching {
+					client?.fetchServerMemories(monthDayStr, limit = 500)
+				}.getOrNull()
+
+				val rawItems = if (!serverItems.isNullOrEmpty()) {
+					serverItems
+				} else {
+					// 2. 本地兜底：从内存中的全部照片与视频池中过滤历史同月同日内容
+					val pool = (allPhotos + allVideos).filterNot {
+						it.name.startsWith(".") || it.path.contains(".thumbnails")
+					}.distinctBy { it.path }
+
+					val itemCal = Calendar.getInstance()
+					pool.filter { entry ->
+						val dateMs = entry.effectiveDate
+						if (dateMs <= 0L) false
+						else {
+							itemCal.timeInMillis = dateMs
+							val y = itemCal.get(Calendar.YEAR)
+							val m = itemCal.get(Calendar.MONTH) + 1
+							val d = itemCal.get(Calendar.DAY_OF_MONTH)
+							m == currentMonth && d == currentDay && y < currentYear
+						}
+					}
+				}
+
+				if (rawItems.isEmpty()) {
+					withContext(Dispatchers.Main) {
+						memoryYearGroups = emptyList()
+					}
+					return@launch
+				}
+
+				val itemCal = Calendar.getInstance()
+				val byYear = rawItems.groupBy { entry ->
+					itemCal.timeInMillis = entry.effectiveDate
+					itemCal.get(Calendar.YEAR)
+				}.filterKeys { it < currentYear }
+
+				val yearGroups = byYear.entries.sortedByDescending { it.key }.map { (year, yearItems) ->
+					val yearsAgo = currentYear - year
+					val photos = yearItems.filter { it.isImage }
+					val videos = yearItems.filter { it.isVideo }
+
+					// 按相册目录结构归类
+					val byAlbum = yearItems.groupBy { entry -> parentOf(entry.path) }
+					val albumGroups = byAlbum.entries.map { (albumPath, items) ->
+						val albumName = when {
+							albumPath.isEmpty() -> "根目录"
+							albumPath == "Photos/默认相册" || albumPath.endsWith("/默认相册") -> "默认相册"
+							else -> albumPath.substringAfterLast('/')
+						}
+						MemoryAlbumGroup(
+							albumName = albumName,
+							albumPath = albumPath,
+							items = items.sortedByDescending { it.effectiveDate }
+						)
+					}.sortedWith(
+						compareBy<MemoryAlbumGroup> { if (it.albumName == "默认相册") 1 else 0 }
+							.thenByDescending { it.items.size }
+					)
+
+					val cover = photos.maxByOrNull { it.effectiveDate } ?: yearItems.first()
+
+					MemoryYearGroup(
+						year = year,
+						yearsAgo = yearsAgo,
+						totalCount = yearItems.size,
+						photoCount = photos.size,
+						videoCount = videos.size,
+						coverEntry = cover,
+						albumGroups = albumGroups,
+					)
+				}
+
+				withContext(Dispatchers.Main) {
+					memoryYearGroups = yearGroups
+				}
+			} catch (e: Exception) {
+				Log.w("BrowserViewModel", "加载那年今天异常", e)
+			}
+		}
 	}
 
 	fun syncRemoteMetadata() {

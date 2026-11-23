@@ -354,6 +354,35 @@ class WebDavClient(
 		}
 	}
 
+	fun fetchServerMemories(date: String = "", limit: Int = 300): List<DavEntry>? {
+		return try {
+			val urlBuilder = effectiveBase.newBuilder().encodedPath("/api/memories")
+				.addQueryParameter("limit", limit.toString())
+			if (date.isNotBlank()) urlBuilder.addQueryParameter("date", date)
+
+			val req = Request.Builder().url(urlBuilder.build()).get().build()
+			metaCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return null
+				val body = resp.body?.string() ?: return null
+				val obj = org.json.JSONObject(body)
+				val items = obj.optJSONArray("items") ?: return emptyList()
+				val list = mutableListOf<DavEntry>()
+				for (i in 0 until items.length()) {
+					val item = items.getJSONObject(i)
+					val p = item.getString("path")
+					val n = item.getString("name")
+					val s = item.optLong("size", 0L)
+					val m = item.optLong("modified", 0L)
+					val t = item.optLong("taken_at", 0L)
+					list.add(DavEntry(name = n, path = p, isDir = false, size = s, modified = m, takenAt = t))
+				}
+				list
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
+
 	/** 列目录。path 为空表示根。只做 PROPFIND，绝不在此阻塞拉缩略图。 */
 	fun list(path: String): List<DavEntry> {
 		val req = Request.Builder()
