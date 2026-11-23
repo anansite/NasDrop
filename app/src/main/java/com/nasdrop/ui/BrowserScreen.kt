@@ -68,7 +68,14 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Checklist
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.CloudDownload
+import androidx.compose.material.icons.rounded.CloudUpload
+import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.DateRange
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Description
@@ -3428,8 +3435,8 @@ private fun AlbumFoldersGrid(
 				) {
 					Column(
 						modifier = Modifier.fillMaxSize(),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.Center,
+						verticalArrangement = Arrangement.Center,
+						horizontalAlignment = Alignment.CenterHorizontally,
 					) {
 						Icon(
 							Icons.Rounded.Add,
@@ -4282,8 +4289,8 @@ private fun MediaFoldersGrid(
 				) {
 					Column(
 						modifier = Modifier.fillMaxSize(),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.Center,
+						verticalArrangement = Arrangement.Center,
+						horizontalAlignment = Alignment.CenterHorizontally,
 					) {
 						Icon(
 							Icons.Rounded.Add,
