@@ -74,4 +74,25 @@ class UpdateManagerTest {
 	fun `selectBestApk returns null when assets is empty`() {
 		assertNull(UpdateManager.selectBestApk(emptyList(), arrayOf("arm64-v8a")))
 	}
+
+	@Test
+	fun `buildCandidateUrls prioritizes high-speed CDN and keeps GitHub fallbacks`() {
+		val ghUrl = "https://github.com/anansite/NasDrop/releases/download/v1.0.174/NasDrop-v1.0.174-arm64-v8a.apk"
+		val urls = UpdateManager.buildCandidateUrls(ghUrl)
+
+		assertEquals("https://cdn.205002.xyz/nasdrop/NasDrop-v1.0.174-arm64-v8a.apk", urls.first())
+		assertTrue(urls.any { it.contains("ghfast.top") })
+		assertTrue(urls.any { it.contains("gh-proxy.com") })
+		assertTrue(urls.contains(ghUrl))
+	}
+
+	@Test
+	fun `buildCandidateUrls from CDN url provides GitHub fallbacks`() {
+		val cdnUrl = "https://cdn.205002.xyz/nasdrop/NasDrop-v1.0.174-arm64-v8a.apk"
+		val urls = UpdateManager.buildCandidateUrls(cdnUrl)
+
+		assertEquals(cdnUrl, urls.first())
+		assertTrue(urls.any { it.contains("github.com") && it.contains("v1.0.174") })
+		assertTrue(urls.any { it.contains("ghfast.top") })
+	}
 }

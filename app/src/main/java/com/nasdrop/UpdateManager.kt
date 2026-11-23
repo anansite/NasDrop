@@ -37,14 +37,12 @@ object UpdateManager {
 
 	private const val RELEASES_API = "https://api.github.com/repos/anansite/NasDrop/releases/latest"
 
-	// 路由器局域网 CDN 优先（在家秒级响应），国内加速镜像与官方直连兜底。
+	// 专属高速 CDN 优先（在家秒级响应，出差走 CDN 边缘节点），国内加速镜像与官方直连兜底。
 	private val API_CANDIDATES = listOf(
 		"https://cdn.205002.xyz/nasdrop/latest.json",
-		"https://ghproxy.net/https://api.github.com/repos/anansite/NasDrop/releases/latest",
 		"https://ghfast.top/https://api.github.com/repos/anansite/NasDrop/releases/latest",
-		"https://mirror.ghproxy.com/https://api.github.com/repos/anansite/NasDrop/releases/latest",
-		"https://hub.gitmirror.com/https://api.github.com/repos/anansite/NasDrop/releases/latest",
 		"https://gh-proxy.com/https://api.github.com/repos/anansite/NasDrop/releases/latest",
+		"https://ghproxy.net/https://api.github.com/repos/anansite/NasDrop/releases/latest",
 		"https://api.github.com/repos/anansite/NasDrop/releases/latest",
 	)
 
@@ -125,6 +123,37 @@ object UpdateManager {
 		}.getOrNull()
 	}
 
+	fun buildCandidateUrls(apkUrl: String): List<String> {
+		val fileName = apkUrl.substringAfterLast('/')
+		val candidates = mutableListOf<String>()
+
+		// 1. 专属高速 CDN 优先（在家秒级响应，外网 CDN 边缘直达，实测 10+ MB/s）
+		if (fileName.endsWith(".apk", ignoreCase = true)) {
+			candidates.add("https://cdn.205002.xyz/nasdrop/$fileName")
+		}
+
+		// 2. 国内加速代理与 GitHub 官方源兜底
+		if (apkUrl.contains("github.com")) {
+			candidates.add("https://ghfast.top/$apkUrl")
+			candidates.add("https://gh-proxy.com/$apkUrl")
+			candidates.add("https://ghproxy.net/$apkUrl")
+			candidates.add(apkUrl)
+		} else {
+			if (apkUrl.startsWith("http") && !candidates.contains(apkUrl)) {
+				candidates.add(apkUrl)
+			}
+			val tag = fileName.removePrefix("NasDrop-").substringBefore("-").removeSuffix(".apk")
+			if (tag.startsWith("v", ignoreCase = true) && fileName.endsWith(".apk", ignoreCase = true)) {
+				val ghUrl = "https://github.com/anansite/NasDrop/releases/download/$tag/$fileName"
+				candidates.add("https://ghfast.top/$ghUrl")
+				candidates.add("https://gh-proxy.com/$ghUrl")
+				candidates.add("https://ghproxy.net/$ghUrl")
+				candidates.add(ghUrl)
+			}
+		}
+		return candidates.distinct()
+	}
+
 	suspend fun downloadApk(
 		context: Context,
 		apkUrl: String,
@@ -134,47 +163,58 @@ object UpdateManager {
 		val destFile = File(updateDir, "nasdrop_latest.apk")
 		if (destFile.exists()) destFile.delete()
 
-		val candidateUrls = if (apkUrl.contains("github.com")) {
-			listOf(
-				"https://ghproxy.net/$apkUrl",
-				"https://ghfast.top/$apkUrl",
-				"https://mirror.ghproxy.com/$apkUrl",
-				"https://hub.gitmirror.com/$apkUrl",
-				"https://ghps.cc/$apkUrl",
-				"https://gh-proxy.com/$apkUrl",
-				apkUrl,
-			)
-		} else listOf(apkUrl)
+		val candidateUrls = buildCandidateUrls(apkUrl)
 
-		// 多镜像并发竞速探测：优先挑选国内响应最快且可读的 CDN 源
-		val sortedUrls = if (candidateUrls.size > 1) {
-			val channel = kotlinx.coroutines.channels.Channel<String>(candidateUrls.size)
-			coroutineScope {
-				candidateUrls.forEach { u ->
-					launch(Dispatchers.IO) {
-						try {
-							val req = Request.Builder().url(u).head()
-								.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
-								.build()
-							downloadHttp.newCall(req).execute().use { resp ->
-								if (resp.isSuccessful && (resp.body?.contentLength() ?: 0L) > 1024 * 1024) {
-									channel.trySend(u)
+		// 1. 优先快测专属高带宽 CDN（cdn.205002.xyz 通常 <100ms 即可确认响应）
+		val cdnUrl = candidateUrls.firstOrNull { it.contains("cdn.205002.xyz") }
+		val isCdnAvailable = if (cdnUrl != null) {
+			withTimeoutOrNull(2500L) {
+				runCatching {
+					val req = Request.Builder().url(cdnUrl).head()
+						.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
+						.build()
+					downloadHttp.newCall(req).execute().use { resp ->
+						val len = resp.header("Content-Length")?.toLongOrNull() ?: 0L
+						resp.isSuccessful && (len > 1024 * 1024 || resp.code == 200)
+					}
+				}.getOrDefault(false)
+			} ?: false
+		} else false
+
+		val sortedUrls = if (isCdnAvailable && cdnUrl != null) {
+			Log.i("UpdateManager", "High-speed CDN ready, prioritizing: $cdnUrl")
+			listOf(cdnUrl) + (candidateUrls - cdnUrl)
+		} else {
+			// 若专属 CDN 未同步或不可用，并发测速其它镜像源（设置短超时 3.5s 防止拖死）
+			val others = candidateUrls.filter { it != cdnUrl }
+			val fastest = mutableListOf<String>()
+			withTimeoutOrNull(3500L) {
+				coroutineScope {
+					others.forEach { u ->
+						launch(Dispatchers.IO) {
+							try {
+								val req = Request.Builder().url(u).head()
+									.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
+									.build()
+								downloadHttp.newCall(req).execute().use { resp ->
+									val len = resp.header("Content-Length")?.toLongOrNull() ?: 0L
+									if (resp.isSuccessful && (len > 1024 * 1024 || resp.code == 200)) {
+										synchronized(fastest) {
+											if (!fastest.contains(u)) fastest.add(u)
+										}
+									}
 								}
-							}
-						} catch (_: Exception) {}
+							} catch (_: Exception) {}
+						}
 					}
 				}
 			}
-			val fastest = mutableListOf<String>()
-			while (true) {
-				val res = channel.tryReceive().getOrNull() ?: break
-				if (!fastest.contains(res)) fastest.add(res)
-			}
 			if (fastest.isNotEmpty()) {
-				Log.i("UpdateManager", "Fastest mirror detected: ${fastest.first()}")
 				fastest + (candidateUrls - fastest.toSet())
-			} else candidateUrls
-		} else candidateUrls
+			} else {
+				candidateUrls
+			}
+		}
 
 		var lastException: Exception? = null
 		for (url in sortedUrls) {
