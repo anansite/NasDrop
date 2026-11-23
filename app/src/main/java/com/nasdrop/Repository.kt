@@ -107,11 +107,11 @@ class Repository(private val context: Context) {
 
 	private fun imageClient(client: OkHttpClient): OkHttpClient = client.newBuilder()
 			.dispatcher(Dispatcher().apply {
-				maxRequests = 24
-				maxRequestsPerHost = 16
+				maxRequests = 64
+				maxRequestsPerHost = 24
 			})
-			.connectTimeout(10, TimeUnit.SECONDS)
-			.readTimeout(30, TimeUnit.SECONDS)
+			.connectTimeout(4, TimeUnit.SECONDS)
+			.readTimeout(6, TimeUnit.SECONDS)
 			.addNetworkInterceptor { chain ->
 				val response = chain.proceed(chain.request())
 				if (response.isSuccessful) {

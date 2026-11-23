@@ -115,7 +115,7 @@ fun FileThumbnail(
 					)
 				}
 			} else {
-				FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, modifier = modifier)
+				FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, urlOf = urlOf, directUrlOf = directUrlOf, modifier = modifier)
 			}
 		}
 
@@ -160,13 +160,13 @@ fun FileThumbnail(
 					)
 				}
 			} else {
-				FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, modifier = modifier)
+				FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, urlOf = urlOf, directUrlOf = directUrlOf, modifier = modifier)
 			}
 		}
 
 		// 3. 其它文件类型：秒级专属高辨识度徽标，零网络流量消耗
 		else -> {
-			FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, urlOf = urlOf, modifier = modifier)
+			FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, urlOf = urlOf, directUrlOf = directUrlOf, modifier = modifier)
 		}
 	}
 }
@@ -180,6 +180,7 @@ fun FileIconByEntry(
 	size: Dp = 44.dp,
 	customIconKey: String? = null,
 	urlOf: ((String) -> String?)? = null,
+	directUrlOf: ((String) -> String?)? = null,
 	modifier: Modifier = Modifier,
 ) {
 	val ext = entry.ext.lowercase()
@@ -189,23 +190,42 @@ fun FileIconByEntry(
 		entry.isDir -> {
 			val customKey = customIconKey ?: ""
 			if (customKey.startsWith("http") || customKey.contains(".nasdrop_icons") || customKey.endsWith(".png") || customKey.endsWith(".jpg")) {
-				val iconUrl = if (customKey.startsWith("http")) customKey else (urlOf?.invoke(customKey) ?: customKey)
-				Box(
-					modifier = modifier
-						.size(size)
-						.clip(RoundedCornerShape(8.dp))
-						.background(Color(0xFFE8EEF5)),
-					contentAlignment = Alignment.Center,
-				) {
-					AsyncImage(
-						model = ImageRequest.Builder(LocalContext.current)
-							.data(iconUrl)
-							.crossfade(true)
-							.build(),
-						contentDescription = entry.displayName,
-						contentScale = ContentScale.Crop,
-						modifier = Modifier.fillMaxSize()
-					)
+				val iconUrl = if (customKey.startsWith("http")) customKey else (directUrlOf?.invoke(customKey) ?: urlOf?.invoke(customKey) ?: customKey)
+				var loadFailed by remember(iconUrl) { mutableStateOf(false) }
+				if (!loadFailed) {
+					Box(
+						modifier = modifier
+							.size(size)
+							.clip(RoundedCornerShape(8.dp))
+							.background(Color(0xFFE8EEF5)),
+						contentAlignment = Alignment.Center,
+					) {
+						AsyncImage(
+							model = ImageRequest.Builder(LocalContext.current)
+								.data(iconUrl)
+								.crossfade(true)
+								.build(),
+							contentDescription = entry.displayName,
+							contentScale = ContentScale.Crop,
+							onError = { loadFailed = true },
+							modifier = Modifier.fillMaxSize()
+						)
+					}
+				} else {
+					Box(
+						modifier = modifier
+							.size(size)
+							.clip(RoundedCornerShape(8.dp))
+							.background(Color(0xFFFFB6C1).copy(alpha = 0.22f)),
+						contentAlignment = Alignment.Center,
+					) {
+						Icon(
+							imageVector = Icons.Rounded.Folder,
+							contentDescription = entry.displayName,
+							tint = Color(0xFFFF69B4),
+							modifier = Modifier.size(size * 0.58f),
+						)
+					}
 				}
 			} else {
 				val custom = if (customKey.isNotEmpty()) NasFolderIcon.fromKey(customKey) else null

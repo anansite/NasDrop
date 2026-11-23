@@ -856,6 +856,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		LocalThumbs.get(key)?.let { return android.net.Uri.fromFile(it).toString() }
 		@Suppress("UNUSED_VARIABLE") val revision = thumbRevision
 
+		// 自定义图标文件（存放在 .nasdrop_icons 目录）服务端 /api/thumbnail 不予支持，直接返回 WebDAV 直链
+		if (key.startsWith(".nasdrop_icons") || key.contains(".nasdrop_icons")) {
+			return directUrlFor(key) ?: urlFor(key)
+		}
+
 		// 优先命中伴生 .thumbnails 极速缩略图
 		val meta = PhotoMetadataStore.get(key)
 		if (meta != null && meta.hasThumbnail) {

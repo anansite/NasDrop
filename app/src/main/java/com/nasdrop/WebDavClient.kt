@@ -251,9 +251,8 @@ class WebDavClient(
 	 */
 	fun thumbnailUrl(path: String): HttpUrl? {
 		val key = path.trim('/')
-		if (!failedThumbs.contains(key)) {
-			thumbUrls[key]?.toHttpUrlOrNull()?.let { return it }
-		}
+		if (failedThumbs.contains(key)) return null
+		thumbUrls[key]?.toHttpUrlOrNull()?.let { return it }
 		val ext = path.substringAfterLast('.', "").lowercase()
 		if (ext !in DavEntry.IMAGES && ext !in DavEntry.VIDEOS) return null
 

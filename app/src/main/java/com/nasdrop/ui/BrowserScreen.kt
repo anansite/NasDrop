@@ -492,7 +492,7 @@ fun BrowserScreen(
 								onReorderAlbums = { from, to -> vm.reorderAlbums(from, to) },
 								onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 								urlOf = { vm.thumbnailUrlFor(it) },
-								directUrlOf = null, // 列表只拉取缩略图，绝不直接拉原图
+								directUrlOf = { vm.directUrlFor(it) },
 								onThumbnailError = { vm.markThumbnailFailed(it) },
 								onOpenImage = onOpenImage,
 							)
@@ -523,6 +523,7 @@ fun BrowserScreen(
 								onReorderMediaFolders = { from, to -> vm.reorderMediaFolders(from, to) },
 								onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
 								urlOf = { vm.thumbnailUrlFor(it) },
+								directUrlOf = { vm.directUrlFor(it) },
 								onThumbnailError = { vm.markThumbnailFailed(it) },
 								onOpenVideo = onOpenVideo,
 							)
@@ -1639,10 +1640,26 @@ private fun FilesTopBar(
 							onClick = { menuOpen = false; vm.openUpdateDialog() }
 						)
 					}
-					DropdownMenuItem(text = { Text("上传文件") }, onClick = { menuOpen = false; onUpload() })
-					DropdownMenuItem(text = { Text("新建文件夹") }, onClick = { menuOpen = false; onCreateFolder() })
-					DropdownMenuItem(text = { Text("多选文件") }, onClick = { menuOpen = false; onToggleMultiSelect() })
-					DropdownMenuItem(text = { Text("刷新") }, onClick = { menuOpen = false; vm.refresh() })
+					DropdownMenuItem(
+						text = { Text("上传文件") },
+						onClick = { menuOpen = false; onUpload() },
+						leadingIcon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp)) },
+					)
+					DropdownMenuItem(
+						text = { Text("新建文件夹") },
+						onClick = { menuOpen = false; onCreateFolder() },
+						leadingIcon = { Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp)) },
+					)
+					DropdownMenuItem(
+						text = { Text("多选文件") },
+						onClick = { menuOpen = false; onToggleMultiSelect() },
+						leadingIcon = { Icon(Icons.Rounded.Checklist, contentDescription = null, modifier = Modifier.size(18.dp)) },
+					)
+					DropdownMenuItem(
+						text = { Text("刷新") },
+						onClick = { menuOpen = false; vm.refresh() },
+						leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(18.dp)) },
+					)
 					DropdownMenuItem(
 						text = {
 							Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1654,6 +1671,7 @@ private fun FilesTopBar(
 							}
 						},
 						onClick = { menuOpen = false; onOpenSettings() },
+						leadingIcon = { Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(18.dp)) },
 					)
 				}
 			}
@@ -2834,10 +2852,22 @@ private fun FileBrowserContent(
 											.background(MaterialTheme.colorScheme.outlineVariant),
 									)
 								} else {
-									FileIconByEntry(entry = entry, size = 52.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
+									FileIconByEntry(
+										entry = entry,
+										size = 52.dp,
+										customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null,
+										urlOf = { vm.thumbnailUrlFor(it) },
+										directUrlOf = { vm.directUrlFor(it) },
+									)
 								}
 							} else {
-								FileIconByEntry(entry = entry, size = 52.dp, customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null)
+								FileIconByEntry(
+									entry = entry,
+									size = 52.dp,
+									customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null,
+									urlOf = { vm.thumbnailUrlFor(it) },
+									directUrlOf = { vm.directUrlFor(it) },
+								)
 							}
 							Spacer(modifier = Modifier.height(8.dp))
 
@@ -3074,6 +3104,8 @@ private fun PhotoTimelineContent(
 							entry = album,
 							customIconKey = folderIcons[album.path],
 							size = 15.dp,
+							urlOf = urlOf,
+							directUrlOf = directUrlOf,
 						)
 						Text(
 							album.name,
@@ -3167,6 +3199,8 @@ private fun PhotoTimelineContent(
 				onChangeIcon = onChangeIcon,
 				onDeleteAlbum = onDeleteAlbum,
 				onCreateAlbum = onCreateAlbum,
+				urlOf = urlOf,
+				directUrlOf = directUrlOf,
 			)
 		} else {
 			if (selectedAlbumPath.isNotBlank()) {
@@ -3436,6 +3470,8 @@ private fun AlbumFoldersGrid(
 	onChangeIcon: (DavEntry) -> Unit,
 	onDeleteAlbum: (DavEntry) -> Unit,
 	onCreateAlbum: () -> Unit,
+	urlOf: (String) -> String? = { null },
+	directUrlOf: ((String) -> String?)? = null,
 	modifier: Modifier = Modifier,
 ) {
 	PullToRefreshBox(
@@ -3455,6 +3491,12 @@ private fun AlbumFoldersGrid(
 				val photoCount = remember(album.path, allPhotos) {
 					allPhotos.count { it.path.startsWith(album.path + "/") }
 				}
+				val customKey = folderIcons[album.path]
+				val coverPhoto = remember(album.path, allPhotos, customKey) {
+					if (customKey.isNullOrBlank()) {
+						allPhotos.firstOrNull { it.path.startsWith(album.path.trim('/') + "/") }
+					} else null
+				}
 				Card(
 					shape = RoundedCornerShape(16.dp),
 					colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -3470,11 +3512,22 @@ private fun AlbumFoldersGrid(
 							horizontalArrangement = Arrangement.SpaceBetween,
 							verticalAlignment = Alignment.Top,
 						) {
-							FileIconByEntry(
-								entry = album,
-								customIconKey = folderIcons[album.path],
-								size = 46.dp,
-							)
+							if (coverPhoto != null) {
+								FileThumbnail(
+									entry = coverPhoto,
+									urlOf = urlOf,
+									directUrlOf = directUrlOf,
+									size = 46.dp,
+								)
+							} else {
+								FileIconByEntry(
+									entry = album,
+									customIconKey = customKey,
+									size = 46.dp,
+									urlOf = urlOf,
+									directUrlOf = directUrlOf,
+								)
+							}
 							Box {
 								Box(
 									modifier = Modifier
@@ -3858,6 +3911,7 @@ private fun MediaStreamContent(
 	onReorderMediaFolders: (from: Int, to: Int) -> Unit = { _, _ -> },
 	onCreateMediaFolder: () -> Unit,
 	urlOf: (String) -> String?,
+	directUrlOf: ((String) -> String?)? = null,
 	onThumbnailError: ((String) -> Unit)? = null,
 	onOpenVideo: (DavEntry) -> Unit,
 ) {
@@ -4021,6 +4075,8 @@ private fun MediaStreamContent(
 							entry = folder,
 							customIconKey = folderIcons[folder.path],
 							size = 15.dp,
+							urlOf = urlOf,
+							directUrlOf = directUrlOf,
 						)
 						Text(
 							folder.name,
@@ -4114,6 +4170,8 @@ private fun MediaStreamContent(
 				onChangeIcon = onChangeIcon,
 				onDeleteMediaFolder = onDeleteMediaFolder,
 				onCreateMediaFolder = onCreateMediaFolder,
+				urlOf = urlOf,
+				directUrlOf = directUrlOf,
 			)
 		} else {
 			if (selectedMediaPath.isNotBlank()) {
@@ -4341,6 +4399,8 @@ private fun MediaFoldersGrid(
 	onChangeIcon: (DavEntry) -> Unit,
 	onDeleteMediaFolder: (DavEntry) -> Unit,
 	onCreateMediaFolder: () -> Unit,
+	urlOf: (String) -> String? = { null },
+	directUrlOf: ((String) -> String?)? = null,
 	modifier: Modifier = Modifier,
 ) {
 	PullToRefreshBox(
@@ -4360,6 +4420,12 @@ private fun MediaFoldersGrid(
 				val videoCount = remember(folder.path, allVideos) {
 					allVideos.count { it.path.startsWith(folder.path + "/") }
 				}
+				val customKey = folderIcons[folder.path]
+				val coverVideo = remember(folder.path, allVideos, customKey) {
+					if (customKey.isNullOrBlank()) {
+						allVideos.firstOrNull { it.path.startsWith(folder.path.trim('/') + "/") }
+					} else null
+				}
 				Card(
 					shape = RoundedCornerShape(16.dp),
 					colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -4375,11 +4441,22 @@ private fun MediaFoldersGrid(
 							horizontalArrangement = Arrangement.SpaceBetween,
 							verticalAlignment = Alignment.Top,
 						) {
-							FileIconByEntry(
-								entry = folder,
-								customIconKey = folderIcons[folder.path],
-								size = 46.dp,
-							)
+							if (coverVideo != null) {
+								FileThumbnail(
+									entry = coverVideo,
+									urlOf = urlOf,
+									directUrlOf = directUrlOf,
+									size = 46.dp,
+								)
+							} else {
+								FileIconByEntry(
+									entry = folder,
+									customIconKey = customKey,
+									size = 46.dp,
+									urlOf = urlOf,
+									directUrlOf = directUrlOf,
+								)
+							}
 							Box {
 								Box(
 									modifier = Modifier
