@@ -286,7 +286,7 @@ fun BrowserScreen(
 		contract = ActivityResultContracts.OpenMultipleDocuments(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
-			val targetDir = if (vm.selectedMediaPath.isNotBlank() && vm.selectedMediaPath != "__ALL_FOLDERS__") vm.selectedMediaPath else "movies/默认影音"
+			val targetDir = if (vm.selectedMediaPath.isNotBlank() && vm.selectedMediaPath != "__ALL_FOLDERS__") vm.selectedMediaPath else "movies/默认影集"
 			startUpload(uris, targetDir)
 		}
 	}
@@ -341,7 +341,8 @@ fun BrowserScreen(
 					MainTab.Photos -> {
 						PhotosTopBar(
 							count = vm.currentAlbumPhotos.size,
-							selectedAlbumName = vm.selectedAlbumPath.substringAfterLast('/'),
+							selectedAlbumPath = vm.selectedAlbumPath,
+							allAlbumsCount = vm.allAlbumFolders.size,
 							activeTransferCount = vm.activeTransferCount,
 							hasUpdate = vm.hasUpdate,
 							onOpenUpdateDialog = { vm.openUpdateDialog() },
@@ -362,7 +363,8 @@ fun BrowserScreen(
 					MainTab.Media -> {
 						MediaTopBar(
 							count = vm.currentMediaVideos.size,
-							selectedMediaName = vm.selectedMediaPath.substringAfterLast('/'),
+							selectedMediaPath = vm.selectedMediaPath,
+							allMediaCount = vm.allMediaFolders.size,
 							activeTransferCount = vm.activeTransferCount,
 							hasUpdate = vm.hasUpdate,
 							onOpenUpdateDialog = { vm.openUpdateDialog() },
@@ -1247,6 +1249,7 @@ private fun CollectionTopBar(
 	title: String,
 	subtitle: String,
 	isInside: Boolean,
+	uploadLabel: String = "上传文件",
 	activeTransferCount: Int,
 	hasUpdate: Boolean = false,
 	onOpenUpdateDialog: (() -> Unit)? = null,
@@ -1270,7 +1273,7 @@ private fun CollectionTopBar(
 		) {
 			if (isInside) {
 				IconButton(onClick = onUp, modifier = Modifier.size(40.dp)) {
-					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回全部")
+					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回")
 				}
 			}
 			Column(
@@ -1337,7 +1340,11 @@ private fun CollectionTopBar(
 							onClick = { menuOpen = false; onOpenUpdateDialog() }
 						)
 					}
-					DropdownMenuItem(text = { Text("上传文件") }, onClick = { menuOpen = false; onUpload() })
+					DropdownMenuItem(
+						text = { Text(uploadLabel) },
+						onClick = { menuOpen = false; onUpload() },
+						leadingIcon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp)) },
+					)
 					DropdownMenuItem(
 						text = {
 							Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1372,7 +1379,8 @@ private fun TransferButton(count: Int, onClick: () -> Unit) {
 @Composable
 private fun PhotosTopBar(
 	count: Int,
-	selectedAlbumName: String,
+	selectedAlbumPath: String,
+	allAlbumsCount: Int = 0,
 	activeTransferCount: Int = 0,
 	hasUpdate: Boolean = false,
 	onOpenUpdateDialog: (() -> Unit)? = null,
@@ -1385,10 +1393,19 @@ private fun PhotosTopBar(
 	onOpenSettings: () -> Unit,
 	onShowNetworkSheet: () -> Unit = {},
 ) {
+	val (title, subtitle, isInside) = when (selectedAlbumPath) {
+		"__ALL_FOLDERS__" -> Triple("全部相册", if (allAlbumsCount > 0) "$allAlbumsCount 个相册" else "相册分类总览", true)
+		"" -> Triple("云端相册", "$count 张照片", false)
+		else -> {
+			val name = selectedAlbumPath.substringAfterLast('/')
+			Triple(name.ifBlank { "相册" }, "相册 · $count 张照片", true)
+		}
+	}
 	CollectionTopBar(
-		title = selectedAlbumName.ifBlank { "云端相册" },
-		subtitle = if (selectedAlbumName.isBlank()) "$count 张照片" else "相册 · $count 张照片",
-		isInside = selectedAlbumName.isNotBlank(),
+		title = title,
+		subtitle = subtitle,
+		isInside = isInside,
+		uploadLabel = "上传照片",
 		activeTransferCount = activeTransferCount,
 		hasUpdate = hasUpdate,
 		onOpenUpdateDialog = onOpenUpdateDialog,
@@ -1401,7 +1418,8 @@ private fun PhotosTopBar(
 @Composable
 private fun MediaTopBar(
 	count: Int,
-	selectedMediaName: String,
+	selectedMediaPath: String,
+	allMediaCount: Int = 0,
 	activeTransferCount: Int = 0,
 	hasUpdate: Boolean = false,
 	onOpenUpdateDialog: (() -> Unit)? = null,
@@ -1414,10 +1432,19 @@ private fun MediaTopBar(
 	onOpenSettings: () -> Unit,
 	onShowNetworkSheet: () -> Unit = {},
 ) {
+	val (title, subtitle, isInside) = when (selectedMediaPath) {
+		"__ALL_FOLDERS__" -> Triple("全部影集", if (allMediaCount > 0) "$allMediaCount 个影集" else "影集分类总览", true)
+		"" -> Triple("影音视界", "$count 个视频", false)
+		else -> {
+			val name = selectedMediaPath.substringAfterLast('/')
+			Triple(name.ifBlank { "影集" }, "影集 · $count 个视频", true)
+		}
+	}
 	CollectionTopBar(
-		title = selectedMediaName.ifBlank { "影音视界" },
-		subtitle = if (selectedMediaName.isBlank()) "$count 个视频" else "影集 · $count 个视频",
-		isInside = selectedMediaName.isNotBlank(),
+		title = title,
+		subtitle = subtitle,
+		isInside = isInside,
+		uploadLabel = "上传视频",
 		activeTransferCount = activeTransferCount,
 		hasUpdate = hasUpdate,
 		onOpenUpdateDialog = onOpenUpdateDialog,
@@ -2871,7 +2898,10 @@ private fun PhotoTimelineContent(
 ) {
 	val currentPhotos = remember(groups) { groups.flatMap { it.items } }
 	val displayAlbums = remember(allAlbums) {
-		allAlbums.filterNot { it.name == "默认相册" || it.path == "Photos/默认相册" }
+		val visible = allAlbums.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }
+		val custom = visible.filterNot { it.name == "默认相册" || it.path == "Photos/默认相册" }
+		val defaults = visible.filter { it.name == "默认相册" || it.path == "Photos/默认相册" }
+		custom + defaults
 	}
 	val haptic = LocalHapticFeedback.current
 	var draggingIndex by remember { mutableStateOf<Int?>(null) }
@@ -3815,7 +3845,10 @@ private fun MediaStreamContent(
 	onOpenVideo: (DavEntry) -> Unit,
 ) {
 	val displayMediaFolders = remember(allMediaFolders) {
-		allMediaFolders.filterNot { it.name == "默认影音" || it.path == "movies/默认影音" }
+		val visible = allMediaFolders.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }
+		val custom = visible.filterNot { it.name == "默认影集" || it.name == "默认影音" || it.path == "movies/默认影集" || it.path == "movies/默认影音" }
+		val defaults = visible.filter { it.name == "默认影集" || it.name == "默认影音" || it.path == "movies/默认影集" || it.path == "movies/默认影音" }
+		custom + defaults
 	}
 	val haptic = LocalHapticFeedback.current
 	var draggingIndex by remember { mutableStateOf<Int?>(null) }
@@ -4001,7 +4034,7 @@ private fun MediaStreamContent(
 								onDismissRequest = { menuOpen = false },
 							) {
 								DropdownMenuItem(
-									text = { Text("重命名分类") },
+									text = { Text("重命名影集") },
 									onClick = { menuOpen = false; onRenameMediaFolder(folder) },
 									leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, null) },
 								)
@@ -4011,7 +4044,7 @@ private fun MediaStreamContent(
 									leadingIcon = { Icon(Icons.Rounded.Edit, null) },
 								)
 								DropdownMenuItem(
-									text = { Text("删除分类", color = MaterialTheme.colorScheme.error) },
+									text = { Text("删除影集", color = MaterialTheme.colorScheme.error) },
 									onClick = { menuOpen = false; onDeleteMediaFolder(folder) },
 									leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
 								)
@@ -5628,8 +5661,8 @@ private fun DraggableUploadFab(
 
 		val (bgColor, icon, label) = when (currentTab) {
 			MainTab.Files -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.CloudUpload, "上传文件")
-			MainTab.Photos -> Triple(MaterialTheme.colorScheme.secondary, Icons.Rounded.PhotoCamera, "上传照片")
-			MainTab.Media -> Triple(MaterialTheme.colorScheme.secondary, Icons.Rounded.Movie, "上传视频")
+			MainTab.Photos -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.CloudUpload, "上传照片")
+			MainTab.Media -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.CloudUpload, "上传视频")
 			MainTab.Me -> Triple(Color.Transparent, Icons.Rounded.Add, "")
 		}
 
@@ -5670,7 +5703,7 @@ private fun DraggableUploadFab(
 				},
 		) {
 			Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-					Icon(imageVector = icon, contentDescription = label, tint = if (currentTab == MainTab.Files) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondary, modifier = Modifier.size(24.dp))
+					Icon(imageVector = icon, contentDescription = label, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(24.dp))
 			}
 		}
 	}
