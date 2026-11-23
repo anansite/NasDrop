@@ -3620,39 +3620,6 @@ private fun AlbumFoldersGrid(
 					}
 				}
 			}
-
-			// 末尾增加“新建相册”卡片
-			item {
-				Surface(
-					shape = RoundedCornerShape(16.dp),
-					color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-					border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-					onClick = onCreateAlbum,
-					modifier = Modifier
-						.fillMaxWidth()
-						.height(130.dp),
-				) {
-					Column(
-						modifier = Modifier.fillMaxSize(),
-						verticalArrangement = Arrangement.Center,
-						horizontalAlignment = Alignment.CenterHorizontally,
-					) {
-						Icon(
-							Icons.Rounded.Add,
-							contentDescription = "新建相册",
-							tint = MaterialTheme.colorScheme.primary,
-							modifier = Modifier.size(32.dp),
-						)
-						Spacer(modifier = Modifier.height(6.dp))
-						Text(
-							text = "新建相册",
-							fontSize = 14.sp,
-							fontWeight = FontWeight.Bold,
-							color = MaterialTheme.colorScheme.primary,
-						)
-					}
-				}
-			}
 		}
 	}
 }
