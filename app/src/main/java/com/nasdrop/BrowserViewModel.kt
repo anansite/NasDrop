@@ -426,7 +426,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			MainTab.Files -> filteredEntries
 			MainTab.Photos -> currentAlbumPhotos
 			MainTab.Media -> currentMediaVideos
-			MainTab.Me -> emptyList()
+			MainTab.Settings, MainTab.Me -> emptyList()
 		}
 
 	val photoTimelineGroups: List<TimelineGroup>
