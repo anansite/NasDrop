@@ -610,7 +610,11 @@ class WebDavClient(
 	 */
 	fun move(from: String, to: String) {
 		val prefix = (davRootPrefix ?: effectiveBase.encodedPath).trimEnd('/')
-		val destination = "$prefix/" + to.trim('/')
+		// 对目标路径各个段进行严格的 URL 编码，避免 HTTP Header 中出现中文字符触发 OkHttp 的 IllegalArgumentException
+		val encodedTarget = to.trim('/').split('/').filter { it.isNotEmpty() }.joinToString("/") {
+			java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20")
+		}
+		val destination = "$prefix/$encodedTarget"
 		val req = Request.Builder()
 			.url(urlFor(from))
 			.method("MOVE", null)
@@ -618,7 +622,7 @@ class WebDavClient(
 			.header("Overwrite", "T")
 			.build()
 		metaCall(req).execute().use {
-			if (!it.isSuccessful) throw DavException(it.code, "移动失败")
+			if (!it.isSuccessful) throw DavException(it.code, "移动失败: HTTP ${it.code}")
 		}
 	}
 

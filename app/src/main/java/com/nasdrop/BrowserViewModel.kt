@@ -1465,8 +1465,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			.filter { it.isNotBlank() || it == path }.distinct()
 		for (target in targets) {
 			try {
-				loadDirectory(target)
+				val fresh = loadDirectory(target)
 				if (path == target) error = null
+				if (target.isEmpty() && fresh.any { !it.isDir && (it.isImage || it.isVideo) }) {
+					migrateOrphanMediaFiles(fresh)
+				}
 			} catch (e: Exception) {
 				if (e is CancellationException) throw e
 				Log.w("BrowserViewModel", "刷新失败 dir=$target", e)
@@ -1954,58 +1957,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		mediaAlbums.add(defaultMedia)
 
 		// 自动归集迁移：把现在在根目录或媒体主根目录下直接散落的照片和视频，自动移入默认相册与默认影集（满足需求3）
-		val orphanPhotos = mutableListOf<DavEntry>()
-		val orphanVideos = mutableListOf<DavEntry>()
-
-		// 1) 根目录下的孤儿照片和视频
-		rootEntries.filter { !it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }.forEach {
-			if (it.isImage) orphanPhotos.add(it)
-			else if (it.isVideo) orphanVideos.add(it)
-		}
-
-		// 2) Photos 根目录下的孤儿照片（即直接在 Photos/ 下，未放入子相册的照片）
-		val photosDirItems = runCatching { scanMediaDirectory("Photos") }.getOrNull().orEmpty()
-		photosDirItems.filter { !it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") && it.isImage }.forEach {
-			orphanPhotos.add(it)
-		}
-
-		// 3) movies 根目录下的孤儿视频（即直接在 movies/ 下，未放入子影集的视频）
-		val moviesDirItems = runCatching { scanMediaDirectory("movies") }.getOrNull().orEmpty()
-		moviesDirItems.filter { !it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") && it.isVideo }.forEach {
-			orphanVideos.add(it)
-		}
-
-		val c = client
-		if (c != null && (orphanPhotos.isNotEmpty() || orphanVideos.isNotEmpty())) {
-			runCatching { c.mkcol("Photos") }
-			runCatching { c.mkcol("Photos/默认相册") }
-			runCatching { c.mkcol("movies") }
-			runCatching { c.mkcol("movies/默认影集") }
-
-			orphanPhotos.distinctBy { it.path }.forEach { p ->
-				val dest = "Photos/默认相册/${p.name}"
-				if (p.path != dest) {
-					val ok = runCatching { c.move(p.path, dest) }.isSuccess
-					if (ok) {
-						PhotoMetadataStore.move(p.path, dest)
-						LocalThumbs.forget(p.path)
-						allPhotos = allPhotos.map { if (it.path == p.path) it.copy(path = dest) else it }
-					}
-				}
-			}
-
-			orphanVideos.distinctBy { it.path }.forEach { v ->
-				val dest = "movies/默认影集/${v.name}"
-				if (v.path != dest) {
-					val ok = runCatching { c.move(v.path, dest) }.isSuccess
-					if (ok) {
-						PhotoMetadataStore.move(v.path, dest)
-						LocalThumbs.forget(v.path)
-						allVideos = allVideos.map { if (it.path == v.path) it.copy(path = dest) else it }
-					}
-				}
-			}
-		}
+		migrateOrphanMediaFiles(rootEntries)
 
 		for (dir in rootEntries.filter { it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }) {
 			val sub = scanMediaDirectory(dir.path) ?: continue
@@ -2028,6 +1980,90 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val distinctMedia = mediaAlbums.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
 		allAlbumFolders = sortAlbums(distinctAlbums, albumOrder)
 		allMediaFolders = sortAlbums(distinctMedia, mediaOrder)
+	}
+
+	/**
+	 * 自动归集迁移：把现在在根目录或媒体主根目录下直接散落的照片和视频，自动移入默认相册与默认影集（满足需求3）
+	 */
+	private suspend fun migrateOrphanMediaFiles(rootItems: List<DavEntry>) {
+		val orphanPhotos = mutableListOf<DavEntry>()
+		val orphanVideos = mutableListOf<DavEntry>()
+
+		// 1) 根目录下的孤儿照片和视频
+		rootItems.filter { !it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }.forEach {
+			if (it.isImage) orphanPhotos.add(it)
+			else if (it.isVideo) orphanVideos.add(it)
+		}
+
+		// 2) Photos 根目录下的孤儿照片（即直接在 Photos/ 下，未放入子相册的照片）
+		val photosDirItems = runCatching { scanMediaDirectory("Photos") }.getOrNull().orEmpty()
+		photosDirItems.filter { !it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") && it.isImage }.forEach {
+			orphanPhotos.add(it)
+		}
+
+		// 3) movies 根目录下的孤儿视频（即直接在 movies/ 下，未放入子影集的视频）
+		val moviesDirItems = runCatching { scanMediaDirectory("movies") }.getOrNull().orEmpty()
+		moviesDirItems.filter { !it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") && it.isVideo }.forEach {
+			orphanVideos.add(it)
+		}
+
+		// 4) Videos 根目录下的孤儿视频（兼容各种目录名）
+		val videosDirItems = runCatching { scanMediaDirectory("Videos") }.getOrNull().orEmpty()
+		videosDirItems.filter { !it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") && it.isVideo }.forEach {
+			orphanVideos.add(it)
+		}
+
+		if (orphanPhotos.isEmpty() && orphanVideos.isEmpty()) return
+
+		val c = withContext(Dispatchers.IO) { clientOf(app.prefs.current()) }
+		runCatching { c.mkcol("Photos") }
+		runCatching { c.mkcol("Photos/默认相册") }
+		runCatching { c.mkcol("movies") }
+		runCatching { c.mkcol("movies/默认影集") }
+
+		var movedCount = 0
+		orphanPhotos.distinctBy { it.path }.forEach { p ->
+			val dest = "Photos/默认相册/${p.name}"
+			if (p.path != dest) {
+				try {
+					c.move(p.path, dest)
+					PhotoMetadataStore.move(p.path, dest)
+					LocalThumbs.forget(p.path)
+					withContext(Dispatchers.Main) {
+						allPhotos = allPhotos.map { if (it.path == p.path) it.copy(path = dest) else it }
+					}
+					movedCount++
+					Log.i("BrowserViewModel", "照片自动归集成功: ${p.path} -> $dest")
+				} catch (e: Exception) {
+					Log.w("BrowserViewModel", "照片自动归集失败: ${p.path} -> $dest", e)
+				}
+			}
+		}
+
+		orphanVideos.distinctBy { it.path }.forEach { v ->
+			val dest = "movies/默认影集/${v.name}"
+			if (v.path != dest) {
+				try {
+					c.move(v.path, dest)
+					PhotoMetadataStore.move(v.path, dest)
+					LocalThumbs.forget(v.path)
+					withContext(Dispatchers.Main) {
+						allVideos = allVideos.map { if (it.path == v.path) it.copy(path = dest) else it }
+					}
+					movedCount++
+					Log.i("BrowserViewModel", "视频自动归集成功: ${v.path} -> $dest")
+				} catch (e: Exception) {
+					Log.w("BrowserViewModel", "视频自动归集失败: ${v.path} -> $dest", e)
+				}
+			}
+		}
+
+		if (movedCount > 0) {
+			withContext(Dispatchers.Main) {
+				toast("已自动将根目录下散落的 $movedCount 个媒体文件归入默认相册/默认影集")
+				refreshSilent()
+			}
+		}
 	}
 
 	private suspend fun scanRecursiveMedia(baseDir: String, maxDepth: Int = 4, onFoundDir: (DavEntry) -> Unit) {
