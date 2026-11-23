@@ -341,14 +341,26 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	val filteredEntries: List<DavEntry>
 		get() {
 			val baseList = when (selectedCategory) {
-				FileCategory.All -> entries
+				FileCategory.All -> {
+					if (path.isEmpty()) {
+						// 根目录下全部文件：满足需求14，看到所有内容包括子文件夹的照片与视频
+						val rootDirs = entries.filter { it.isDir }
+						val allSubMedia = (allPhotos + allVideos).distinctBy { it.path }
+						val rootFiles = entries.filter { !it.isDir }
+						(rootDirs + allSubMedia + rootFiles).distinctBy { it.path }
+					} else {
+						entries
+					}
+				}
 				FileCategory.Image -> {
-					val local = entries.filter { !it.isDir && it.isImage }
-					if (local.isNotEmpty()) local else allPhotos
+					// 满足需求14：图片分类看到所有内容包括子相册/子文件夹的照片
+					if (allPhotos.isNotEmpty()) allPhotos
+					else entries.filter { !it.isDir && it.isImage }
 				}
 				FileCategory.Video -> {
-					val local = entries.filter { !it.isDir && it.isVideo }
-					if (local.isNotEmpty()) local else allVideos
+					// 满足需求14：视频分类看到所有内容包括子影集/子文件夹的视频
+					if (allVideos.isNotEmpty()) allVideos
+					else entries.filter { !it.isDir && it.isVideo }
 				}
 				FileCategory.Document -> entries.filter { !it.isDir && it.isDocument }
 				FileCategory.Audio -> entries.filter { !it.isDir && it.isAudio }
@@ -400,6 +412,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		PhotoMetadataStore.init(app)
 		loadUserPreferences()
 		open("")
+		ensureMediaScanned()
 		startUnifiedLinkMonitor()
 		cleanupOldCache()
 		viewModelScope.launch {
@@ -923,6 +936,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	fun selectCategory(cat: FileCategory) {
 		selectedCategory = cat
+		if (cat == FileCategory.Image || cat == FileCategory.Video || cat == FileCategory.All) {
+			ensureMediaScanned()
+		}
 	}
 
 	private fun loadUserPreferences() {
