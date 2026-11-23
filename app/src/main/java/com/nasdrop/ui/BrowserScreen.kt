@@ -407,15 +407,31 @@ fun BrowserScreen(
 						detail = contentError ?: "请先完成 Tailscale 授权，再访问 NAS。",
 						onPrimary = onLogin, primaryLabel = "前往登录", onSettings = onOpenSettings,
 					)
-					contentError != null && vm.currentTabEntries.isEmpty() -> BrowserStatus(
-						title = if (mediaTab) "媒体加载失败" else "文件加载失败",
-						detail = contentError,
-						onPrimary = { if (mediaTab) vm.ensureMediaScanned(force = true) else vm.refresh() },
-						primaryLabel = "重试", onSettings = onOpenSettings,
-					)
-					initialLoading -> BrowserStatus(
-						title = if (mediaTab) "正在扫描媒体…" else "正在加载文件…", loading = true,
-					)
+					contentError != null && vm.currentTabEntries.isEmpty() -> {
+						PullToRefreshBox(
+							isRefreshing = vm.isRefreshing,
+							onRefresh = { vm.pullRefresh() },
+							modifier = Modifier.fillMaxSize(),
+						) {
+							BrowserStatus(
+								title = if (mediaTab) "媒体加载失败" else "文件加载失败",
+								detail = contentError,
+								onPrimary = { if (mediaTab) vm.ensureMediaScanned(force = true) else vm.refresh() },
+								primaryLabel = "重试", onSettings = onOpenSettings,
+							)
+						}
+					}
+					initialLoading -> {
+						PullToRefreshBox(
+							isRefreshing = vm.isRefreshing,
+							onRefresh = { vm.pullRefresh() },
+							modifier = Modifier.fillMaxSize(),
+						) {
+							BrowserStatus(
+								title = if (mediaTab) "正在扫描媒体…" else "正在加载文件…", loading = true,
+							)
+						}
+					}
 					else -> when (vm.currentTab) {
 						MainTab.Files -> {
 							PullToRefreshBox(
@@ -1321,10 +1337,6 @@ private fun CollectionTopBar(
 						)
 					}
 					DropdownMenuItem(text = { Text("上传文件") }, onClick = { menuOpen = false; onUpload() })
-					DropdownMenuItem(text = { Text("新建文件夹") }, onClick = { menuOpen = false; onCreate() })
-					if (isInside && onDelete != null) {
-						DropdownMenuItem(text = { Text("删除当前文件夹", color = MaterialTheme.colorScheme.error) }, onClick = { menuOpen = false; onDelete() })
-					}
 					DropdownMenuItem(
 						text = {
 							Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2455,7 +2467,9 @@ private fun FileBrowserContent(
 
 	if (items.isEmpty() && !vm.loading) {
 		Box(
-			modifier = Modifier.fillMaxSize(),
+			modifier = Modifier
+				.fillMaxSize()
+				.verticalScroll(rememberScrollState()),
 			contentAlignment = Alignment.Center,
 		) {
 			Column(
@@ -2855,19 +2869,26 @@ private fun PhotoTimelineContent(
 	onOpenImage: (DavEntry) -> Unit,
 ) {
 	val currentPhotos = remember(groups) { groups.flatMap { it.items } }
+	val displayAlbums = remember(allAlbums) {
+		allAlbums.filterNot { it.name == "默认相册" || it.path == "Photos/默认相册" }
+	}
+	val haptic = LocalHapticFeedback.current
+	var draggingIndex by remember { mutableStateOf<Int?>(null) }
+	var dragOffsetXPx by remember { mutableFloatStateOf(0f) }
 
 	Column(modifier = Modifier.fillMaxSize()) {
-		// 1. 顶部子相册分类横滑条（高质感圆角胶囊）
+		// 1. 顶部子相册分类横滑条（高质感 34dp 统一高度胶囊，彻底解决高度跳动）
 		LazyRow(
 			contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
 			horizontalArrangement = Arrangement.spacedBy(8.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
-			// 位置 1: "全部文件夹" 胶囊
+			// 位置 1: "全部相册" 胶囊
 			item {
 				val isFolders = selectedAlbumPath == "__ALL_FOLDERS__"
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					modifier = Modifier.height(34.dp),
+					shape = RoundedCornerShape(17.dp),
 					color = if (isFolders) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
 					border = BorderStroke(
 						1.dp,
@@ -2878,9 +2899,9 @@ private fun PhotoTimelineContent(
 					onClick = { onSelectAlbum("__ALL_FOLDERS__") },
 				) {
 					Row(
-						modifier = Modifier.height(32.dp).padding(horizontal = 12.dp),
+						modifier = Modifier.fillMaxHeight().padding(horizontal = 11.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(6.dp),
+						horizontalArrangement = Arrangement.spacedBy(5.dp),
 					) {
 						Icon(
 							Icons.Rounded.FolderCopy,
@@ -2889,7 +2910,7 @@ private fun PhotoTimelineContent(
 							modifier = Modifier.size(15.dp)
 						)
 						Text(
-							"全部文件夹",
+							"全部相册",
 							fontSize = 12.sp,
 							fontWeight = if (isFolders) FontWeight.Bold else FontWeight.Medium,
 							color = if (isFolders) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
@@ -2898,11 +2919,12 @@ private fun PhotoTimelineContent(
 				}
 			}
 
-			// 位置 2: "全部照片" 胶囊
+			// 位置 2: "全部照片" 胶囊（紧凑精炼，不占首屏）
 			item {
 				val isAll = selectedAlbumPath.isBlank()
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					modifier = Modifier.height(34.dp),
+					shape = RoundedCornerShape(17.dp),
 					color = if (isAll) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
 					border = BorderStroke(
 						1.dp,
@@ -2913,9 +2935,9 @@ private fun PhotoTimelineContent(
 					onClick = { onSelectAlbum("") },
 				) {
 					Row(
-						modifier = Modifier.height(32.dp).padding(horizontal = 12.dp),
+						modifier = Modifier.fillMaxHeight().padding(horizontal = 11.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(6.dp),
+						horizontalArrangement = Arrangement.spacedBy(5.dp),
 					) {
 						Icon(
 							Icons.Rounded.PhotoLibrary,
@@ -2933,27 +2955,72 @@ private fun PhotoTimelineContent(
 				}
 			}
 
-			// 位置 3..N: 用户创建的各个子相册（尾部三个点菜单 + 长按支持换位置）
-			itemsIndexed(allAlbums) { index, album ->
+			// 位置 3..N: 用户创建的子相册（长按按住直接横向拖动滑块换位置；尾部三个点轻量菜单）
+			itemsIndexed(displayAlbums, key = { _, it -> it.path }) { index, album ->
 				val isSelected = selectedAlbumPath == album.path
 				var menuOpen by remember { mutableStateOf(false) }
+				val isDragging = draggingIndex == index
 
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					modifier = Modifier
+						.height(34.dp)
+						.graphicsLayer {
+							if (isDragging) {
+								translationX = dragOffsetXPx
+								scaleX = 1.08f
+								scaleY = 1.08f
+								shadowElevation = 8.dp.toPx()
+								zIndex = 10f
+							} else {
+								zIndex = 1f
+							}
+						}
+						.pointerInput(album.path, displayAlbums) {
+							detectDragGesturesAfterLongPress(
+								onDragStart = {
+									draggingIndex = index
+									dragOffsetXPx = 0f
+									haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+								},
+								onDrag = { change, dragAmount ->
+									change.consume()
+									dragOffsetXPx += dragAmount.x
+									val curr = draggingIndex ?: return@detectDragGesturesAfterLongPress
+									val stepPx = 70.dp.toPx()
+									if (dragOffsetXPx > stepPx && curr < displayAlbums.size - 1) {
+										onReorderAlbums(curr, curr + 1)
+										draggingIndex = curr + 1
+										dragOffsetXPx -= stepPx
+										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+									} else if (dragOffsetXPx < -stepPx && curr > 0) {
+										onReorderAlbums(curr, curr - 1)
+										draggingIndex = curr - 1
+										dragOffsetXPx += stepPx
+										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+									}
+								},
+								onDragEnd = {
+									draggingIndex = null
+									dragOffsetXPx = 0f
+								},
+								onDragCancel = {
+									draggingIndex = null
+									dragOffsetXPx = 0f
+								}
+							)
+						}
+						.clickable { onSelectAlbum(album.path) },
+					shape = RoundedCornerShape(17.dp),
 					color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
 					border = BorderStroke(
 						1.dp,
 						if (isSelected) Color.Transparent
 						else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
 					),
-					shadowElevation = if (isSelected) 2.dp else 0.dp,
-					modifier = Modifier.combinedClickable(
-						onClick = { onSelectAlbum(album.path) },
-						onLongClick = { menuOpen = true },
-					),
+					shadowElevation = if (isDragging) 6.dp else if (isSelected) 2.dp else 0.dp,
 				) {
 					Row(
-						modifier = Modifier.height(32.dp).padding(start = 10.dp, end = 4.dp),
+						modifier = Modifier.fillMaxHeight().padding(start = 10.dp, end = 3.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
@@ -2972,19 +3039,20 @@ private fun PhotoTimelineContent(
 							modifier = Modifier.widthIn(max = 130.dp)
 						)
 
-						// 胶囊末尾三点按钮
-						Box {
-							IconButton(
-								onClick = { menuOpen = true },
-								modifier = Modifier.size(24.dp),
-							) {
-								Icon(
-									Icons.Rounded.MoreVert,
-									contentDescription = "相册选项",
-									tint = if (isSelected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
-									modifier = Modifier.size(14.dp)
-								)
-							}
+						// 胶囊末尾三点按钮（轻量 Box 容器，绝无 M3 48dp 扩张）
+						Box(
+							modifier = Modifier
+								.size(24.dp)
+								.clip(CircleShape)
+								.clickable { menuOpen = true },
+							contentAlignment = Alignment.Center,
+						) {
+							Icon(
+								Icons.Rounded.MoreVert,
+								contentDescription = "相册选项",
+								tint = if (isSelected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
+								modifier = Modifier.size(15.dp)
+							)
 							DropdownMenu(
 								expanded = menuOpen,
 								onDismissRequest = { menuOpen = false },
@@ -2999,20 +3067,6 @@ private fun PhotoTimelineContent(
 									onClick = { menuOpen = false; onChangeIcon(album) },
 									leadingIcon = { Icon(Icons.Rounded.Edit, null) },
 								)
-								if (index > 0) {
-									DropdownMenuItem(
-										text = { Text("向前移动") },
-										onClick = { menuOpen = false; onReorderAlbums(index, index - 1) },
-										leadingIcon = { Icon(Icons.Rounded.ArrowBack, null) },
-									)
-								}
-								if (index < allAlbums.size - 1) {
-									DropdownMenuItem(
-										text = { Text("向后移动") },
-										onClick = { menuOpen = false; onReorderAlbums(index, index + 1) },
-										leadingIcon = { Icon(Icons.Rounded.ArrowForward, null) },
-									)
-								}
 								DropdownMenuItem(
 									text = { Text("删除相册", color = MaterialTheme.colorScheme.error) },
 									onClick = { menuOpen = false; onDeleteAlbum(album) },
@@ -3027,13 +3081,14 @@ private fun PhotoTimelineContent(
 			// 尾部新建专属相册快捷胶囊
 			item {
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					modifier = Modifier.height(34.dp),
+					shape = RoundedCornerShape(17.dp),
 					color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
 					border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
 					onClick = onCreateAlbum,
 				) {
 					Row(
-						modifier = Modifier.height(32.dp).padding(horizontal = 10.dp),
+						modifier = Modifier.fillMaxHeight().padding(horizontal = 10.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
@@ -3099,7 +3154,12 @@ private fun PhotoTimelineContent(
 				modifier = Modifier.fillMaxSize(),
 			) {
 				if (groups.isEmpty()) {
-					Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+					Box(
+						modifier = Modifier
+							.fillMaxSize()
+							.verticalScroll(rememberScrollState()),
+						contentAlignment = Alignment.Center,
+					) {
 						Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
 							FileIcon(category = FileCategory.Image, isDir = false, size = 56.dp)
 							Text("当前相册暂无照片", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -3370,9 +3430,12 @@ private fun AlbumFoldersGrid(
 								size = 46.dp,
 							)
 							Box {
-								IconButton(
-									onClick = { menuOpen = true },
-									modifier = Modifier.size(28.dp),
+								Box(
+									modifier = Modifier
+										.size(28.dp)
+										.clip(CircleShape)
+										.clickable { menuOpen = true },
+									contentAlignment = Alignment.Center,
 								) {
 									Icon(
 										Icons.Rounded.MoreVert,
@@ -3752,18 +3815,26 @@ private fun MediaStreamContent(
 	onThumbnailError: ((String) -> Unit)? = null,
 	onOpenVideo: (DavEntry) -> Unit,
 ) {
+	val displayMediaFolders = remember(allMediaFolders) {
+		allMediaFolders.filterNot { it.name == "默认影音" || it.path == "movies/默认影音" }
+	}
+	val haptic = LocalHapticFeedback.current
+	var draggingIndex by remember { mutableStateOf<Int?>(null) }
+	var dragOffsetXPx by remember { mutableFloatStateOf(0f) }
+
 	Column(modifier = Modifier.fillMaxSize()) {
-		// 1. 顶部影集/影视分类横滑栏（高质感圆角胶囊）
+		// 1. 顶部影集/影视分类横滑栏（高质感 34dp 统一高度胶囊，彻底解决高度跳动）
 		LazyRow(
 			contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
 			horizontalArrangement = Arrangement.spacedBy(8.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
-			// 位置 1: "全部文件夹" 胶囊
+			// 位置 1: "全部影集" 胶囊
 			item {
 				val isFolders = selectedMediaPath == "__ALL_FOLDERS__"
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					modifier = Modifier.height(34.dp),
+					shape = RoundedCornerShape(17.dp),
 					color = if (isFolders) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
 					border = BorderStroke(
 						1.dp,
@@ -3774,18 +3845,18 @@ private fun MediaStreamContent(
 					onClick = { onSelectMediaFolder("__ALL_FOLDERS__") },
 				) {
 					Row(
-						modifier = Modifier.height(32.dp).padding(horizontal = 12.dp),
+						modifier = Modifier.fillMaxHeight().padding(horizontal = 11.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(6.dp),
+						horizontalArrangement = Arrangement.spacedBy(5.dp),
 					) {
 						Icon(
-							Icons.Rounded.FolderCopy,
+							Icons.Rounded.VideoLibrary,
 							contentDescription = null,
 							tint = if (isFolders) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
 							modifier = Modifier.size(15.dp)
 						)
 						Text(
-							"全部文件夹",
+							"全部影集",
 							fontSize = 12.sp,
 							fontWeight = if (isFolders) FontWeight.Bold else FontWeight.Medium,
 							color = if (isFolders) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
@@ -3794,11 +3865,12 @@ private fun MediaStreamContent(
 				}
 			}
 
-			// 位置 2: "全部影视" 胶囊
+			// 位置 2: "全部影视" 胶囊（紧凑精炼，不占首屏）
 			item {
 				val isAll = selectedMediaPath.isBlank()
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					modifier = Modifier.height(34.dp),
+					shape = RoundedCornerShape(17.dp),
 					color = if (isAll) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
 					border = BorderStroke(
 						1.dp,
@@ -3809,12 +3881,12 @@ private fun MediaStreamContent(
 					onClick = { onSelectMediaFolder("") },
 				) {
 					Row(
-						modifier = Modifier.height(32.dp).padding(horizontal = 12.dp),
+						modifier = Modifier.fillMaxHeight().padding(horizontal = 11.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(6.dp),
+						horizontalArrangement = Arrangement.spacedBy(5.dp),
 					) {
 						Icon(
-							Icons.Rounded.VideoLibrary,
+							Icons.Rounded.Movie,
 							contentDescription = null,
 							tint = if (isAll) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
 							modifier = Modifier.size(15.dp)
@@ -3829,27 +3901,72 @@ private fun MediaStreamContent(
 				}
 			}
 
-			// 位置 3..N: 各个影集分类胶囊（带三点菜单与长按排序）
-			itemsIndexed(allMediaFolders) { index, folder ->
+			// 位置 3..N: 各个影集分类胶囊（长按按住直接横向拖动滑块换位置；尾部三个点轻量菜单）
+			itemsIndexed(displayMediaFolders, key = { _, it -> it.path }) { index, folder ->
 				val isSelected = selectedMediaPath == folder.path
 				var menuOpen by remember { mutableStateOf(false) }
+				val isDragging = draggingIndex == index
 
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					modifier = Modifier
+						.height(34.dp)
+						.graphicsLayer {
+							if (isDragging) {
+								translationX = dragOffsetXPx
+								scaleX = 1.08f
+								scaleY = 1.08f
+								shadowElevation = 8.dp.toPx()
+								zIndex = 10f
+							} else {
+								zIndex = 1f
+							}
+						}
+						.pointerInput(folder.path, displayMediaFolders) {
+							detectDragGesturesAfterLongPress(
+								onDragStart = {
+									draggingIndex = index
+									dragOffsetXPx = 0f
+									haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+								},
+								onDrag = { change, dragAmount ->
+									change.consume()
+									dragOffsetXPx += dragAmount.x
+									val curr = draggingIndex ?: return@detectDragGesturesAfterLongPress
+									val stepPx = 70.dp.toPx()
+									if (dragOffsetXPx > stepPx && curr < displayMediaFolders.size - 1) {
+										onReorderMediaFolders(curr, curr + 1)
+										draggingIndex = curr + 1
+										dragOffsetXPx -= stepPx
+										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+									} else if (dragOffsetXPx < -stepPx && curr > 0) {
+										onReorderMediaFolders(curr, curr - 1)
+										draggingIndex = curr - 1
+										dragOffsetXPx += stepPx
+										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+									}
+								},
+								onDragEnd = {
+									draggingIndex = null
+									dragOffsetXPx = 0f
+								},
+								onDragCancel = {
+									draggingIndex = null
+									dragOffsetXPx = 0f
+								}
+							)
+						}
+						.clickable { onSelectMediaFolder(folder.path) },
+					shape = RoundedCornerShape(17.dp),
 					color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
 					border = BorderStroke(
 						1.dp,
 						if (isSelected) Color.Transparent
 						else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
 					),
-					shadowElevation = if (isSelected) 2.dp else 0.dp,
-					modifier = Modifier.combinedClickable(
-						onClick = { onSelectMediaFolder(folder.path) },
-						onLongClick = { menuOpen = true },
-					),
+					shadowElevation = if (isDragging) 6.dp else if (isSelected) 2.dp else 0.dp,
 				) {
 					Row(
-						modifier = Modifier.height(32.dp).padding(start = 10.dp, end = 4.dp),
+						modifier = Modifier.fillMaxHeight().padding(start = 10.dp, end = 3.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
@@ -3868,19 +3985,20 @@ private fun MediaStreamContent(
 							modifier = Modifier.widthIn(max = 130.dp)
 						)
 
-						// 胶囊末尾三点按钮
-						Box {
-							IconButton(
-								onClick = { menuOpen = true },
-								modifier = Modifier.size(24.dp),
-							) {
-								Icon(
-									Icons.Rounded.MoreVert,
-									contentDescription = "影集选项",
-									tint = if (isSelected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
-									modifier = Modifier.size(14.dp)
-								)
-							}
+						// 胶囊末尾三点按钮（轻量 Box 容器，绝无 M3 48dp 扩张）
+						Box(
+							modifier = Modifier
+								.size(24.dp)
+								.clip(CircleShape)
+								.clickable { menuOpen = true },
+							contentAlignment = Alignment.Center,
+						) {
+							Icon(
+								Icons.Rounded.MoreVert,
+								contentDescription = "影集选项",
+								tint = if (isSelected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
+								modifier = Modifier.size(15.dp)
+							)
 							DropdownMenu(
 								expanded = menuOpen,
 								onDismissRequest = { menuOpen = false },
@@ -3895,20 +4013,6 @@ private fun MediaStreamContent(
 									onClick = { menuOpen = false; onChangeIcon(folder) },
 									leadingIcon = { Icon(Icons.Rounded.Edit, null) },
 								)
-								if (index > 0) {
-									DropdownMenuItem(
-										text = { Text("向前移动") },
-										onClick = { menuOpen = false; onReorderMediaFolders(index, index - 1) },
-										leadingIcon = { Icon(Icons.Rounded.ArrowBack, null) },
-									)
-								}
-								if (index < allMediaFolders.size - 1) {
-									DropdownMenuItem(
-										text = { Text("向后移动") },
-										onClick = { menuOpen = false; onReorderMediaFolders(index, index + 1) },
-										leadingIcon = { Icon(Icons.Rounded.ArrowForward, null) },
-									)
-								}
 								DropdownMenuItem(
 									text = { Text("删除分类", color = MaterialTheme.colorScheme.error) },
 									onClick = { menuOpen = false; onDeleteMediaFolder(folder) },
@@ -3923,13 +4027,14 @@ private fun MediaStreamContent(
 			// 尾部新建影集快捷胶囊
 			item {
 				Surface(
-					shape = RoundedCornerShape(16.dp),
+					modifier = Modifier.height(34.dp),
+					shape = RoundedCornerShape(17.dp),
 					color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
 					border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
 					onClick = onCreateMediaFolder,
 				) {
 					Row(
-						modifier = Modifier.height(32.dp).padding(horizontal = 10.dp),
+						modifier = Modifier.fillMaxHeight().padding(horizontal = 10.dp),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
@@ -3995,7 +4100,12 @@ private fun MediaStreamContent(
 				modifier = Modifier.fillMaxSize(),
 			) {
 				if (videos.isEmpty()) {
-					Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+					Box(
+						modifier = Modifier
+							.fillMaxSize()
+							.verticalScroll(rememberScrollState()),
+						contentAlignment = Alignment.Center,
+					) {
 						Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
 							FileIcon(category = FileCategory.Video, isDir = false, size = 56.dp)
 							Text("当前分类暂无视频", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -4224,9 +4334,12 @@ private fun MediaFoldersGrid(
 								size = 46.dp,
 							)
 							Box {
-								IconButton(
-									onClick = { menuOpen = true },
-									modifier = Modifier.size(28.dp),
+								Box(
+									modifier = Modifier
+										.size(28.dp)
+										.clip(CircleShape)
+										.clickable { menuOpen = true },
+									contentAlignment = Alignment.Center,
 								) {
 									Icon(
 										Icons.Rounded.MoreVert,
