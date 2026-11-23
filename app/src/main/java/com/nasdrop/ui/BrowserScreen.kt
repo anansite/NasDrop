@@ -178,6 +178,7 @@ import com.nasdrop.NasFolderIcon
 import com.nasdrop.videoDurationMs
 import androidx.compose.material.icons.rounded.Palette
 import com.nasdrop.MainTab
+import com.nasdrop.NasSystemInfo
 import com.nasdrop.RouteInfo
 import com.nasdrop.SortOrder
 import com.nasdrop.TransferStatus
