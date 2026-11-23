@@ -257,6 +257,7 @@ fun BrowserScreen(
 	var showBatchDeleteConfirm by remember { mutableStateOf(false) }
 	var showBatchMoveSheet by remember { mutableStateOf(false) }
 	var activeEntryForIconPicker by remember { mutableStateOf<DavEntry?>(null) }
+	var activeMemoryYearGroup by remember { mutableStateOf<com.nasdrop.MemoryYearGroup?>(null) }
 	LaunchedEffect(transferRequest) {
 		if (transferRequest > 0) showTransferSheet = true
 	}
@@ -721,6 +722,22 @@ fun BrowserScreen(
 			},
 			confirmButton = { Button(onClick = { vm.confirmUploadOverwrite() }) { Text("覆盖上传") } },
 			dismissButton = { TextButton(onClick = { vm.dismissUploadOverwrite() }) { Text("取消") } },
+		)
+	}
+
+	if (activeMemoryYearGroup != null) {
+		MemoryDetailModalSheet(
+			yearGroup = activeMemoryYearGroup!!,
+			onDismiss = { activeMemoryYearGroup = null },
+			onSelectAlbum = {
+				activeMemoryYearGroup = null
+				vm.currentTab = MainTab.Photos
+				vm.openAlbum(it)
+			},
+			onOpenImage = onOpenImage,
+			onOpenVideo = onOpenVideo,
+			urlOf = { vm.thumbnailUrlFor(it) },
+			directUrlOf = { vm.directUrlFor(it) },
 		)
 	}
 
@@ -1620,7 +1637,7 @@ private fun HomeTopBar(
 								.background(Color(0xFF10B981), CircleShape)
 						)
 						Text(
-							text = routeInfo.type.name.ifBlank { "已连接" },
+							text = routeInfo.label.ifBlank { "已连接" },
 							style = MaterialTheme.typography.labelSmall,
 							color = MaterialTheme.colorScheme.onSurfaceVariant,
 						)
@@ -1632,9 +1649,9 @@ private fun HomeTopBar(
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.spacedBy(4.dp),
 			) {
-				TransferBadgeButton(
+				TransferButton(
 					count = activeTransferCount,
-					onClick = onOpenTransferSheet,
+					onTransfer = onOpenTransferSheet,
 				)
 
 				if (hasUpdate) {

@@ -132,6 +132,7 @@ import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
@@ -231,10 +232,10 @@ fun ImageViewer(
 	var exifData by remember(current.path) { mutableStateOf<MediaExifData?>(null) }
 	var loadingExif by remember(current.path) { mutableStateOf(false) }
 
-	LaunchedEffect(showInfoDialog, current.path) {
-		if (showInfoDialog && exifData == null) {
+	LaunchedEffect(showInfoDialog, current?.path) {
+		if (showInfoDialog && exifData == null && current != null) {
 			loadingExif = true
-			val activeUrl = activeDirectUrls[current.path] ?: fallbackUrls[current.path] ?: directUrlOf?.invoke(current.path)
+			val activeUrl = urlOf(current.path) ?: fallbackUrlOf?.invoke(current.path) ?: thumbOf?.invoke(current.path)
 			exifData = MediaExifHelper.extractExif(context, current, activeUrl, context.app.repo.http())
 			loadingExif = false
 		}

@@ -137,7 +137,7 @@ object MediaExifHelper {
 			} else null
 		}
 
-		val isoVal = exif.getAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)
+		val isoVal = exif.getAttribute("PhotographicSensitivity")
 			?: exif.getAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS)
 		val iso = isoVal?.let { "ISO $it" }
 
