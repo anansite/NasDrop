@@ -39,6 +39,7 @@ enum class MainTab {
 	Photos,
 	Files,
 	Media,
+	Settings,
 	Me,
 }
 

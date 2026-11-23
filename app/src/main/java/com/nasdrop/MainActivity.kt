@@ -157,7 +157,7 @@ class MainActivity : ComponentActivity() {
 							route = Route.Images(album, index)
 						},
 						onOpenVideo = { entry -> route = Route.Video(entry) },
-						onOpenSettings = { route = Route.Settings },
+						onOpenSettings = { vm.currentTab = MainTab.Settings },
 						onLogin = login,
 						transferRequest = transferRequest,
 					)

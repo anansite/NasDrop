@@ -102,7 +102,10 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material.icons.rounded.Upgrade
+import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.ViewAgenda
 import androidx.compose.material.icons.rounded.ViewHeadline
@@ -409,6 +412,13 @@ fun BrowserScreen(
 						)
 					}
 
+					MainTab.Settings -> {
+						SettingsTopBar(
+							vm = vm,
+							onOpenTransferSheet = { showTransferSheet = true },
+						)
+					}
+
 					MainTab.Me -> {
 						NetworkTopBar(
 							routeInfo = routeInfo,
@@ -568,6 +578,14 @@ fun BrowserScreen(
 								directUrlOf = { vm.directUrlFor(it) },
 								onThumbnailError = { vm.markThumbnailFailed(it) },
 								onOpenVideo = onOpenVideo,
+							)
+						}
+
+						MainTab.Settings -> {
+							SettingsScreen(
+								vm = vm,
+								onBack = { vm.currentTab = MainTab.Home },
+								isInsideTab = true,
 							)
 						}
 
@@ -1363,23 +1381,7 @@ private fun CollectionTopBar(
 			}
 			TransferButton(activeTransferCount, onTransfer)
 			if (hasUpdate && onOpenUpdateDialog != null) {
-				IconButton(onClick = onOpenUpdateDialog, modifier = Modifier.size(40.dp)) {
-					Box(contentAlignment = Alignment.Center) {
-						Icon(
-							imageVector = Icons.Rounded.CloudDownload,
-							contentDescription = "发现新版本",
-							tint = MaterialTheme.colorScheme.primary,
-							modifier = Modifier.size(22.dp)
-						)
-						Box(
-							modifier = Modifier
-								.size(8.dp)
-								.clip(CircleShape)
-								.background(MaterialTheme.colorScheme.error)
-								.align(Alignment.TopEnd)
-						)
-					}
-				}
+				UpdateBadgeButton(onClick = onOpenUpdateDialog)
 			}
 			Box {
 				IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
@@ -1400,7 +1402,7 @@ private fun CollectionTopBar(
 						DropdownMenuItem(
 							text = {
 								Row(verticalAlignment = Alignment.CenterVertically) {
-									Icon(Icons.Rounded.CloudDownload, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+									Icon(Icons.Rounded.Upgrade, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
 									Spacer(Modifier.width(8.dp))
 									Text("发现新版本", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
 								}
@@ -1427,15 +1429,65 @@ private fun CollectionTopBar(
 	}
 }
 
-/** 传输入口保留独立触控区，数量提示不参与标题宽度分配。 */
+/** 传输入口保留独立触控区，使用双向流转箭头图标，数量提示不参与标题宽度分配。 */
 @Composable
 private fun TransferButton(count: Int, onClick: () -> Unit) {
 	IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
-		Box {
-			Icon(Icons.Rounded.CloudDownload, contentDescription = if (count > 0) "传输中心，$count 个任务进行中" else "传输中心")
+		Box(contentAlignment = Alignment.Center) {
+			Icon(
+				imageVector = Icons.Rounded.SwapVert,
+				contentDescription = if (count > 0) "传输中心，$count 个任务进行中" else "传输中心",
+				tint = MaterialTheme.colorScheme.onSurfaceVariant,
+			)
 			if (count > 0) {
-				Box(Modifier.size(8.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary).align(Alignment.TopEnd))
+				Box(
+					modifier = Modifier
+						.size(8.dp)
+						.clip(CircleShape)
+						.background(MaterialTheme.colorScheme.primary)
+						.align(Alignment.TopEnd)
+				)
 			}
+		}
+	}
+}
+
+/** 专属独立升级提醒入口，区别于传输与上传，胶囊红点视觉辨识度极高。 */
+@Composable
+private fun UpdateBadgeButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+	Surface(
+		shape = RoundedCornerShape(14.dp),
+		color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+		border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+		modifier = modifier
+			.height(30.dp)
+			.clip(RoundedCornerShape(14.dp))
+			.clickable { onClick() },
+	) {
+		Row(
+			verticalAlignment = Alignment.CenterVertically,
+			modifier = Modifier.padding(horizontal = 8.dp),
+		) {
+			Icon(
+				imageVector = Icons.Rounded.Upgrade,
+				contentDescription = "发现新版本",
+				tint = MaterialTheme.colorScheme.primary,
+				modifier = Modifier.size(16.dp),
+			)
+			Spacer(Modifier.width(4.dp))
+			Text(
+				text = "升级",
+				style = MaterialTheme.typography.labelSmall,
+				fontWeight = FontWeight.Bold,
+				color = MaterialTheme.colorScheme.primary,
+			)
+			Spacer(Modifier.width(4.dp))
+			Box(
+				modifier = Modifier
+					.size(6.dp)
+					.clip(CircleShape)
+					.background(MaterialTheme.colorScheme.error),
+			)
 		}
 	}
 }
@@ -1556,26 +1608,77 @@ private fun NetworkTopBar(
 			HumanNetworkPill(routeInfo = routeInfo, onClick = {})
 
 			if (hasUpdate) {
-				IconButton(onClick = onOpenUpdateDialog) {
-					Box {
-						Icon(
-							imageVector = Icons.Rounded.CloudDownload,
-							contentDescription = "发现新版本",
-							tint = MaterialTheme.colorScheme.primary,
-						)
-						Box(
-							modifier = Modifier
-								.size(8.dp)
-								.clip(CircleShape)
-								.background(MaterialTheme.colorScheme.error)
-								.align(Alignment.TopEnd)
-						)
-					}
-				}
+				UpdateBadgeButton(onClick = onOpenUpdateDialog)
 			}
 
 			IconButton(onClick = onOpenSettings) {
 				Icon(Icons.Rounded.Settings, contentDescription = "设置", tint = MaterialTheme.colorScheme.onSurface)
+			}
+		}
+	}
+}
+
+@Composable
+private fun SettingsTopBar(
+	vm: BrowserViewModel,
+	onOpenTransferSheet: () -> Unit = {},
+) {
+	Surface(
+		color = MaterialTheme.colorScheme.surface,
+		tonalElevation = 1.dp,
+	) {
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(horizontal = 16.dp, vertical = 10.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.SpaceBetween,
+		) {
+			Row(
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(10.dp),
+			) {
+				Surface(
+					shape = CircleShape,
+					color = MaterialTheme.colorScheme.primaryContainer,
+					modifier = Modifier.size(36.dp),
+				) {
+					Box(contentAlignment = Alignment.Center) {
+						Icon(
+							Icons.Rounded.Settings,
+							contentDescription = null,
+							tint = MaterialTheme.colorScheme.primary,
+							modifier = Modifier.size(20.dp),
+						)
+					}
+				}
+				Column {
+					Text(
+						text = "系统与配置",
+						style = MaterialTheme.typography.titleLarge,
+						fontWeight = FontWeight.ExtraBold,
+						color = MaterialTheme.colorScheme.onSurface,
+					)
+					Text(
+						text = "NAS 服务状态与偏好设置",
+						style = MaterialTheme.typography.labelSmall,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+					)
+				}
+			}
+
+			Row(
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(6.dp),
+			) {
+				TransferButton(
+					count = vm.activeTransferCount,
+					onClick = onOpenTransferSheet,
+				)
+
+				if (vm.hasUpdate) {
+					UpdateBadgeButton(onClick = { vm.openUpdateDialog() })
+				}
 			}
 		}
 	}
@@ -1649,7 +1752,7 @@ private fun HomeTopBar(
 
 			Row(
 				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(4.dp),
+				horizontalArrangement = Arrangement.spacedBy(6.dp),
 			) {
 				TransferButton(
 					count = activeTransferCount,
@@ -1657,22 +1760,7 @@ private fun HomeTopBar(
 				)
 
 				if (hasUpdate) {
-					IconButton(onClick = onOpenUpdateDialog) {
-						Box(contentAlignment = Alignment.Center) {
-							Icon(
-								imageVector = Icons.Rounded.CloudDownload,
-								contentDescription = "发现新版本",
-								tint = MaterialTheme.colorScheme.primary,
-							)
-							Box(
-								modifier = Modifier
-									.size(8.dp)
-									.clip(CircleShape)
-									.background(MaterialTheme.colorScheme.error)
-									.align(Alignment.TopEnd)
-							)
-						}
-					}
+					UpdateBadgeButton(onClick = onOpenUpdateDialog)
 				}
 
 				IconButton(onClick = onOpenSettings) {
@@ -1751,26 +1839,7 @@ private fun FilesTopBar(
 			}
 			TransferButton(vm.activeTransferCount, onOpenTransferSheet)
 			if (vm.hasUpdate) {
-				IconButton(
-					onClick = { vm.openUpdateDialog() },
-					modifier = Modifier.size(40.dp)
-				) {
-					Box(contentAlignment = Alignment.Center) {
-						Icon(
-							imageVector = Icons.Rounded.CloudDownload,
-							contentDescription = "发现新版本",
-							tint = MaterialTheme.colorScheme.primary,
-							modifier = Modifier.size(22.dp)
-						)
-						Box(
-							modifier = Modifier
-								.size(8.dp)
-								.clip(CircleShape)
-								.background(MaterialTheme.colorScheme.error)
-								.align(Alignment.TopEnd)
-						)
-					}
-				}
+				UpdateBadgeButton(onClick = { vm.openUpdateDialog() })
 			}
 			Box {
 				IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
@@ -1791,7 +1860,7 @@ private fun FilesTopBar(
 						DropdownMenuItem(
 							text = {
 								Row(verticalAlignment = Alignment.CenterVertically) {
-									Icon(Icons.Rounded.CloudDownload, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+									Icon(Icons.Rounded.Upgrade, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
 									Spacer(Modifier.width(8.dp))
 									Text("发现新版本", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
 								}
@@ -3108,7 +3177,7 @@ private fun HomeScreenContent(
 									modifier = Modifier.size(20.dp),
 								)
 								Text(
-									text = vm.systemInfo?.hostname?.ifBlank { "家庭私有云存储" } ?: "家庭私有云存储",
+									text = "家庭私有云存储",
 									style = MaterialTheme.typography.titleMedium,
 									fontWeight = FontWeight.Bold,
 								)
@@ -3129,45 +3198,12 @@ private fun HomeScreenContent(
 											.background(Color(0xFF10B981)),
 									)
 									Text(
-										text = if (vm.systemInfo != null) "运行正常 · 查看系统" else "运行正常",
+										text = "运行正常",
 										fontSize = 11.sp,
 										fontWeight = FontWeight.SemiBold,
 										color = Color(0xFF059669),
 									)
 								}
-							}
-						}
-
-						// 若有 systemInfo，展示直观的存储空间池进度条与 CPU/内存指标
-						val sys = vm.systemInfo
-						if (sys != null && sys.disk.total > 0) {
-							val diskPct = (sys.disk.percent / 100.0).toFloat().coerceIn(0f, 1f)
-							Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-								Row(
-									modifier = Modifier.fillMaxWidth(),
-									horizontalArrangement = Arrangement.SpaceBetween,
-								) {
-									Text(
-										"存储空间: 已用 ${NasSystemInfo.formatBytes(sys.disk.used)} / ${NasSystemInfo.formatBytes(sys.disk.total)}",
-										fontSize = 11.sp,
-										color = MaterialTheme.colorScheme.onSurfaceVariant,
-									)
-									Text(
-										"CPU ${String.format("%.0f%%", sys.cpuPercent)} · 内存 ${String.format("%.0f%%", sys.memory.percent)}",
-										fontSize = 11.sp,
-										fontWeight = FontWeight.Medium,
-										color = MaterialTheme.colorScheme.primary,
-									)
-								}
-								LinearProgressIndicator(
-									progress = { diskPct },
-									modifier = Modifier
-										.fillMaxWidth()
-										.height(4.dp)
-										.clip(RoundedCornerShape(2.dp)),
-									color = MaterialTheme.colorScheme.primary,
-									trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-								)
 							}
 						}
 
@@ -6314,6 +6350,14 @@ private fun CommercialNavigationBar(
 					onClick = { onTabSelect(MainTab.Files) },
 					modifier = Modifier.weight(1f),
 				)
+				CompactTabItem(
+					title = "配置",
+					activeIcon = Icons.Rounded.Settings,
+					inactiveIcon = Icons.Rounded.Settings,
+					selected = currentTab == MainTab.Settings,
+					onClick = { onTabSelect(MainTab.Settings) },
+					modifier = Modifier.weight(1f),
+				)
 			}
 		}
 	}
@@ -6432,7 +6476,7 @@ private fun DraggableUploadFab(
 	onUploadPhoto: () -> Unit,
 	onUploadVideo: () -> Unit,
 ) {
-	if (currentTab == MainTab.Me) return
+	if (currentTab == MainTab.Me || currentTab == MainTab.Settings) return
 
 	BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
 		val density = LocalDensity.current
@@ -6450,11 +6494,11 @@ private fun DraggableUploadFab(
 		var isDragging by remember { mutableStateOf(false) }
 
 		val (bgColor, icon, label) = when (currentTab) {
-			MainTab.Home -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.CloudUpload, "快速上传")
-			MainTab.Files -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.CloudUpload, "上传文件")
-			MainTab.Photos -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.CloudUpload, "上传照片")
-			MainTab.Media -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.CloudUpload, "上传视频")
-			MainTab.Me -> Triple(Color.Transparent, Icons.Rounded.Add, "")
+			MainTab.Home -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.FileUpload, "快速上传")
+			MainTab.Files -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.FileUpload, "上传文件")
+			MainTab.Photos -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.FileUpload, "上传照片")
+			MainTab.Media -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.FileUpload, "上传视频")
+			MainTab.Settings, MainTab.Me -> Triple(Color.Transparent, Icons.Rounded.Add, "")
 		}
 
 		Surface(
@@ -6490,7 +6534,7 @@ private fun DraggableUploadFab(
 						MainTab.Files -> onUploadFile()
 						MainTab.Photos -> onUploadPhoto()
 						MainTab.Media -> onUploadVideo()
-						MainTab.Me -> {}
+						MainTab.Settings, MainTab.Me -> {}
 					}
 				},
 		) {
