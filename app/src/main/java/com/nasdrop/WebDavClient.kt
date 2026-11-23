@@ -119,12 +119,13 @@ class TransferCanceledException(cause: IOException? = null) : IOException("传�
  * 这正是把 Tailscale 关在 Go 侧换来的好处。
  */
 class WebDavClient(
-	private val base: HttpUrl,
+	val base: HttpUrl,
 	private val http: OkHttpClient,
 	private val apiOrigin: HttpUrl? = null,
 	private val apiUser: String = "",
 	private val apiPassword: String = "",
 ) {
+	val baseUrl: HttpUrl get() = base
 	/** OpenList 服务端缩略图：path(相对WebDAV根,无首尾斜杠) -> 带 sign 的 /d/...?type=thumb 直链 */
 	private val thumbUrls = java.util.concurrent.ConcurrentHashMap<String, String>()
 	/** OpenList 原生直链签名：path -> sign（来自 fs/list），用于 /p/<path>?sign= 原图/原视频直链 */
