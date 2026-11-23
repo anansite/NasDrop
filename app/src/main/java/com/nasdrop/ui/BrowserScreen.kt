@@ -1651,7 +1651,7 @@ private fun HomeTopBar(
 			) {
 				TransferButton(
 					count = activeTransferCount,
-					onTransfer = onOpenTransferSheet,
+					onClick = onOpenTransferSheet,
 				)
 
 				if (hasUpdate) {

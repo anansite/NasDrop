@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore by preferencesDataStore(name = "nasdrop")
 
 class Prefs(private val context: Context) {
+	companion object {
+		@Volatile var lastSettings: Settings? = null
+	}
 
 	private object Keys {
 		val baseUrl = stringPreferencesKey("base_url")
@@ -29,7 +32,11 @@ class Prefs(private val context: Context) {
 		val sortOrder = stringPreferencesKey("sort_order")
 	}
 
-	val settings: Flow<Settings> = context.dataStore.data.map { it.toSettings() }
+	val settings: Flow<Settings> = context.dataStore.data.map {
+		val s = it.toSettings()
+		lastSettings = s
+		s
+	}
 
 	suspend fun current(): Settings = settings.first()
 

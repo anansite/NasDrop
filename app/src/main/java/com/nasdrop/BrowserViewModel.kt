@@ -926,9 +926,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val clientThumb = client?.thumbnailUrl(key)?.toString()
 		if (clientThumb != null) return clientThumb
 
-		// 核心冷启动降级：当 client 尚未就绪时，从 prefs.current().baseUrl 构建确定性缩略图 URL，使 Coil 立即命中本地磁盘缓存
-		val baseUrlStr = app.prefs.current().baseUrl
-		val baseUrl = baseUrlStr.toHttpUrlOrNull()
+		// 核心冷启动降级：当 client 尚未就绪时，从 observedConfiguration 或 Prefs.lastSettings 构建确定性缩略图 URL，使 Coil 立即命中本地磁盘缓存
+		val baseUrlStr = client?.baseUrl?.toString() ?: observedConfiguration?.baseUrl ?: Prefs.lastSettings?.baseUrl
+		val baseUrl = baseUrlStr?.toHttpUrlOrNull()
 		if (baseUrl != null) {
 			val encoded = if (key.startsWith("/")) key else "/$key"
 			return baseUrl.newBuilder()
@@ -961,8 +961,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val clientThumb = client?.serverThumbUrl(key)?.toString()
 		if (clientThumb != null) return clientThumb
 
-		val baseUrlStr = app.prefs.current().baseUrl
-		val baseUrl = baseUrlStr.toHttpUrlOrNull()
+		val baseUrlStr = client?.baseUrl?.toString() ?: observedConfiguration?.baseUrl ?: Prefs.lastSettings?.baseUrl
+		val baseUrl = baseUrlStr?.toHttpUrlOrNull()
 		if (baseUrl != null) {
 			val encoded = if (key.startsWith("/")) key else "/$key"
 			return baseUrl.newBuilder()
