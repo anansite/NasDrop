@@ -13,6 +13,8 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
+import org.json.JSONArray
+import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
 import java.io.IOException
 import java.net.URI
@@ -636,7 +638,8 @@ class WebDavClient(
 	) {
 		require(startByte >= 0L) { "下载起点不能为负数" }
 		val expectedValidator = validator?.trim()?.takeIf { it.isNotEmpty() }
-		val reqBuilder = Request.Builder().url(urlFor(path)).header("Accept-Encoding", "identity").get()
+		val targetUrl = runCatching { directUrlFor(path) }.getOrNull() ?: urlFor(path)
+		val reqBuilder = Request.Builder().url(targetUrl).header("Accept-Encoding", "identity").get()
 		if (startByte > 0L) {
 			reqBuilder.header("Range", "bytes=$startByte-")
 			if (expectedValidator != null) reqBuilder.header("If-Range", expectedValidator)
@@ -682,8 +685,9 @@ class WebDavClient(
 				}
 				onValidator(responseValidator)
 				body.byteStream().use { ins ->
-					val buf = ByteArray(64 * 1024)
+					val buf = ByteArray(128 * 1024)
 					var received = 0L
+					var lastReport = 0L
 					while (true) {
 						call.throwIfCanceled()
 						val n = ins.read(buf)
@@ -693,17 +697,74 @@ class WebDavClient(
 						if (expectedLength >= 0 && n.toLong() > expectedLength - received) throw IOException("下载响应超过声明长度")
 						output.write(buf, 0, n)
 						received += n
-						onProgress(startByte + received, total)
+						val now = System.currentTimeMillis()
+						if (now - lastReport >= 100 || (expectedLength >= 0 && received == expectedLength)) {
+							onProgress(startByte + received, total)
+							lastReport = now
+						}
 					}
 					if (expectedLength >= 0 && received != expectedLength) throw IOException("下载响应提前结束：预期 $expectedLength 字节，实际 $received 字节")
 					call.throwIfCanceled()
 					output.flush()
+					onProgress(startByte + received, total)
 				}
 			}
 		} catch (e: IOException) {
 			call.throwIfCanceled(e)
 			logger.log(Level.WARNING, "下载失败 path=$path startByte=$startByte", e)
 			throw e
+		}
+	}
+
+	/**
+	 * 读取远端配置与相册元数据 (.nasdrop_meta.json)
+	 */
+	fun loadRemoteMetadata(): RemoteMetadata? {
+		return try {
+			val url = urlFor(".nasdrop_meta.json")
+			val req = Request.Builder().url(url).get().build()
+			metaCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return null
+				val body = resp.body?.string() ?: return null
+				parseRemoteMetadata(body)
+			}
+		} catch (e: Exception) {
+			null
+		}
+	}
+
+	/**
+	 * 保存配置与相册元数据至远端 (.nasdrop_meta.json)
+	 */
+	fun saveRemoteMetadata(meta: RemoteMetadata): Boolean {
+		return try {
+			val url = urlFor(".nasdrop_meta.json")
+			val json = serializeRemoteMetadata(meta)
+			val body = json.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+			val req = Request.Builder().url(url).put(body).build()
+			metaCall(req).execute().use { resp ->
+				resp.isSuccessful
+			}
+		} catch (e: Exception) {
+			false
+		}
+	}
+
+	/**
+	 * 上传自定义文件夹图标至 NAS 的 .nasdrop_icons 目录
+	 */
+	fun uploadCustomIcon(fileName: String, bytes: ByteArray): String? {
+		return try {
+			runCatching { mkcol(".nasdrop_icons") }
+			val path = ".nasdrop_icons/$fileName"
+			val url = urlFor(path)
+			val body = bytes.toRequestBody("image/png".toMediaTypeOrNull())
+			val req = Request.Builder().url(url).put(body).build()
+			metaCall(req).execute().use { resp ->
+				if (resp.isSuccessful) path else null
+			}
+		} catch (e: Exception) {
+			null
 		}
 	}
 
@@ -1117,4 +1178,61 @@ internal object Query {
 		}
 		return -1L
 	}
+}
+
+/**
+ * 远端持久化元数据结构 (.nasdrop_meta.json)
+ */
+data class RemoteMetadata(
+	val folderIcons: Map<String, String> = emptyMap(),
+	val albumOrder: List<String> = emptyList(),
+	val mediaOrder: List<String> = emptyList(),
+)
+
+fun parseRemoteMetadata(jsonStr: String): RemoteMetadata {
+	return try {
+		val obj = JSONObject(jsonStr)
+		val iconsMap = mutableMapOf<String, String>()
+		if (obj.has("folder_icons")) {
+			val iconsObj = obj.getJSONObject("folder_icons")
+			val keys = iconsObj.keys()
+			while (keys.hasNext()) {
+				val k = keys.next()
+				iconsMap[k] = iconsObj.optString(k, "")
+			}
+		}
+		val albumList = mutableListOf<String>()
+		if (obj.has("album_order")) {
+			val arr = obj.getJSONArray("album_order")
+			for (i in 0 until arr.length()) {
+				val v = arr.optString(i)
+				if (v.isNotEmpty()) albumList.add(v)
+			}
+		}
+		val mediaList = mutableListOf<String>()
+		if (obj.has("media_order")) {
+			val arr = obj.getJSONArray("media_order")
+			for (i in 0 until arr.length()) {
+				val v = arr.optString(i)
+				if (v.isNotEmpty()) mediaList.add(v)
+			}
+		}
+		RemoteMetadata(iconsMap, albumList, mediaList)
+	} catch (e: Exception) {
+		RemoteMetadata()
+	}
+}
+
+fun serializeRemoteMetadata(meta: RemoteMetadata): String {
+	val obj = JSONObject()
+	val iconsObj = JSONObject()
+	meta.folderIcons.forEach { (k, v) -> iconsObj.put(k, v) }
+	obj.put("folder_icons", iconsObj)
+	val albumArr = JSONArray()
+	meta.albumOrder.forEach { albumArr.put(it) }
+	obj.put("album_order", albumArr)
+	val mediaArr = JSONArray()
+	meta.mediaOrder.forEach { mediaArr.put(it) }
+	obj.put("media_order", mediaArr)
+	return obj.toString(2)
 }

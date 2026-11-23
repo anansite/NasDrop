@@ -166,7 +166,7 @@ fun FileThumbnail(
 
 		// 3. 其它文件类型：秒级专属高辨识度徽标，零网络流量消耗
 		else -> {
-			FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, modifier = modifier)
+			FileIconByEntry(entry = entry, size = size, customIconKey = customIconKey, urlOf = urlOf, modifier = modifier)
 		}
 	}
 }
@@ -179,36 +179,59 @@ fun FileIconByEntry(
 	entry: DavEntry,
 	size: Dp = 44.dp,
 	customIconKey: String? = null,
+	urlOf: ((String) -> String?)? = null,
 	modifier: Modifier = Modifier,
 ) {
 	val ext = entry.ext.lowercase()
 
 	when {
-		// 文件夹（支持 NAS 常用预置自定义图标）
+		// 文件夹（支持 NAS 常用预置自定义图标与本地上传自定义图标）
 		entry.isDir -> {
-			val custom = if (!customIconKey.isNullOrEmpty()) NasFolderIcon.fromKey(customIconKey) else null
-			if (custom != null && custom != NasFolderIcon.Default) {
+			val customKey = customIconKey ?: ""
+			if (customKey.startsWith("http") || customKey.contains(".nasdrop_icons") || customKey.endsWith(".png") || customKey.endsWith(".jpg")) {
+				val iconUrl = if (customKey.startsWith("http")) customKey else (urlOf?.invoke(customKey) ?: customKey)
 				Box(
 					modifier = modifier
 						.size(size)
 						.clip(RoundedCornerShape(8.dp))
-						.background(custom.bgColor),
+						.background(Color(0xFFE8EEF5)),
 					contentAlignment = Alignment.Center,
 				) {
-					Icon(
-						imageVector = custom.icon,
-						contentDescription = custom.label,
-						tint = custom.tintColor,
-						modifier = Modifier.size(size * 0.58f),
+					AsyncImage(
+						model = ImageRequest.Builder(LocalContext.current)
+							.data(iconUrl)
+							.crossfade(true)
+							.build(),
+						contentDescription = entry.displayName,
+						contentScale = ContentScale.Crop,
+						modifier = Modifier.fillMaxSize()
 					)
 				}
-			} else if (entry.isAlbum) {
-				val brush = Brush.linearGradient(listOf(Color(0xFFFF6B8B), Color(0xFFFF3D71)))
-				GradientBadge(size = size, brush = brush, modifier = modifier) {
-					Icon(Icons.Rounded.CameraAlt, contentDescription = "相册", tint = Color.White, modifier = Modifier.size(size * 0.54f))
-				}
 			} else {
-				FolderVectorIcon(size = size, modifier = modifier)
+				val custom = if (customKey.isNotEmpty()) NasFolderIcon.fromKey(customKey) else null
+				if (custom != null && custom != NasFolderIcon.Default) {
+					Box(
+						modifier = modifier
+							.size(size)
+							.clip(RoundedCornerShape(8.dp))
+							.background(custom.bgColor),
+						contentAlignment = Alignment.Center,
+					) {
+						Icon(
+							imageVector = custom.icon,
+							contentDescription = custom.label,
+							tint = custom.tintColor,
+							modifier = Modifier.size(size * 0.58f),
+						)
+					}
+				} else if (entry.isAlbum) {
+					val brush = Brush.linearGradient(listOf(Color(0xFFFF6B8B), Color(0xFFFF3D71)))
+					GradientBadge(size = size, brush = brush, modifier = modifier) {
+						Icon(Icons.Rounded.CameraAlt, contentDescription = "相册", tint = Color.White, modifier = Modifier.size(size * 0.54f))
+					}
+				} else {
+					FolderVectorIcon(size = size, modifier = modifier)
+				}
 			}
 		}
 

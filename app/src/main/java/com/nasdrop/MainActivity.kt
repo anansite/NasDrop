@@ -193,6 +193,7 @@ class MainActivity : ComponentActivity() {
 						entry = r.entry,
 						url = vm.directUrlFor(r.entry.path),
 						onBack = { route = Route.Browser },
+						onSaveToGallery = { entry, cb -> vm.saveVideoToGallery(entry, cb) },
 					)
 				}
 			}

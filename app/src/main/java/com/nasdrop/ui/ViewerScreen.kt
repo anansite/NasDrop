@@ -264,6 +264,9 @@ fun ImageViewer(
 			modifier = Modifier.align(Alignment.TopCenter),
 		) {
 			TopAppBar(
+				modifier = Modifier.pointerInput(Unit) {
+					detectTapGestures(onTap = { controlsVisible = !controlsVisible })
+				},
 				title = {
 					Column {
 						Text(
@@ -301,7 +304,11 @@ fun ImageViewer(
 			Surface(
 				color = MediaBackdrop.copy(alpha = 0.65f),
 				contentColor = OnMediaBackdrop,
-				modifier = Modifier.fillMaxWidth(),
+				modifier = Modifier
+					.fillMaxWidth()
+					.pointerInput(Unit) {
+						detectTapGestures(onTap = { controlsVisible = !controlsVisible })
+					},
 			) {
 				Row(
 					modifier = Modifier
@@ -842,7 +849,9 @@ fun ModernVideoScrubber(
 	var isDragging by remember { mutableStateOf(false) }
 	var dragFraction by remember { mutableFloatStateOf(0f) }
 
-	val currentFraction = if (duration > 0) (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
+	val currentFraction = if (duration > 0) {
+		if (currentPosition >= duration) 1f else (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+	} else 0f
 	val bufferedFraction = if (duration > 0) (bufferedPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
 	val displayFraction = if (isDragging) dragFraction else currentFraction
 
@@ -937,21 +946,21 @@ fun ModernVideoScrubber(
 				)
 			}
 
-			// 4. 游标白点 Thumb（拖拽时带外扩散晕圈）
-			val thumbX = playW.coerceIn(0f, w)
-			val tr = animatedThumbRadius.toPx()
+			// 4. 游标白点 Thumb（仅在主动拖拽定位时显现扩散光晕与指示白点，播放时保持流线纯净无多余小点）
 			if (isDragging) {
+				val thumbX = playW.coerceIn(0f, w)
+				val tr = animatedThumbRadius.toPx()
 				drawCircle(
 					color = Color(0x4DA855F7),
 					radius = tr * 2.2f,
 					center = Offset(thumbX, cy)
 				)
+				drawCircle(
+					color = Color.White,
+					radius = tr,
+					center = Offset(thumbX, cy)
+				)
 			}
-			drawCircle(
-				color = Color.White,
-				radius = tr,
-				center = Offset(thumbX, cy)
-			)
 		}
 	}
 }
@@ -980,7 +989,12 @@ private fun setImmersiveFullscreen(activity: Activity?, enabled: Boolean) {
 @OptIn(ExperimentalMaterial3Api::class)
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
+fun VideoPlayer(
+	entry: DavEntry,
+	url: String?,
+	onBack: () -> Unit,
+	onSaveToGallery: ((DavEntry, (Boolean, String) -> Unit) -> Unit)? = null,
+) {
 	val context = LocalContext.current
 	val activity = context as? Activity
 	val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -988,6 +1002,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 
 	var showControls by remember { mutableStateOf(true) }
 	var isPlaying by remember { mutableStateOf(true) }
+	var isSaving by remember { mutableStateOf(false) }
 	var currentPosition by remember { mutableLongStateOf(0L) }
 	var bufferedPosition by remember { mutableLongStateOf(0L) }
 	var duration by remember { mutableLongStateOf(0L) }
@@ -1086,6 +1101,10 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 			}
 			override fun onPlaybackStateChanged(state: Int) {
 				duration = player.duration.coerceAtLeast(0L)
+				if (state == Player.STATE_ENDED) {
+					if (duration > 0) currentPosition = duration
+					isPlaying = false
+				}
 			}
 		}
 		player.addListener(listener)
@@ -1121,7 +1140,9 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 	// 周期性轮询播放进度与缓冲进度
 	LaunchedEffect(player) {
 		while (true) {
-			if (player.isPlaying || player.playbackState == Player.STATE_BUFFERING || player.playbackState == Player.STATE_READY) {
+			if (player.playbackState == Player.STATE_ENDED) {
+				if (duration > 0) currentPosition = duration
+			} else if (player.isPlaying || player.playbackState == Player.STATE_BUFFERING || player.playbackState == Player.STATE_READY) {
 				currentPosition = player.currentPosition.coerceAtLeast(0L)
 				bufferedPosition = player.bufferedPosition.coerceAtLeast(0L)
 				duration = player.duration.coerceAtLeast(0L)
@@ -1167,7 +1188,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 		Box(
 			modifier = Modifier
 				.fillMaxSize()
-				.pointerInput(duration) {
+				.pointerInput(Unit) {
 					awaitEachGesture {
 						val down = awaitFirstDown(requireUnconsumed = false)
 						val startTime = System.currentTimeMillis()
@@ -1352,6 +1373,9 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 					)
 					// 沉浸式全屏下给状态栏/刘海留白，避免返回键和标题被"眉毛"遮挡
 					.statusBarsPadding()
+					.pointerInput(Unit) {
+						detectTapGestures(onTap = { showControls = !showControls })
+					}
 					.padding(horizontal = 12.dp, vertical = 8.dp),
 			) {
 				Row(
@@ -1374,7 +1398,7 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						}
 						Text(
 							text = entry.displayName,
-								modifier = Modifier.weight(1f),
+							modifier = Modifier.weight(1f),
 							color = OnMediaBackdrop,
 							fontSize = 15.sp,
 							fontWeight = FontWeight.Bold,
@@ -1387,6 +1411,32 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(4.dp),
 					) {
+						// 保存到手机本地相册/视频目录
+						IconButton(
+							onClick = {
+								lastInteractionTime = System.currentTimeMillis()
+								if (isSaving) return@IconButton
+								isSaving = true
+								Toast.makeText(context, "正在下载保存视频…", Toast.LENGTH_SHORT).show()
+								if (onSaveToGallery != null) {
+									onSaveToGallery(entry) { ok, msg ->
+										isSaving = false
+										Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+									}
+								} else {
+									isSaving = false
+									Toast.makeText(context, "暂不支持保存", Toast.LENGTH_SHORT).show()
+								}
+							}
+						) {
+							Icon(
+								Icons.Rounded.Download,
+								contentDescription = "保存到本地",
+								tint = OnMediaBackdrop,
+								modifier = Modifier.size(24.dp),
+							)
+						}
+
 						// 投屏与串流直链中心按钮
 						IconButton(
 							onClick = {
@@ -1444,6 +1494,9 @@ fun VideoPlayer(entry: DavEntry, url: String?, onBack: () -> Unit) {
 							colors = listOf(Color.Transparent, MediaBackdrop.copy(alpha = 0.9f)),
 						),
 					)
+					.pointerInput(Unit) {
+						detectTapGestures(onTap = { showControls = !showControls })
+					}
 					.padding(horizontal = 16.dp, vertical = 12.dp),
 			) {
 				Column(modifier = Modifier.fillMaxWidth()) {

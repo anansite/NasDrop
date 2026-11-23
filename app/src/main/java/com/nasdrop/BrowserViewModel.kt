@@ -121,11 +121,17 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		private set
 
 	// ========== 相册与影音子分类浏览系统 ==========
-	/** 当前选中的子相册路径："" 表示查看全部时光流，若为具体路径如 "Photos/云南自驾" 则浏览该子相册 */
+	/** 当前选中的子相册路径："" 表示查看全部时光流，若为具体路径如 "Photos/云南自驾" 则浏览该子相册，"__ALL_FOLDERS__" 表示查看相册文件夹概览 */
 	var selectedAlbumPath by mutableStateOf("")
 
-	/** 当前选中的子影集路径："" 表示查看全部视频流，若为具体路径如 "Movies/漫威" 则浏览该子影集 */
+	/** 当前选中的子影集路径："" 表示查看全部视频流，若为具体路径如 "movies/漫威" 则浏览该子影集，"__ALL_FOLDERS__" 表示查看影音文件夹概览 */
 	var selectedMediaPath by mutableStateOf("")
+
+	/** 相册自定义排序记录（持久化至远端 .nasdrop_meta.json） */
+	var albumOrder by mutableStateOf<List<String>>(emptyList())
+
+	/** 影音分类自定义排序记录（持久化至远端 .nasdrop_meta.json） */
+	var mediaOrder by mutableStateOf<List<String>>(emptyList())
 
 	/** 所有已发现的相册文件夹列表（含封面与子相册） */
 	var allAlbumFolders by mutableStateOf<List<DavEntry>>(emptyList())
@@ -139,7 +145,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	val currentAlbumPhotos: List<DavEntry>
 		get() {
 			val distinct = allPhotos.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
-			if (selectedAlbumPath.isBlank()) return distinct
+			if (selectedAlbumPath.isBlank() || selectedAlbumPath == "__ALL_FOLDERS__") return distinct
 			return distinct.filter { isPathWithin(it.path, selectedAlbumPath) }
 		}
 
@@ -147,7 +153,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	val currentMediaVideos: List<DavEntry>
 		get() {
 			val distinct = allVideos.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
-			if (selectedMediaPath.isBlank()) return distinct
+			if (selectedMediaPath.isBlank() || selectedMediaPath == "__ALL_FOLDERS__") return distinct
 			return distinct.filter { isPathWithin(it.path, selectedMediaPath) }
 		}
 
@@ -1000,6 +1006,42 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	/**
+	 * 将远端原视频保存到本地系统相册 (Movies/NasDrop) 并通知系统刷新
+	 */
+	fun saveVideoToGallery(entry: DavEntry, onResult: (Boolean, String) -> Unit) {
+		viewModelScope.launch(Dispatchers.IO) {
+			try {
+				val cli = client ?: return@launch withContext(Dispatchers.Main) {
+					onResult(false, "未连接服务器")
+				}
+				val moviesDir = android.os.Environment.getExternalStoragePublicDirectory(
+					android.os.Environment.DIRECTORY_MOVIES
+				).resolve("NasDrop")
+				if (!moviesDir.exists()) moviesDir.mkdirs()
+
+				val destFile = moviesDir.resolve(entry.name)
+				destFile.outputStream().use { fos ->
+					cli.download(entry.path, fos) { _, _ -> }
+				}
+				if (destFile.exists() && destFile.length() > 0) {
+					android.media.MediaScannerConnection.scanFile(
+						app,
+						arrayOf(destFile.absolutePath),
+						null,
+					) { _, _ -> }
+					withContext(Dispatchers.Main) {
+						onResult(true, "已保存至本地视频 Movies/NasDrop")
+					}
+				} else {
+					withContext(Dispatchers.Main) { onResult(false, "下载失败") }
+				}
+			} catch (e: Exception) {
+				withContext(Dispatchers.Main) { onResult(false, "保存失败：${e.message}") }
+			}
+		}
+	}
+
+	/**
 	 * 将图片下载至共享临时缓存，准备进行系统微信/QQ等第三方分享
 	 */
 	fun prepareShareImage(entry: DavEntry, onResult: (java.io.File?) -> Unit) {
@@ -1433,18 +1475,84 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
-	/** 更新文件夹自定义图标并持久化至 SQLite 数据库 */
+	/** 更新文件夹自定义图标并持久化至 SQLite 数据库，并同步至远端配置 */
 	fun updateFolderIcon(entry: DavEntry, icon: NasFolderIcon) {
+		updateFolderCustomIcon(entry, icon.key)
+	}
+
+	fun updateFolderCustomIcon(entry: DavEntry, iconKey: String) {
 		val cleanPath = entry.path.trim('/')
 		viewModelScope.launch(Dispatchers.IO) {
-			NasDb.getInstance(app).setFolderIcon(cleanPath, icon.key)
+			NasDb.getInstance(app).setFolderIcon(cleanPath, iconKey)
 			withContext(Dispatchers.Main) {
-				folderIcons = if (icon == NasFolderIcon.Default) {
+				folderIcons = if (iconKey == "default" || iconKey.isEmpty()) {
 					folderIcons - cleanPath
 				} else {
-					folderIcons + (cleanPath to icon.key)
+					folderIcons + (cleanPath to iconKey)
 				}
 			}
+			syncRemoteMetadata()
+		}
+	}
+
+	fun uploadCustomFolderIcon(entry: DavEntry, uri: Uri, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+		viewModelScope.launch(Dispatchers.IO) {
+			try {
+				val cli = client ?: return@launch withContext(Dispatchers.Main) { onResult(false, "未连接服务器") }
+				val bytes = app.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+					?: return@launch withContext(Dispatchers.Main) { onResult(false, "读取图片失败") }
+				val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+					?: return@launch withContext(Dispatchers.Main) { onResult(false, "解码图片失败") }
+				val scaled = if (bmp.width > 256 || bmp.height > 256) {
+					android.graphics.Bitmap.createScaledBitmap(bmp, 256, 256, true)
+				} else bmp
+				val baos = java.io.ByteArrayOutputStream()
+				scaled.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, baos)
+				val pngBytes = baos.toByteArray()
+				val hash = Math.abs(entry.path.hashCode()).toString(16)
+				val fileName = "icon_${hash}.png"
+				val remotePath = cli.uploadCustomIcon(fileName, pngBytes)
+				if (remotePath != null) {
+					updateFolderCustomIcon(entry, remotePath)
+					withContext(Dispatchers.Main) { onResult(true, "图标上传成功") }
+				} else {
+					withContext(Dispatchers.Main) { onResult(false, "上传图标到远端失败") }
+				}
+			} catch (e: Exception) {
+				withContext(Dispatchers.Main) { onResult(false, "处理失败: ${e.message}") }
+			}
+		}
+	}
+
+	fun reorderAlbums(fromIndex: Int, toIndex: Int) {
+		if (fromIndex !in allAlbumFolders.indices || toIndex !in allAlbumFolders.indices || fromIndex == toIndex) return
+		val mutable = allAlbumFolders.toMutableList()
+		val item = mutable.removeAt(fromIndex)
+		mutable.add(toIndex, item)
+		allAlbumFolders = mutable
+		albumOrder = mutable.map { it.path }
+		syncRemoteMetadata()
+	}
+
+	fun reorderMediaFolders(fromIndex: Int, toIndex: Int) {
+		if (fromIndex !in allMediaFolders.indices || toIndex !in allMediaFolders.indices || fromIndex == toIndex) return
+		val mutable = allMediaFolders.toMutableList()
+		val item = mutable.removeAt(fromIndex)
+		mutable.add(toIndex, item)
+		allMediaFolders = mutable
+		mediaOrder = mutable.map { it.path }
+		syncRemoteMetadata()
+	}
+
+	fun syncRemoteMetadata() {
+		viewModelScope.launch(Dispatchers.IO) {
+			val cli = client ?: return@launch
+			val meta = RemoteMetadata(
+				folderIcons = folderIcons,
+				albumOrder = albumOrder,
+				mediaOrder = mediaOrder,
+			)
+			cli.saveRemoteMetadata(meta)
 		}
 	}
 
@@ -1494,8 +1602,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	fun upAlbum() {
 		if (selectedAlbumPath.isBlank()) return
-		val parent = selectedAlbumPath.substringBeforeLast('/', "")
-		selectedAlbumPath = if (parent.equals("Photos", true) || parent == "相册") "" else parent
+		selectedAlbumPath = ""
 		viewModelScope.launch { runCatching { photoGridState.scrollToItem(0) } }
 	}
 
@@ -1508,18 +1615,17 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	fun upMedia() {
 		if (selectedMediaPath.isBlank()) return
-		val parent = selectedMediaPath.substringBeforeLast('/', "")
-		selectedMediaPath = if (parent.equals("movies", true) || parent == "影视" || parent == "影音") "" else parent
+		selectedMediaPath = ""
 		viewModelScope.launch { runCatching { mediaGridState.scrollToItem(0) } }
 	}
 
-	/** 在相册专属目录下新建相册文件夹：立即乐观呈现于相册胶囊栏与选择列表，创建失败平滑回滚 */
+	/** 在相册专属目录下新建相册文件夹：恒定创建在根相册 Photos/ 下，不发生多层嵌套错误 */
 	fun createAlbum(name: String) {
-		val targetDir = if (selectedAlbumPath.isNotBlank()) selectedAlbumPath else "Photos"
+		val targetDir = "Photos"
 		val newPath = join(targetDir, name)
 		val newEntry = DavEntry(name = name, path = newPath, isDir = true, size = 0L, modified = System.currentTimeMillis())
 		if (allAlbumFolders.none { it.path == newPath }) {
-			allAlbumFolders = (allAlbumFolders + newEntry).sortedBy { it.name }
+			allAlbumFolders = sortAlbums((allAlbumFolders + newEntry), albumOrder)
 		}
 		if (newPath !in allFolderPaths) {
 			allFolderPaths = (allFolderPaths + newPath).sorted()
@@ -1532,20 +1638,18 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			allFolderPaths = allFolderPaths.filterNot { it == newPath }
 			entries = entries.filterNot { it.path == newPath }
 		}) { client ->
-			if (targetDir == "Photos") {
-				runCatching { client.mkcol("Photos") }
-			}
+			runCatching { client.mkcol("Photos") }
 			client.mkcol(newPath)
 		}
 	}
 
-	/** 在影音专属目录下新建影集/分类文件夹：立即乐观呈现于影音胶囊栏与选择列表，创建失败平滑回滚 */
+	/** 在影音专属目录下新建影集/分类文件夹：恒定创建在根影音 movies/ 下，不发生多层嵌套错误 */
 	fun createMediaFolder(name: String) {
-		val targetDir = if (selectedMediaPath.isNotBlank()) selectedMediaPath else "movies"
+		val targetDir = "movies"
 		val newPath = join(targetDir, name)
 		val newEntry = DavEntry(name = name, path = newPath, isDir = true, size = 0L, modified = System.currentTimeMillis())
 		if (allMediaFolders.none { it.path == newPath }) {
-			allMediaFolders = (allMediaFolders + newEntry).sortedBy { it.name }
+			allMediaFolders = sortAlbums((allMediaFolders + newEntry), mediaOrder)
 		}
 		if (newPath !in allFolderPaths) {
 			allFolderPaths = (allFolderPaths + newPath).sorted()
@@ -1558,9 +1662,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			allFolderPaths = allFolderPaths.filterNot { it == newPath }
 			entries = entries.filterNot { it.path == newPath }
 		}) { client ->
-			if (targetDir == "movies") {
-				runCatching { client.mkcol("movies") }
-			}
+			runCatching { client.mkcol("movies") }
 			client.mkcol(newPath)
 		}
 	}
@@ -1829,26 +1931,71 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** 媒体扫描仅在用户进入对应页面时执行，逐目录呈现；失败保留现有内容并明确提示。 */
 	private suspend fun scanGlobalMedia() {
+		// 1. 同步远端元数据（图标与排序）
+		val remoteMeta = runCatching { client?.loadRemoteMetadata() }.getOrNull()
+		if (remoteMeta != null) {
+			val db = NasDb.getInstance(app)
+			remoteMeta.folderIcons.forEach { (p, k) -> db.setFolderIcon(p, k) }
+			withContext(Dispatchers.Main) {
+				folderIcons = folderIcons + remoteMeta.folderIcons
+				if (remoteMeta.albumOrder.isNotEmpty()) albumOrder = remoteMeta.albumOrder
+				if (remoteMeta.mediaOrder.isNotEmpty()) mediaOrder = remoteMeta.mediaOrder
+			}
+		}
+
 		val rootEntries = loadDirectory("")
 		val albums = mutableListOf<DavEntry>()
 		val mediaAlbums = mutableListOf<DavEntry>()
+
+		// 默认相册与默认影音初始化确保存在（不在根目录直接传文件，满足需求13）
+		val defaultAlbum = DavEntry(name = "默认相册", path = "Photos/默认相册", isDir = true, modified = System.currentTimeMillis())
+		val defaultMedia = DavEntry(name = "默认影音", path = "movies/默认影音", isDir = true, modified = System.currentTimeMillis())
+		albums.add(defaultAlbum)
+		mediaAlbums.add(defaultMedia)
+
 		for (dir in rootEntries.filter { it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }) {
 			val sub = scanMediaDirectory(dir.path) ?: continue
 			if (dir.name.equals("Photos", true) || dir.name == "相册") {
-				val validDirs = sub.filter { it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }
-				albums.addAll(validDirs)
-				validDirs.forEach { scanMediaDirectory(it.path) }
+				// 深度递归扫描相册目录，确保各层级照片与子文件夹完整入池（满足需求14）
+				scanRecursiveMedia(dir.path, maxDepth = 4) { subDir ->
+					albums.add(subDir)
+				}
 			} else if (dir.name.equals("movies", true) || dir.name == "影视" || dir.name == "影音") {
-				val validDirs = sub.filter { it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }
-				mediaAlbums.addAll(validDirs)
-				validDirs.forEach { scanMediaDirectory(it.path) }
+				// 深度递归扫描影视目录，确保各层级视频与子分类完整入池（满足需求14）
+				scanRecursiveMedia(dir.path, maxDepth = 4) { subDir ->
+					mediaAlbums.add(subDir)
+				}
 			} else {
 				if (sub.any { it.isImage && !it.path.contains(".thumbnails") }) albums.add(dir)
 				if (sub.any { it.isVideo && !it.path.contains(".thumbnails") }) mediaAlbums.add(dir)
 			}
 		}
-		allAlbumFolders = albums.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
-		allMediaFolders = mediaAlbums.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
+		val distinctAlbums = albums.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
+		val distinctMedia = mediaAlbums.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
+		allAlbumFolders = sortAlbums(distinctAlbums, albumOrder)
+		allMediaFolders = sortAlbums(distinctMedia, mediaOrder)
+	}
+
+	private suspend fun scanRecursiveMedia(baseDir: String, maxDepth: Int = 4, onFoundDir: (DavEntry) -> Unit) {
+		val queue = ArrayDeque<Pair<String, Int>>()
+		queue.add(baseDir to 0)
+		while (queue.isNotEmpty()) {
+			val (cur, depth) = queue.removeFirst()
+			val list = scanMediaDirectory(cur) ?: continue
+			val dirs = list.filter { it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }
+			for (d in dirs) {
+				onFoundDir(d)
+				if (depth + 1 < maxDepth) {
+					queue.add(d.path to depth + 1)
+				}
+			}
+		}
+	}
+
+	private fun sortAlbums(items: List<DavEntry>, order: List<String>): List<DavEntry> {
+		if (order.isEmpty()) return items
+		val orderMap = order.withIndex().associate { it.value to it.index }
+		return items.sortedWith(compareBy<DavEntry> { orderMap[it.path] ?: (10000 + it.name.hashCode()) }.thenBy { it.name })
 	}
 
 	private suspend fun scanMediaDirectory(directory: String): List<DavEntry>? = try {

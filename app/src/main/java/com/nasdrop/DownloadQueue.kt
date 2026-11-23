@@ -154,10 +154,12 @@ class DownloadQueue(
 		job.start()
 	}
 
-	/** 网络进度发布在每次真实读取后，取消信号在后续写入前再次检查。 */
+	/** 网络进度发布在每次真实读取后，取消信号在后续写入前再次检查。平滑 EMA 限频更新网速，告别跳变。 */
 	private suspend fun read(c: WebDavClient, task: TransferTask, part: File, start: Long, validator: String?) {
 		var lastBytes = start
-		var lastTime = System.nanoTime()
+		var lastTime = System.currentTimeMillis()
+		var smoothedSpeed = 0L
+		var lastEmitTime = 0L
 		FileOutputStream(part, start > 0).use { output ->
 			c.download(task.path, output, startByte = start,
 				onCall = { call ->
@@ -169,15 +171,24 @@ class DownloadQueue(
 					if (value == null) validatorFile(task.id).delete() else validatorFile(task.id).writeText(value)
 				},
 			) { sent, total ->
-				val now = System.nanoTime()
-				val elapsed = (now - lastTime).coerceAtLeast(1)
-				val speed = ((sent - lastBytes).coerceAtLeast(0) * 1_000_000_000L / elapsed)
-				change(task.id) { current ->
-					if (current.status != TransferStatus.RUNNING) current
-					else current.copy(sentBytes = sent, totalBytes = total, speedBytesPerSec = speed)
+				val now = System.currentTimeMillis()
+				val elapsed = now - lastTime
+				if (elapsed >= 250 || sent == total) {
+					val dt = elapsed.coerceAtLeast(1)
+					val dBytes = (sent - lastBytes).coerceAtLeast(0)
+					val instantSpeed = (dBytes * 1000L / dt)
+					smoothedSpeed = if (smoothedSpeed <= 0L) instantSpeed else ((smoothedSpeed * 0.7) + (instantSpeed * 0.3)).toLong()
+					lastBytes = sent
+					lastTime = now
+
+					if (now - lastEmitTime >= 200 || sent == total) {
+						change(task.id) { current ->
+							if (current.status != TransferStatus.RUNNING) current
+							else current.copy(sentBytes = sent, totalBytes = total, speedBytesPerSec = smoothedSpeed)
+						}
+						lastEmitTime = now
+					}
 				}
-				lastBytes = sent
-				lastTime = now
 			}
 		}
 	}
