@@ -170,6 +170,8 @@ import coil.request.ImageRequest
 import com.nasdrop.BrowserViewModel
 import com.nasdrop.DavEntry
 import com.nasdrop.FileCategory
+import com.nasdrop.MediaFilterType
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.History
@@ -527,7 +529,7 @@ fun BrowserScreen(
 								selectedAlbumPath = vm.selectedAlbumPath,
 								folderIcons = vm.folderIcons,
 								mediaFilterType = vm.mediaFilterType,
-								onClearFilter = { vm.mediaFilterType = BrowserViewModel.MediaFilterType.All },
+								onClearFilter = { vm.mediaFilterType = MediaFilterType.All },
 								isRefreshing = vm.isRefreshing,
 								onRefresh = { vm.pullRefresh() },
 								isMulti = vm.isMultiSelectMode,
@@ -3105,7 +3107,7 @@ private fun HomeScreenContent(
 								onClick = {
 									vm.currentTab = MainTab.Photos
 									vm.selectedAlbumPath = ""
-									vm.mediaFilterType = BrowserViewModel.MediaFilterType.PhotosOnly
+									vm.mediaFilterType = MediaFilterType.PhotosOnly
 								},
 							)
 							HomeStatDivider()
@@ -3115,7 +3117,7 @@ private fun HomeScreenContent(
 								onClick = {
 									vm.currentTab = MainTab.Photos
 									vm.selectedAlbumPath = ""
-									vm.mediaFilterType = BrowserViewModel.MediaFilterType.VideosOnly
+									vm.mediaFilterType = MediaFilterType.VideosOnly
 								},
 							)
 							HomeStatDivider()
@@ -3125,7 +3127,7 @@ private fun HomeScreenContent(
 								onClick = {
 									vm.currentTab = MainTab.Photos
 									vm.selectedAlbumPath = "__ALL_FOLDERS__"
-									vm.mediaFilterType = BrowserViewModel.MediaFilterType.All
+									vm.mediaFilterType = MediaFilterType.All
 								},
 							)
 							HomeStatDivider()
@@ -3138,7 +3140,7 @@ private fun HomeScreenContent(
 								onClick = {
 									vm.currentTab = MainTab.Photos
 									vm.selectedAlbumPath = ""
-									vm.mediaFilterType = BrowserViewModel.MediaFilterType.WithAudioMemo
+									vm.mediaFilterType = MediaFilterType.WithAudioMemo
 								},
 							)
 						}
@@ -3417,7 +3419,7 @@ private fun PhotoTimelineContent(
 	memoryYearGroups: List<com.nasdrop.MemoryYearGroup> = emptyList(),
 	selectedAlbumPath: String,
 	folderIcons: Map<String, String> = emptyMap(),
-	mediaFilterType: BrowserViewModel.MediaFilterType = BrowserViewModel.MediaFilterType.All,
+	mediaFilterType: MediaFilterType = MediaFilterType.All,
 	onClearFilter: () -> Unit = {},
 	isRefreshing: Boolean = false,
 	onRefresh: () -> Unit = {},
@@ -3702,7 +3704,7 @@ private fun PhotoTimelineContent(
 			}
 		}
 
-		if (mediaFilterType != BrowserViewModel.MediaFilterType.All) {
+		if (mediaFilterType != MediaFilterType.All) {
 			Surface(
 				shape = RoundedCornerShape(10.dp),
 				color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
@@ -3722,7 +3724,7 @@ private fun PhotoTimelineContent(
 						horizontalArrangement = Arrangement.spacedBy(6.dp),
 					) {
 						Icon(
-							imageVector = Icons.Rounded.FilterList,
+							imageVector = Icons.Rounded.Tune,
 							contentDescription = null,
 							tint = MaterialTheme.colorScheme.primary,
 							modifier = Modifier.size(16.dp),
