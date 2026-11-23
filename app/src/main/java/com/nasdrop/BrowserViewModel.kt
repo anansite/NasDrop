@@ -690,7 +690,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						size = entry.size,
 						modified = entry.modified,
 						takenAt = parsed,
-						hasThumbnail = meta?.hasThumbnail == true
+						hasThumbnail = meta?.hasThumbnail == true,
+						mediaType = if (entry.isVideo) 1 else 0,
 					)
 					toPersist.add(newMeta)
 					PhotoMetadataStore.putMemoryOnly(newMeta)
@@ -1150,11 +1151,18 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 
 	fun imageAlbum(entry: DavEntry): Pair<List<DavEntry>, Int> {
-		val list = if (currentTab == MainTab.Photos) {
-			// 严格与相册时间流网格中视觉可见的先后顺序完全一致
-			photoTimelineGroups.flatMap { it.items }
-		} else {
-			filteredEntries.filter { !it.isDir && it.isImage }
+		val list = when {
+			currentTab == MainTab.Photos -> {
+				val timelineItems = photoTimelineGroups.flatMap { it.items }.filter { it.isImage }
+				if (timelineItems.any { it.path == entry.path }) timelineItems else allPhotos.filter { it.isImage }
+			}
+			filteredEntries.any { it.path == entry.path } -> {
+				filteredEntries.filter { !it.isDir && it.isImage }
+			}
+			allPhotos.any { it.path == entry.path } -> {
+				allPhotos.filter { it.isImage }
+			}
+			else -> listOf(entry)
 		}
 		val idx = list.indexOfFirst { it.path == entry.path }.coerceAtLeast(0)
 		return Pair(if (list.isEmpty()) listOf(entry) else list, idx)

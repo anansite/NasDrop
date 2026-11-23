@@ -110,8 +110,8 @@ class Repository(private val context: Context) {
 				maxRequests = 64
 				maxRequestsPerHost = 24
 			})
-			.connectTimeout(4, TimeUnit.SECONDS)
-			.readTimeout(6, TimeUnit.SECONDS)
+			.connectTimeout(15, TimeUnit.SECONDS)
+			.readTimeout(45, TimeUnit.SECONDS)
 			.addNetworkInterceptor { chain ->
 				val response = chain.proceed(chain.request())
 				if (response.isSuccessful) {

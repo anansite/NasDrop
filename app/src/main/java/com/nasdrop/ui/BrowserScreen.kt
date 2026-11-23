@@ -168,6 +168,7 @@ import com.nasdrop.BrowserViewModel
 import com.nasdrop.DavEntry
 import com.nasdrop.FileCategory
 import com.nasdrop.NasFolderIcon
+import com.nasdrop.videoDurationMs
 import androidx.compose.material.icons.rounded.Palette
 import com.nasdrop.MainTab
 import com.nasdrop.RouteInfo
@@ -500,6 +501,7 @@ fun BrowserScreen(
 								directUrlOf = { vm.directUrlFor(it) },
 								onThumbnailError = { vm.markThumbnailFailed(it) },
 								onOpenImage = onOpenImage,
+								onOpenVideo = onOpenVideo,
 							)
 						}
 
@@ -2918,6 +2920,7 @@ private fun PhotoTimelineContent(
 	directUrlOf: ((String) -> String?)? = null,
 	onThumbnailError: ((String) -> Unit)? = null,
 	onOpenImage: (DavEntry) -> Unit,
+	onOpenVideo: (DavEntry) -> Unit = {},
 ) {
 	val currentPhotos = remember(groups) { groups.flatMap { it.items } }
 	val displayAlbums = remember(allAlbums) {
@@ -3323,7 +3326,11 @@ private fun PhotoTimelineContent(
 													if (isMulti) {
 														onToggleSelect(item)
 													} else {
-														onOpenImage(item)
+														if (item.isVideo) {
+															onOpenVideo(item)
+														} else {
+															onOpenImage(item)
+														}
 													}
 												},
 												onLongClick = {
@@ -3460,6 +3467,7 @@ private fun PhotoTimelineContent(
 				onSelectAlbum(it)
 			},
 			onOpenImage = onOpenImage,
+			onOpenVideo = onOpenVideo,
 			urlOf = urlOf,
 			directUrlOf = directUrlOf,
 		)
@@ -4747,6 +4755,40 @@ private fun VideoCardItem(
 				}
 			}
 		}
+
+		// 视频文件名与规格信息展示
+		Column(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(horizontal = 10.dp, vertical = 8.dp)
+		) {
+			Text(
+				text = video.name,
+				style = MaterialTheme.typography.bodyMedium,
+				fontWeight = FontWeight.SemiBold,
+				maxLines = 1,
+				overflow = TextOverflow.Ellipsis,
+				color = MaterialTheme.colorScheme.onSurface,
+			)
+			Spacer(modifier = Modifier.height(2.dp))
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				horizontalArrangement = Arrangement.SpaceBetween,
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				val durText = video.videoDurationMs.let { ms ->
+					if (ms > 0) {
+						val totalSec = ms / 1000
+						String.format(Locale.ROOT, "%02d:%02d", totalSec / 60, totalSec % 60)
+					} else null
+				}
+				Text(
+					text = listOfNotNull(durText, video.sizeHuman.ifEmpty { null }).joinToString(" · "),
+					style = MaterialTheme.typography.labelSmall,
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+				)
+			}
+		}
 	}
 }
 
@@ -6005,6 +6047,7 @@ private fun MemoryDetailModalSheet(
 	onDismiss: () -> Unit,
 	onSelectAlbum: (String) -> Unit,
 	onOpenImage: (DavEntry) -> Unit,
+	onOpenVideo: (DavEntry) -> Unit = {},
 	urlOf: (String) -> String?,
 	directUrlOf: ((String) -> String?)?,
 ) {
@@ -6125,7 +6168,13 @@ private fun MemoryDetailModalSheet(
 										.aspectRatio(1f)
 										.clip(RoundedCornerShape(8.dp))
 										.background(MaterialTheme.colorScheme.surfaceVariant)
-										.clickable { onOpenImage(item) },
+										.clickable {
+											if (item.isVideo) {
+												onOpenVideo(item)
+											} else {
+												onOpenImage(item)
+											}
+										},
 								) {
 									val thumbUrl = urlOf(item.path)
 									if (!thumbUrl.isNullOrBlank()) {

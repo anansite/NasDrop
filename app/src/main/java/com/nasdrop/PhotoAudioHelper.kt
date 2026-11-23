@@ -67,7 +67,22 @@ class CompanionAudioPlayer(private val context: Context) {
 						.build()
 				)
 				if (audioUrlOrPath.startsWith("http://") || audioUrlOrPath.startsWith("https://")) {
-					setDataSource(context, Uri.parse(audioUrlOrPath))
+					val headers = mutableMapOf<String, String>()
+					runCatching {
+						val s = context.app.prefs.settings
+						// 若有认证配置，携带 Basic 凭据以流式播放远端音频
+						kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+							val conf = context.app.prefs.current()
+							if (conf.user.isNotBlank() && conf.password.isNotBlank()) {
+								headers["Authorization"] = okhttp3.Credentials.basic(conf.user, conf.password)
+							}
+						}
+					}
+					if (headers.isNotEmpty()) {
+						setDataSource(context, Uri.parse(audioUrlOrPath), headers)
+					} else {
+						setDataSource(context, Uri.parse(audioUrlOrPath))
+					}
 				} else {
 					setDataSource(audioUrlOrPath)
 				}

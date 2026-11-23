@@ -19,6 +19,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -247,9 +248,12 @@ fun ImageViewer(
 	}
 
 	DisposableEffect(current.path) {
-		val directAudio = (audioUrlOf ?: urlOf).invoke(current.path)
+		val companionPath = PhotoMetadataStore.computeCompanionAudioPath(current.path)
+		val directAudio = audioUrlOf?.invoke(companionPath) ?: (audioUrlOf ?: urlOf).invoke(current.path)
 		if (current.hasAudio && directAudio != null) {
 			audioPlayer.prepare(directAudio)
+		} else {
+			audioPlayer.prepare(directAudio ?: "")
 		}
 		onDispose {
 			audioPlayer.stop()
@@ -260,26 +264,20 @@ fun ImageViewer(
 	BoxWithConstraints(
 		Modifier
 			.fillMaxSize()
-			.background(MediaBackdrop)
-			.pointerInput(Unit) {
-				detectTapGestures(onTap = { controlsVisible = !controlsVisible })
-			},
+			.background(MediaBackdrop),
 	) {
 		// 统一解码尺寸 = 当前约束的实际像素。
-		// 预取和实际显示用**同一个 Size**，Coil 的内存缓存 key 才能对上：否则预取按原始
-		// 尺寸解码、显示按 view 尺寸解码，两份结果互不命中，预取等于白做——那正是
-		// "点开后还要等一会儿才清晰"的真实原因。而且 Coil 默认会按原始尺寸解码手机
-		// 上动辄 4000px 宽的大图，解码时间和内存都翻几倍。
 		val targetSize = with(LocalDensity.current) {
 			Size(maxWidth.roundToPx().coerceAtLeast(1), maxHeight.roundToPx().coerceAtLeast(1))
 		}
 
-		// 预热：进入看图/翻页时把 当前±1 张的原图与缩略图提交给 Coil，翻页即刻秒出
+		// 预热：进入看图/翻页时轻量预拉取相邻两张原图（延迟 600ms，优先把全部网络带宽留给当前主图）
 		val imageLoader = context.app.repo.imageLoader
 		val currentPage = pager.currentPage
 		LaunchedEffect(currentPage, targetSize) {
+			delay(600L)
 			val center = currentPage.coerceIn(0, imageList.lastIndex)
-			for (i in (center - 1)..(center + 1)) {
+			for (i in listOf(center + 1, center - 1)) {
 				val e = imageList.getOrNull(i) ?: continue
 				val u = urlOf(e.path) ?: continue
 				imageLoader.enqueue(
@@ -332,7 +330,7 @@ fun ImageViewer(
 				title = {
 					Column {
 						Text(
-							current.displayName,
+							current.name,
 							style = MaterialTheme.typography.titleSmall,
 							maxLines = 1,
 							overflow = TextOverflow.Ellipsis,
@@ -549,7 +547,14 @@ fun ImageViewer(
 						Surface(
 							shape = CircleShape,
 							color = MaterialTheme.colorScheme.primary,
-							onClick = { audioPlayer.togglePlayPause() },
+							onClick = {
+								if (audioPlayer.currentUrl.isEmpty()) {
+									val companionPath = PhotoMetadataStore.computeCompanionAudioPath(current.path)
+									val audioUrl = audioUrlOf?.invoke(companionPath)
+									if (audioUrl != null) audioPlayer.prepare(audioUrl)
+								}
+								audioPlayer.togglePlayPause(current.photoMeta?.audioDurationMs ?: 0L)
+							},
 							modifier = Modifier.size(22.dp),
 						) {
 							Box(contentAlignment = Alignment.Center) {
@@ -678,7 +683,14 @@ fun ImageViewer(
 							Surface(
 								shape = CircleShape,
 								color = MaterialTheme.colorScheme.primary,
-								onClick = { audioPlayer.togglePlayPause() },
+								onClick = {
+									if (audioPlayer.currentUrl.isEmpty()) {
+										val companionPath = PhotoMetadataStore.computeCompanionAudioPath(current.path)
+										val audioUrl = audioUrlOf?.invoke(companionPath)
+										if (audioUrl != null) audioPlayer.prepare(audioUrl)
+									}
+									audioPlayer.togglePlayPause(current.photoMeta?.audioDurationMs ?: 0L)
+								},
 								modifier = Modifier.size(36.dp),
 							) {
 								Box(contentAlignment = Alignment.Center) {
@@ -1020,6 +1032,10 @@ fun ImageViewer(
 										val (bytes, durMs) = result
 										val companionPath = PhotoMetadataStore.computeCompanionAudioPath(current.path)
 										PhotoMetadataStore.updateAudio(current.path, companionPath, durMs)
+										val directAudio = audioUrlOf?.invoke(companionPath)
+										if (directAudio != null) {
+											audioPlayer.prepare(directAudio)
+										}
 										onSaveAudio?.invoke(current, bytes, durMs) { ok, err ->
 											Toast.makeText(context, if (ok) "伴随旁白已保存 (${durMs/1000}秒)" else (err ?: "保存失败"), Toast.LENGTH_SHORT).show()
 										}
@@ -1158,22 +1174,38 @@ private fun ZoomableImage(
 					}
 				)
 			}
-			.pointerInput(Unit) {
-				detectTransformGestures { _, pan, zoom, _ ->
-					if (zoom != 1f || scale > 1.05f) {
+			.pointerInput(scale > 1.05f) {
+				if (scale > 1.05f) {
+					// 放大状态：支持自由平移拖拽与多指缩放
+					detectTransformGestures { _, pan, zoom, _ ->
 						val newScale = (scale * zoom).coerceIn(1f, 5f)
 						scale = newScale
 						if (newScale > 1.05f) {
 							dx += pan.x
 							dy += pan.y
 						} else {
+							scale = 1f
 							dx = 0f
 							dy = 0f
 						}
 					}
+				} else {
+					// 正常比例：仅监听双指 Pinch 缩放手势，单指左右滑动绝不拦截消费，完全留给 HorizontalPager 左右翻页！
+					awaitEachGesture {
+						do {
+							val event = awaitPointerEvent()
+							if (event.changes.size > 1) {
+								val zoom = event.calculateZoom()
+								if (zoom > 1.05f) {
+									scale = (scale * zoom).coerceIn(1f, 5f)
+									event.changes.forEach { it.consume() }
+								}
+							}
+						} while (event.changes.any { it.pressed })
+					}
 				}
 			}
-			.pointerInput(scale) {
+			.pointerInput(scale > 1.05f) {
 				if (scale <= 1.05f) {
 					detectVerticalDragGestures(
 						onDragEnd = {
@@ -1935,7 +1967,7 @@ fun VideoPlayer(
 							Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = OnMediaBackdrop)
 						}
 						Text(
-							text = entry.displayName,
+							text = entry.name,
 							modifier = Modifier.weight(1f),
 							color = OnMediaBackdrop,
 							fontSize = 15.sp,
@@ -2258,7 +2290,14 @@ fun VideoPlayer(
 						Surface(
 							shape = CircleShape,
 							color = MaterialTheme.colorScheme.primary,
-							onClick = { audioPlayer.togglePlayPause() },
+							onClick = {
+								if (audioPlayer.currentUrl.isEmpty()) {
+									val companionPath = PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
+									val audioUrl = audioUrlOf?.invoke(companionPath)
+									if (audioUrl != null) audioPlayer.prepare(audioUrl)
+								}
+								audioPlayer.togglePlayPause(currentEntry.photoMeta?.audioDurationMs ?: 0L)
+							},
 							modifier = Modifier.size(22.dp),
 						) {
 							Box(contentAlignment = Alignment.Center) {
@@ -2387,7 +2426,14 @@ fun VideoPlayer(
 							Surface(
 								shape = CircleShape,
 								color = MaterialTheme.colorScheme.primary,
-								onClick = { audioPlayer.togglePlayPause() },
+								onClick = {
+									if (audioPlayer.currentUrl.isEmpty()) {
+										val companionPath = PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
+										val audioUrl = audioUrlOf?.invoke(companionPath)
+										if (audioUrl != null) audioPlayer.prepare(audioUrl)
+									}
+									audioPlayer.togglePlayPause(currentEntry.photoMeta?.audioDurationMs ?: 0L)
+								},
 								modifier = Modifier.size(36.dp),
 							) {
 								Box(contentAlignment = Alignment.Center) {
@@ -2931,6 +2977,10 @@ fun VideoPlayer(
 										val (bytes, durMs) = result
 										val companionPath = PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
 										PhotoMetadataStore.updateAudio(currentEntry.path, companionPath, durMs)
+										val directAudio = audioUrlOf?.invoke(companionPath)
+										if (directAudio != null) {
+											audioPlayer.prepare(directAudio)
+										}
 										onSaveAudio?.invoke(currentEntry, bytes, durMs) { ok, err ->
 											Toast.makeText(context, if (ok) "伴随旁白已保存 (${durMs/1000}秒)" else (err ?: "保存失败"), Toast.LENGTH_SHORT).show()
 										}
