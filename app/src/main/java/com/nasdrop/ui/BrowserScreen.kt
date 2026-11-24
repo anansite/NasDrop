@@ -67,6 +67,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
+import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Check
@@ -278,6 +279,8 @@ fun BrowserScreen(
 	var showBatchMoveSheet by remember { mutableStateOf(false) }
 	var activeEntryForIconPicker by remember { mutableStateOf<DavEntry?>(null) }
 	var activeMemoryYearGroup by remember { mutableStateOf<com.nasdrop.MemoryYearGroup?>(null) }
+	var showGameCenterSheet by remember { mutableStateOf(false) }
+	var showRandomPhotoGame by remember { mutableStateOf(false) }
 	LaunchedEffect(transferRequest) {
 		if (transferRequest > 0) showTransferSheet = true
 	}
@@ -501,6 +504,7 @@ fun BrowserScreen(
 								urlOf = { vm.thumbnailUrlFor(it) },
 								directUrlOf = { vm.directUrlFor(it) },
 								onOpenSettings = onOpenSettings,
+								onOpenGameCenter = { showGameCenterSheet = true },
 							)
 						}
 
@@ -776,6 +780,32 @@ fun BrowserScreen(
 			},
 			onOpenImage = onOpenImage,
 			onOpenVideo = onOpenVideo,
+			urlOf = { vm.thumbnailUrlFor(it) },
+			directUrlOf = { vm.directUrlFor(it) },
+		)
+	}
+
+	if (showGameCenterSheet) {
+		GameCenterSheet(
+			onDismiss = { showGameCenterSheet = false },
+			onSelectRandomPhotoGame = {
+				showGameCenterSheet = false
+				showRandomPhotoGame = true
+			},
+		)
+	}
+
+	if (showRandomPhotoGame) {
+		RandomPhotoGameScreen(
+			vm = vm,
+			onBack = { showRandomPhotoGame = false },
+			onLocate = { entry, album ->
+				showRandomPhotoGame = false
+				vm.currentTab = MainTab.Photos
+				vm.selectedAlbumPath = album?.path ?: ""
+				onOpenImage(entry)
+				Toast.makeText(context, "已在「${album?.name ?: "全部照片"}」中定位该照片", Toast.LENGTH_SHORT).show()
+			},
 			urlOf = { vm.thumbnailUrlFor(it) },
 			directUrlOf = { vm.directUrlFor(it) },
 		)
@@ -3084,6 +3114,7 @@ private fun HomeScreenContent(
 	urlOf: (String) -> String?,
 	directUrlOf: (String) -> String?,
 	onOpenSettings: () -> Unit = {},
+	onOpenGameCenter: () -> Unit = {},
 ) {
 	val allMedia = remember(vm.allPhotos, vm.allVideos) {
 		(vm.allPhotos + vm.allVideos).distinctBy { it.path }
@@ -3186,7 +3217,79 @@ private fun HomeScreenContent(
 				}
 			}
 
-			// 2. 那年今日（仅在存在往年今日历史回忆时呈现，无数据时完全隐藏）
+			// 2. 家庭互动游戏入口卡片（点击选择游戏）
+			item(key = "home_game_entry") {
+				Surface(
+					shape = RoundedCornerShape(20.dp),
+					color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+					border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+					onClick = onOpenGameCenter,
+					modifier = Modifier.fillMaxWidth(),
+				) {
+					Row(
+						modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.SpaceBetween,
+					) {
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(14.dp),
+							modifier = Modifier.weight(1f),
+						) {
+							Surface(
+								shape = CircleShape,
+								color = MaterialTheme.colorScheme.primaryContainer,
+								modifier = Modifier.size(42.dp),
+							) {
+								Box(contentAlignment = Alignment.Center) {
+									Icon(
+										Icons.Rounded.SportsEsports,
+										contentDescription = null,
+										tint = MaterialTheme.colorScheme.primary,
+										modifier = Modifier.size(24.dp),
+									)
+								}
+							}
+							Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+								Row(
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.spacedBy(6.dp),
+								) {
+									Text(
+										text = "家庭游戏",
+										style = MaterialTheme.typography.titleMedium,
+										fontWeight = FontWeight.Bold,
+									)
+									Surface(
+										shape = RoundedCornerShape(8.dp),
+										color = Color(0xFFEF4444).copy(alpha = 0.15f),
+									) {
+										Text(
+											"趣味互动",
+											fontSize = 10.sp,
+											fontWeight = FontWeight.Bold,
+											color = Color(0xFFEF4444),
+											modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+										)
+									}
+								}
+								Text(
+									text = "随机照片漫游抽取 · 点击选择游戏",
+									style = MaterialTheme.typography.bodySmall,
+									color = MaterialTheme.colorScheme.onSurfaceVariant,
+								)
+							}
+						}
+						Icon(
+							Icons.Rounded.ChevronRight,
+							contentDescription = "进入游戏",
+							tint = MaterialTheme.colorScheme.onSurfaceVariant,
+						)
+					}
+				}
+			}
+
+			// 3. 那年今日（仅在存在往年今日历史回忆时呈现，无数据时完全隐藏）
 			if (memoryYearGroups.isNotEmpty()) {
 				item(key = "home_memories_section") {
 					Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
