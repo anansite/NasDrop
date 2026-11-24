@@ -3256,7 +3256,7 @@ private fun HomeScreenContent(
 									horizontalArrangement = Arrangement.spacedBy(6.dp),
 								) {
 									Text(
-										text = "家庭游戏",
+										text = "时光杂货铺",
 										style = MaterialTheme.typography.titleMedium,
 										fontWeight = FontWeight.Bold,
 									)
@@ -3265,7 +3265,7 @@ private fun HomeScreenContent(
 										color = Color(0xFFEF4444).copy(alpha = 0.15f),
 									) {
 										Text(
-											"趣味互动",
+											"趣味小店",
 											fontSize = 10.sp,
 											fontWeight = FontWeight.Bold,
 											color = Color(0xFFEF4444),
@@ -3274,7 +3274,7 @@ private fun HomeScreenContent(
 									}
 								}
 								Text(
-									text = "随机照片漫游抽取 · 点击选择游戏",
+									text = "翻翻老相册 · 点击挑选玩法",
 									style = MaterialTheme.typography.bodySmall,
 									color = MaterialTheme.colorScheme.onSurfaceVariant,
 								)
@@ -3282,7 +3282,7 @@ private fun HomeScreenContent(
 						}
 						Icon(
 							Icons.Rounded.ChevronRight,
-							contentDescription = "进入游戏",
+							contentDescription = "进入时光杂货铺",
 							tint = MaterialTheme.colorScheme.onSurfaceVariant,
 						)
 					}

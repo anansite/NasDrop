@@ -137,12 +137,12 @@ fun GameCenterSheet(
 					}
 					Column {
 						Text(
-							"家庭互动游戏",
+							"时光杂货铺",
 							style = MaterialTheme.typography.titleLarge,
 							fontWeight = FontWeight.Bold,
 						)
 						Text(
-							"挑选专属玩法，与家人重温时光乐趣",
+							"挑选互动小玩意，与家人重温时光乐趣",
 							style = MaterialTheme.typography.bodySmall,
 							color = MaterialTheme.colorScheme.onSurfaceVariant,
 						)
