@@ -6,15 +6,38 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 private val Context.dataStore by preferencesDataStore(name = "nasdrop")
 
 class Prefs(private val context: Context) {
 	companion object {
 		@Volatile var lastSettings: Settings? = null
+	}
+
+	init {
+		// 自动平滑升级旧版本已持久化的默认 HTTPS 地址及空白凭据
+		CoroutineScope(Dispatchers.IO).launch {
+			runCatching {
+				context.dataStore.edit {
+					val raw = it[Keys.baseUrl]?.trim()?.trimEnd('/')
+					if (raw == "https://nas.205002.xyz") {
+						it[Keys.baseUrl] = Settings().baseUrl
+					}
+					if (it[Keys.user].isNullOrBlank()) {
+						it[Keys.user] = Settings().user
+					}
+					if (it[Keys.password].isNullOrBlank()) {
+						it[Keys.password] = Settings().password
+					}
+				}
+			}
+		}
 	}
 
 	private object Keys {
@@ -145,11 +168,26 @@ class Prefs(private val context: Context) {
 			ConnectionMode.Auto
 		}
 
+		val defaultSettings = Settings()
+		val rawBaseUrl = this[Keys.baseUrl]
+		val rawUser = this[Keys.user]
+		val rawPass = this[Keys.password]
+
+		// 自动平滑升级旧版本存储的旧默认 HTTPS 地址到 HTTP
+		val resolvedBaseUrl = when {
+			rawBaseUrl.isNullOrBlank() -> defaultSettings.baseUrl
+			rawBaseUrl.trim().trimEnd('/') == "https://nas.205002.xyz" -> defaultSettings.baseUrl
+			else -> rawBaseUrl
+		}
+
+		val resolvedUser = if (rawUser.isNullOrBlank()) defaultSettings.user else rawUser
+		val resolvedPass = if (rawPass.isNullOrBlank()) defaultSettings.password else rawPass
+
 		return Settings(
-			baseUrl = this[Keys.baseUrl] ?: Settings().baseUrl,
-			navUrl = this[Keys.navUrl] ?: Settings().navUrl,
-			user = this[Keys.user] ?: Settings().user,
-			password = this[Keys.password] ?: "admin",
+			baseUrl = resolvedBaseUrl,
+			navUrl = this[Keys.navUrl] ?: defaultSettings.navUrl,
+			user = resolvedUser,
+			password = resolvedPass,
 			lastDir = this[Keys.lastDir] ?: "",
 			useTailscale = mode != ConnectionMode.Direct,
 			connectionMode = mode,
