@@ -242,19 +242,60 @@ enum class BrowserMode {
 }
 
 /**
- * 专为相册/媒体上传打造的内容选择器：
- * 唤起系统全功能内容管理器，顶部横向支持【图片】与【视频】快捷分类切换，
- * 界面中部提供【图库】（直达相机/微信/所有相簿）与【文件管理】快捷入口，
- * 满足用户“在同一个浏览器中自由切换视频、相册、文件”的核心诉求。
+ * 专为相册与影集打造的官方原生图库选择器：
+ * 使用 Intent.ACTION_PICK 优先唤起系统原生图库相册（直达相机胶卷、微信相册、各分类相簿），
+ * 彻底避免被 DocumentsUI 锁定在空白或受限的 Pictures 目录。
+ * 兼容多选，并在低版本或特殊设备上无缝回退至 OPENABLE 文档选择器。
  */
-class MediaContentPickerContract : ActivityResultContract<String, List<Uri>>() {
+class GalleryAlbumPickerContract : ActivityResultContract<String, List<Uri>>() {
 	override fun createIntent(context: android.content.Context, input: String): android.content.Intent {
 		val isVideo = input.startsWith("video")
-		val mimeTypes = if (isVideo) arrayOf("video/*") else arrayOf("image/*", "video/*")
-		return android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply {
+		val contentUri = if (isVideo) {
+			android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+		} else {
+			android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+		}
+		val pickIntent = android.content.Intent(android.content.Intent.ACTION_PICK, contentUri).apply {
+			type = if (isVideo) "video/*" else "image/*"
+			putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
+			putExtra("android.intent.extra.ALLOW_MULTIPLE", true)
+		}
+		if (context.packageManager.queryIntentActivities(pickIntent, 0).isNotEmpty()) {
+			return pickIntent
+		}
+		// 无特定图库时回退至 SAF OPEN_DOCUMENT
+		return android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
 			addCategory(android.content.Intent.CATEGORY_OPENABLE)
 			type = if (isVideo) "video/*" else "image/*"
-			putExtra(android.content.Intent.EXTRA_MIME_TYPES, mimeTypes)
+			putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
+		}
+	}
+
+	override fun parseResult(resultCode: Int, intent: android.content.Intent?): List<Uri> {
+		if (resultCode != android.app.Activity.RESULT_OK || intent == null) {
+			return emptyList()
+		}
+		val uris = LinkedHashSet<Uri>()
+		intent.clipData?.let { clipData ->
+			for (i in 0 until clipData.itemCount) {
+				clipData.getItemAt(i).uri?.let { uris.add(it) }
+			}
+		}
+		intent.data?.let { uris.add(it) }
+		return uris.toList()
+	}
+}
+
+/**
+ * 全功能系统文件选择器：
+ * 唤起系统 Storage Access Framework (SAF) 完整文档管理器，
+ * 具有完整的根目录抽屉与分类切换（图片、视频、音频、下载、内部存储），支持多选。
+ */
+class SystemFilePickerContract : ActivityResultContract<Unit, List<Uri>>() {
+	override fun createIntent(context: android.content.Context, input: Unit): android.content.Intent {
+		return android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
+			addCategory(android.content.Intent.CATEGORY_OPENABLE)
+			type = "*/*"
 			putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
 		}
 	}
@@ -334,28 +375,36 @@ fun BrowserScreen(
 		}
 	}
 
-	// 系统文件选择器（全部文件上传，支持顶部横向分类条自由切换）
-	val filePicker = rememberLauncherForActivityResult(
-		contract = ActivityResultContracts.GetMultipleContents(),
-	) { uris ->
-		startUpload(uris, vm.path)
+	// 统一上传选择面板状态（相册、视频、文件三位一体，杜绝被锁定在 Pictures 目录）
+	var showUploadOptionSheet by remember { mutableStateOf(false) }
+	var activeUploadTargetDir by remember { mutableStateOf("") }
+
+	fun openUploadPicker(targetDir: String) {
+		activeUploadTargetDir = targetDir
+		showUploadOptionSheet = true
 	}
 
-	val photoPicker = rememberLauncherForActivityResult(
-		contract = MediaContentPickerContract(),
+	// 官方图库选择器（优先 ACTION_PICK，支持多选，直达相机胶卷与微信相册）
+	val galleryAlbumPicker = rememberLauncherForActivityResult(
+		contract = GalleryAlbumPickerContract(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
-			val targetDir = if (vm.selectedAlbumPath.isNotBlank() && vm.selectedAlbumPath != "__ALL_FOLDERS__") vm.selectedAlbumPath else "Photos/默认相册"
-			startUpload(uris, targetDir)
+			val target = activeUploadTargetDir.ifBlank {
+				if (vm.currentTab == MainTab.Media) "movies/默认影集"
+				else if (vm.currentTab == MainTab.Photos) "Photos/默认相册"
+				else vm.path
+			}
+			startUpload(uris, target)
 		}
 	}
 
-	val videoPicker = rememberLauncherForActivityResult(
-		contract = MediaContentPickerContract(),
+	// 全功能系统文件选择器（ACTION_OPEN_DOCUMENT，支持手机内部存储与全部分类浏览）
+	val systemFilePicker = rememberLauncherForActivityResult(
+		contract = SystemFilePickerContract(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
-			val targetDir = if (vm.selectedMediaPath.isNotBlank() && vm.selectedMediaPath != "__ALL_FOLDERS__") vm.selectedMediaPath else "movies/默认影集"
-			startUpload(uris, targetDir)
+			val target = activeUploadTargetDir.ifBlank { vm.path }
+			startUpload(uris, target)
 		}
 	}
 
@@ -403,7 +452,7 @@ fun BrowserScreen(
 					MainTab.Files -> {
 						FilesTopBar(
 							vm = vm,
-							onUpload = { filePicker.launch("*/*") },
+							onUpload = { openUploadPicker(vm.path) },
 							onOpenTransferSheet = { showTransferSheet = true },
 							onToggleViewMode = { vm.cycleViewMode() },
 							onToggleMultiSelect = {
@@ -427,7 +476,10 @@ fun BrowserScreen(
 							activeTransferCount = vm.activeTransferCount,
 							hasUpdate = vm.hasUpdate,
 							onOpenUpdateDialog = { vm.openUpdateDialog() },
-							onUploadPhoto = { photoPicker.launch("image/*") },
+							onUploadPhoto = {
+								val target = if (vm.selectedAlbumPath.isNotBlank() && vm.selectedAlbumPath != "__ALL_FOLDERS__") vm.selectedAlbumPath else "Photos/默认相册"
+								openUploadPicker(target)
+							},
 							onUpAlbum = { vm.upAlbum() },
 							onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 							onDeleteCurrentAlbum = if (vm.selectedAlbumPath == "Photos/默认相册" || vm.selectedAlbumPath.endsWith("/默认相册")) null else {
@@ -451,7 +503,10 @@ fun BrowserScreen(
 							activeTransferCount = vm.activeTransferCount,
 							hasUpdate = vm.hasUpdate,
 							onOpenUpdateDialog = { vm.openUpdateDialog() },
-							onUploadVideo = { videoPicker.launch("video/*") },
+							onUploadVideo = {
+								val target = if (vm.selectedMediaPath.isNotBlank() && vm.selectedMediaPath != "__ALL_FOLDERS__") vm.selectedMediaPath else "movies/默认影集"
+								openUploadPicker(target)
+							},
 							onUpMedia = { vm.upMedia() },
 							onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
 							onDeleteCurrentMedia = if (vm.selectedMediaPath == "movies/默认影集" || vm.selectedMediaPath.endsWith("/默认影集") || vm.selectedMediaPath.endsWith("/默认影音")) null else {
@@ -676,9 +731,15 @@ fun BrowserScreen(
 				if (!vm.isMultiSelectMode && mode == BrowserMode.Browse && vm.currentTab != MainTab.Home) {
 					DraggableUploadFab(
 						currentTab = vm.currentTab,
-						onUploadFile = { filePicker.launch("*/*") },
-						onUploadPhoto = { photoPicker.launch("image/*") },
-						onUploadVideo = { videoPicker.launch("video/*") },
+						onUploadFile = { openUploadPicker(vm.path) },
+						onUploadPhoto = {
+							val target = if (vm.selectedAlbumPath.isNotBlank() && vm.selectedAlbumPath != "__ALL_FOLDERS__") vm.selectedAlbumPath else "Photos/默认相册"
+							openUploadPicker(target)
+						},
+						onUploadVideo = {
+							val target = if (vm.selectedMediaPath.isNotBlank() && vm.selectedMediaPath != "__ALL_FOLDERS__") vm.selectedMediaPath else "movies/默认影集"
+							openUploadPicker(target)
+						},
 					)
 				}
 
@@ -902,6 +963,18 @@ fun BrowserScreen(
 				folderIconImagePicker.launch("image/*")
 			},
 			onDismiss = { activeEntryForIconPicker = null },
+		)
+	}
+
+	// 上传选择面板（统一提供手机相册、本地视频、全功能文件管理器自由切换）
+	if (showUploadOptionSheet) {
+		UploadOptionBottomSheet(
+			targetDir = activeUploadTargetDir,
+			currentTab = vm.currentTab,
+			onPickPhotos = { galleryAlbumPicker.launch("image/*") },
+			onPickVideos = { galleryAlbumPicker.launch("video/*") },
+			onPickFiles = { systemFilePicker.launch(Unit) },
+			onDismiss = { showUploadOptionSheet = false },
 		)
 	}
 
@@ -7148,6 +7221,213 @@ private fun MemoryDetailModalSheet(
 					}
 				}
 			}
+		}
+	}
+}
+
+/**
+ * 统一上传选项底栏面板：
+ * 优雅整合【手机相册与照片】、【本地视频专区】与【全功能文件管理器】三大入口。
+ * 彻底杜绝系统 DocumentsUI 锁死在 Pictures 目录，让用户自由切换多媒体相簿与完整文件浏览。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun UploadOptionBottomSheet(
+	targetDir: String,
+	currentTab: MainTab,
+	onPickPhotos: () -> Unit,
+	onPickVideos: () -> Unit,
+	onPickFiles: () -> Unit,
+	onDismiss: () -> Unit,
+) {
+	ModalBottomSheet(
+		onDismissRequest = onDismiss,
+		sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+		containerColor = MaterialTheme.colorScheme.surface,
+		contentColor = MaterialTheme.colorScheme.onSurface,
+		dragHandle = {
+			Box(
+				modifier = Modifier
+					.padding(vertical = 12.dp)
+					.width(36.dp)
+					.height(4.dp)
+					.background(
+						MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+						RoundedCornerShape(2.dp)
+					)
+			)
+		}
+	) {
+		Column(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(horizontal = 20.dp)
+				.padding(bottom = 32.dp)
+		) {
+			// Header
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically
+			) {
+				Column(modifier = Modifier.weight(1f)) {
+					Text(
+						text = "选择上传内容",
+						style = MaterialTheme.typography.titleLarge,
+						fontWeight = FontWeight.Bold,
+						color = MaterialTheme.colorScheme.onSurface
+					)
+					Spacer(modifier = Modifier.height(2.dp))
+					Text(
+						text = "上传至: ${targetDir.ifBlank { "根目录 /" }}",
+						style = MaterialTheme.typography.bodySmall,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis
+					)
+				}
+				IconButton(onClick = onDismiss) {
+					Icon(
+						imageVector = Icons.Rounded.Close,
+						contentDescription = "关闭",
+						tint = MaterialTheme.colorScheme.onSurfaceVariant
+					)
+				}
+			}
+
+			Spacer(modifier = Modifier.height(16.dp))
+
+			// Option 1: 手机相册 (直达相机/微信/相册)
+			UploadOptionCard(
+				icon = Icons.Rounded.PhotoLibrary,
+				iconTint = Color(0xFF1E88E5),
+				iconBg = Color(0xFF1E88E5).copy(alpha = 0.12f),
+				title = "手机相册与照片",
+				description = "直达系统官方图库，按相簿、相机胶卷、微信图片等自由挑选",
+				badge = if (currentTab == MainTab.Photos) "当前推荐" else null,
+				onClick = {
+					onDismiss()
+					onPickPhotos()
+				}
+			)
+
+			Spacer(modifier = Modifier.height(12.dp))
+
+			// Option 2: 本地视频专区
+			UploadOptionCard(
+				icon = Icons.Rounded.VideoLibrary,
+				iconTint = Color(0xFF8E24AA),
+				iconBg = Color(0xFF8E24AA).copy(alpha = 0.12f),
+				title = "本地视频专区",
+				description = "直达系统视频库，快速挑选拍摄或保存的视频文件",
+				badge = if (currentTab == MainTab.Media) "当前推荐" else null,
+				onClick = {
+					onDismiss()
+					onPickVideos()
+				}
+			)
+
+			Spacer(modifier = Modifier.height(12.dp))
+
+			// Option 3: 全功能文件管理器
+			UploadOptionCard(
+				icon = Icons.Rounded.FolderOpen,
+				iconTint = Color(0xFF00897B),
+				iconBg = Color(0xFF00897B).copy(alpha = 0.12f),
+				title = "全功能文件管理器",
+				description = "自由浏览手机全部存储、下载目录、微信/QQ文件与各类文档",
+				badge = if (currentTab == MainTab.Files) "当前推荐" else null,
+				onClick = {
+					onDismiss()
+					onPickFiles()
+				}
+			)
+		}
+	}
+}
+
+@Composable
+private fun UploadOptionCard(
+	icon: androidx.compose.ui.graphics.vector.ImageVector,
+	iconTint: Color,
+	iconBg: Color,
+	title: String,
+	description: String,
+	badge: String? = null,
+	onClick: () -> Unit,
+) {
+	Surface(
+		onClick = onClick,
+		shape = RoundedCornerShape(16.dp),
+		color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+		border = BorderStroke(
+			1.dp,
+			if (badge != null) iconTint.copy(alpha = 0.35f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+		),
+		modifier = Modifier.fillMaxWidth()
+	) {
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(14.dp),
+			verticalAlignment = Alignment.CenterVertically
+		) {
+			Box(
+				modifier = Modifier
+					.size(46.dp)
+					.background(iconBg, RoundedCornerShape(12.dp)),
+				contentAlignment = Alignment.Center
+			) {
+				Icon(
+					imageVector = icon,
+					contentDescription = title,
+					tint = iconTint,
+					modifier = Modifier.size(26.dp)
+				)
+			}
+
+			Spacer(modifier = Modifier.width(14.dp))
+
+			Column(modifier = Modifier.weight(1f)) {
+				Row(verticalAlignment = Alignment.CenterVertically) {
+					Text(
+						text = title,
+						style = MaterialTheme.typography.titleMedium,
+						fontWeight = FontWeight.SemiBold,
+						color = MaterialTheme.colorScheme.onSurface
+					)
+					if (badge != null) {
+						Spacer(modifier = Modifier.width(8.dp))
+						Surface(
+							shape = RoundedCornerShape(6.dp),
+							color = iconTint.copy(alpha = 0.15f),
+						) {
+							Text(
+								text = badge,
+								fontSize = 11.sp,
+								fontWeight = FontWeight.Medium,
+								color = iconTint,
+								modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+							)
+						}
+					}
+				}
+				Spacer(modifier = Modifier.height(3.dp))
+				Text(
+					text = description,
+					style = MaterialTheme.typography.bodySmall,
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+					lineHeight = 16.sp
+				)
+			}
+
+			Spacer(modifier = Modifier.width(8.dp))
+
+			Icon(
+				imageVector = Icons.Rounded.ChevronRight,
+				contentDescription = null,
+				tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+				modifier = Modifier.size(20.dp)
+			)
 		}
 	}
 }
