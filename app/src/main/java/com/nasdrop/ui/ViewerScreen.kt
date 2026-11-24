@@ -2037,6 +2037,20 @@ fun VideoPlayer(
 			}
 	}
 
+	val togglePlayPause: () -> Unit = {
+		if (player.isPlaying) {
+			player.pause()
+			centerPulseIcon = Icons.Rounded.Pause
+		} else {
+			if (player.playbackState == Player.STATE_ENDED) {
+				player.seekTo(0L)
+			}
+			player.play()
+			centerPulseIcon = Icons.Rounded.PlayArrow
+		}
+		lastInteractionTime = System.currentTimeMillis()
+	}
+
 	// 自动隐藏续播提示
 	LaunchedEffect(showResumeTip) {
 		if (showResumeTip) {
@@ -2208,14 +2222,7 @@ fun VideoPlayer(
 										if (now - lastTapTimestamp < 350) {
 											// 双击：暂停 / 播放切换（消抖分流，不误触显隐，采用极简微动效）
 											lastTapTimestamp = 0L
-											if (player.isPlaying) {
-												player.pause()
-												centerPulseIcon = Icons.Rounded.Pause
-											} else {
-												player.play()
-												centerPulseIcon = Icons.Rounded.PlayArrow
-											}
-											lastInteractionTime = System.currentTimeMillis()
+											togglePlayPause()
 										} else {
 											// 单击：记录时间戳并切换控制栏显隐
 											lastTapTimestamp = now
@@ -2338,9 +2345,7 @@ fun VideoPlayer(
 				border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.35f)),
 				shadowElevation = 10.dp,
 				onClick = {
-					player.play()
-					centerPulseIcon = Icons.Rounded.PlayArrow
-					lastInteractionTime = System.currentTimeMillis()
+					togglePlayPause()
 				},
 				modifier = Modifier.size(68.dp),
 			) {
@@ -2570,14 +2575,7 @@ fun VideoPlayer(
 								shape = CircleShape,
 								color = OnMediaBackdrop,
 								onClick = {
-									if (player.isPlaying) {
-										player.pause()
-										centerPulseIcon = Icons.Rounded.Pause
-									} else {
-										player.play()
-										centerPulseIcon = Icons.Rounded.PlayArrow
-									}
-									lastInteractionTime = System.currentTimeMillis()
+									togglePlayPause()
 								},
 								modifier = Modifier.size(40.dp),
 							) {
