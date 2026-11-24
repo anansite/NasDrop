@@ -2410,6 +2410,8 @@ private fun Modifier.dragSelectableGrid(
 	onUpdateSelectionPaths: (Set<String>) -> Unit,
 	rightEdgeIgnoreWidthDp: Dp = 44.dp,
 ): Modifier {
+	if (!isMulti) return this
+
 	val haptic = LocalHapticFeedback.current
 	val scope = rememberCoroutineScope()
 	val density = LocalDensity.current
@@ -2419,12 +2421,12 @@ private fun Modifier.dragSelectableGrid(
 	val currentOnEnterMultiSelect by rememberUpdatedState(onEnterMultiSelect)
 	val currentOnUpdateSelectionPaths by rememberUpdatedState(onUpdateSelectionPaths)
 
-	return this.pointerInput(Unit) {
+	return this.pointerInput(isMulti) {
 		val rightIgnorePx = with(density) { rightEdgeIgnoreWidthDp.toPx() }
 		val edgeZonePx = with(density) { 84.dp.toPx() }
 
 		awaitEachGesture {
-			val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+			val down = awaitFirstDown(pass = PointerEventPass.Main, requireUnconsumed = false)
 			val downPos = down.position
 			if (rightIgnorePx > 0f && downPos.x >= size.width - rightIgnorePx) return@awaitEachGesture
 
@@ -2435,23 +2437,19 @@ private fun Modifier.dragSelectableGrid(
 			var isDragging = false
 			val touchSlop = viewConfiguration.touchSlop
 			val isMultiAtStart = currentIsMulti
-			val longPressTimeout = if (isMultiAtStart) 120L else 280L
+			val longPressTimeout = 240L
 
 			var isTriggered = false
 			try {
 				withTimeout(longPressTimeout) {
 					while (true) {
-						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+						val event = awaitPointerEvent(pass = PointerEventPass.Main)
 						val pointer = event.changes.firstOrNull { it.id == down.id }
 						if (pointer == null || !pointer.pressed) return@withTimeout
 						val diff = pointer.position - downPos
-						if (isMultiAtStart) {
-							if (kotlin.math.abs(diff.x) > touchSlop || diff.getDistance() > touchSlop) {
-								isTriggered = true
-								return@withTimeout
-							}
-						} else {
-							if (diff.getDistance() > touchSlop) return@withTimeout
+						if (diff.getDistance() > touchSlop) {
+							// 手指位移，表示用户正在上下滑动/浏览列表，放弃拖选手势，交由原生滚动处理
+							return@withTimeout
 						}
 					}
 				}
@@ -2504,7 +2502,7 @@ private fun Modifier.dragSelectableGrid(
 
 				try {
 					while (true) {
-						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+						val event = awaitPointerEvent(pass = PointerEventPass.Main)
 						val pointer = event.changes.firstOrNull { it.id == down.id }
 						if (pointer == null || !pointer.pressed) {
 							pointer?.consume()
@@ -2617,6 +2615,8 @@ private fun Modifier.dragSelectableList(
 	onEnterMultiSelect: (DavEntry) -> Unit,
 	onUpdateSelection: (Set<DavEntry>) -> Unit,
 ): Modifier {
+	if (!isMulti) return this
+
 	val haptic = LocalHapticFeedback.current
 	val scope = rememberCoroutineScope()
 	val density = LocalDensity.current
@@ -2626,10 +2626,10 @@ private fun Modifier.dragSelectableList(
 	val currentOnEnterMultiSelect by rememberUpdatedState(onEnterMultiSelect)
 	val currentOnUpdateSelection by rememberUpdatedState(onUpdateSelection)
 
-	return this.pointerInput(Unit) {
+	return this.pointerInput(isMulti) {
 		val edgeZonePx = with(density) { 84.dp.toPx() }
 		awaitEachGesture {
-			val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+			val down = awaitFirstDown(pass = PointerEventPass.Main, requireUnconsumed = false)
 			val downPos = down.position
 			if (downPos.x >= size.width - with(density) { 44.dp.toPx() }) return@awaitEachGesture
 			var dragStartIndex = -1
@@ -2638,23 +2638,19 @@ private fun Modifier.dragSelectableList(
 			var isDragging = false
 			val touchSlop = viewConfiguration.touchSlop
 			val isMultiAtStart = currentIsMulti
-			val longPressTimeout = if (isMultiAtStart) 120L else 280L
+			val longPressTimeout = 240L
 
 			var isTriggered = false
 			try {
 				withTimeout(longPressTimeout) {
 					while (true) {
-						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+						val event = awaitPointerEvent(pass = PointerEventPass.Main)
 						val pointer = event.changes.firstOrNull { it.id == down.id }
 						if (pointer == null || !pointer.pressed) return@withTimeout
 						val diff = pointer.position - downPos
-						if (isMultiAtStart) {
-							if (kotlin.math.abs(diff.x) > touchSlop || diff.getDistance() > touchSlop) {
-								isTriggered = true
-								return@withTimeout
-							}
-						} else {
-							if (diff.getDistance() > touchSlop) return@withTimeout
+						if (diff.getDistance() > touchSlop) {
+							// 手指位移，表示用户正在上下滑动/浏览列表，放弃拖选手势，交由原生滚动处理
+							return@withTimeout
 						}
 					}
 				}
@@ -2705,7 +2701,7 @@ private fun Modifier.dragSelectableList(
 
 				try {
 					while (true) {
-						val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+						val event = awaitPointerEvent(pass = PointerEventPass.Main)
 						val pointer = event.changes.firstOrNull { it.id == down.id }
 						if (pointer == null || !pointer.pressed) {
 							pointer?.consume()

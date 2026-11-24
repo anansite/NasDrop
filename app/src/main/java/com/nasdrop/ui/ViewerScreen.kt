@@ -9,6 +9,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -36,6 +37,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -824,41 +826,14 @@ fun ImageViewer(
 				}
 
 				if (hasMemo) {
-					Surface(
-						shape = RoundedCornerShape(16.dp),
-						color = Color(0xDE0F172A),
-						border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
-						shadowElevation = 6.dp,
-						modifier = Modifier
-							.fillMaxWidth()
-							.clip(RoundedCornerShape(16.dp))
-							.clickable {
-								memoInput = currentMemo ?: ""
-								showMemoDialog = true
-							},
-					) {
-						Row(
-							modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(8.dp),
-						) {
-							Box(
-								modifier = Modifier
-									.width(3.dp)
-									.height(14.dp)
-									.clip(RoundedCornerShape(1.5.dp))
-									.background(Color(0xFF34D399))
-							)
-							Text(
-								text = currentMemo ?: "",
-								fontSize = 13.sp,
-								lineHeight = 17.sp,
-								color = Color(0xFFF1F5F9),
-								maxLines = 2,
-								overflow = TextOverflow.Ellipsis,
-							)
-						}
-					}
+					CompanionMemoCapsule(
+						memo = currentMemo ?: "",
+						accentColor = Color(0xFF34D399),
+						onEditClick = {
+							memoInput = currentMemo ?: ""
+							showMemoDialog = true
+						},
+					)
 				}
 			}
 		}
@@ -2965,41 +2940,14 @@ fun VideoPlayer(
 				}
 
 				if (hasMemo) {
-					Surface(
-						shape = RoundedCornerShape(16.dp),
-						color = Color(0xDE0F172A),
-						border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
-						shadowElevation = 6.dp,
-						modifier = Modifier
-							.fillMaxWidth()
-							.clip(RoundedCornerShape(16.dp))
-							.clickable {
-								memoInput = currentMemo ?: ""
-								showMemoDialog = true
-							},
-					) {
-						Row(
-							modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(8.dp),
-						) {
-							Box(
-								modifier = Modifier
-									.width(3.dp)
-									.height(14.dp)
-									.clip(RoundedCornerShape(1.5.dp))
-									.background(Color(0xFF38BDF8))
-							)
-							Text(
-								text = currentMemo ?: "",
-								fontSize = 13.sp,
-								lineHeight = 17.sp,
-								color = Color(0xFFF1F5F9),
-								maxLines = 2,
-								overflow = TextOverflow.Ellipsis,
-							)
-						}
-					}
+					CompanionMemoCapsule(
+						memo = currentMemo ?: "",
+						accentColor = Color(0xFF38BDF8),
+						onEditClick = {
+							memoInput = currentMemo ?: ""
+							showMemoDialog = true
+						},
+					)
 				}
 			}
 		}
@@ -3660,4 +3608,96 @@ private fun formatTime(millis: Long): String {
 	val mins = totalSecs / 60
 	val secs = totalSecs % 60
 	return String.format(Locale.ROOT, "%02d:%02d", mins, secs)
+}
+
+/**
+ * 伴生文字记忆胶囊展示组件
+ * - 默认紧凑预览（最多展示2行及省略号）
+ * - 点击可展开为更大高度（最大180.dp）
+ * - 展开后若文字超长，支持内部平滑垂直滑动（verticalScroll）
+ * - 右侧配有快捷编辑按钮及折叠/展开指示图标
+ */
+@Composable
+private fun CompanionMemoCapsule(
+	memo: String,
+	accentColor: Color,
+	onEditClick: () -> Unit,
+	modifier: Modifier = Modifier,
+) {
+	var isExpanded by remember(memo) { mutableStateOf(false) }
+	val scrollState = rememberScrollState()
+
+	Surface(
+		shape = RoundedCornerShape(16.dp),
+		color = Color(0xDE0F172A),
+		border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+		shadowElevation = 6.dp,
+		modifier = modifier
+			.fillMaxWidth()
+			.clip(RoundedCornerShape(16.dp))
+			.animateContentSize()
+			.clickable { isExpanded = !isExpanded },
+	) {
+		Row(
+			modifier = Modifier
+				.padding(horizontal = 14.dp, vertical = 9.dp)
+				.fillMaxWidth(),
+			verticalAlignment = if (isExpanded) Alignment.Top else Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.spacedBy(8.dp),
+		) {
+			Box(
+				modifier = Modifier
+					.padding(top = if (isExpanded) 3.dp else 0.dp)
+					.width(3.dp)
+					.height(14.dp)
+					.clip(RoundedCornerShape(1.5.dp))
+					.background(accentColor)
+			)
+			Box(
+				modifier = Modifier
+					.weight(1f)
+					.then(
+						if (isExpanded) {
+							Modifier
+								.heightIn(max = 180.dp)
+								.verticalScroll(scrollState)
+						} else {
+							Modifier
+						}
+					)
+			) {
+				Text(
+					text = memo,
+					fontSize = 13.sp,
+					lineHeight = 18.sp,
+					color = Color(0xFFF1F5F9),
+					maxLines = if (isExpanded) Int.MAX_VALUE else 2,
+					overflow = if (isExpanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+				)
+			}
+			Row(
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(2.dp),
+				modifier = Modifier.padding(top = if (isExpanded) 1.dp else 0.dp),
+			) {
+				IconButton(
+					onClick = onEditClick,
+					modifier = Modifier.size(24.dp),
+				) {
+					Icon(
+						imageVector = Icons.Rounded.EditNote,
+						contentDescription = "编辑记忆",
+						tint = Color(0xFF94A3B8),
+						modifier = Modifier.size(18.dp),
+					)
+				}
+				Icon(
+					imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+					contentDescription = if (isExpanded) "收起" else "展开",
+					tint = Color(0xFF64748B),
+					modifier = Modifier.size(16.dp),
+				)
+			}
+		}
+	}
 }
