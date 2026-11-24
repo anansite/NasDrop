@@ -83,6 +83,8 @@ import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.nasdrop.BrowserViewModel
 import com.nasdrop.DavEntry
+import com.nasdrop.hasAudio
+import com.nasdrop.hasMemo
 import com.nasdrop.isPathWithin
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
