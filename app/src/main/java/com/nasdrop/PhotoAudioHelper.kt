@@ -50,6 +50,9 @@ class CompanionAudioPlayer(private val context: Context) {
 		if (isPlaying) {
 			pause()
 		} else if (mediaPlayer != null) {
+			if (currentPositionMs >= (durationMs - 300).coerceAtLeast(0) || progress >= 0.98f) {
+				seekTo(0f)
+			}
 			resume()
 		} else if (currentUrl.isNotEmpty()) {
 			play(currentUrl, fallbackDurationMs)
@@ -94,11 +97,15 @@ class CompanionAudioPlayer(private val context: Context) {
 					startProgressTracker()
 				}
 				setOnCompletionListener {
-					stop()
+					handler.post {
+						stop()
+					}
 				}
 				setOnErrorListener { _, what, extra ->
 					Log.w("AudioPlayer", "MediaPlayer error: what=$what extra=$extra")
-					stop()
+					handler.post {
+						stop()
+					}
 					true
 				}
 				prepareAsync()
@@ -111,13 +118,15 @@ class CompanionAudioPlayer(private val context: Context) {
 	}
 
 	fun pause() {
-		mediaPlayer?.let {
-			if (it.isPlaying) {
-				it.pause()
-				isPlaying = false
-				stopProgressTracker()
+		try {
+			mediaPlayer?.let {
+				if (it.isPlaying) {
+					it.pause()
+				}
 			}
-		}
+		} catch (_: Exception) {}
+		isPlaying = false
+		stopProgressTracker()
 	}
 
 	fun resume() {
@@ -166,7 +175,7 @@ class CompanionAudioPlayer(private val context: Context) {
 		val runnable = object : Runnable {
 			override fun run() {
 				val mp = mediaPlayer
-				if (mp != null && isPlaying) {
+				if (mp != null) {
 					try {
 						val pos = mp.currentPosition
 						val dur = if (durationMs > 0) durationMs else mp.duration
@@ -175,8 +184,21 @@ class CompanionAudioPlayer(private val context: Context) {
 							durationMs = dur
 							progress = (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
 						}
-						handler.postDelayed(this, 100)
-					} catch (_: Exception) {}
+						// 只要播放器不在播放状态且接近末尾，或者播放器已经停止，即判定完成
+						if (!mp.isPlaying && (pos >= (dur - 300).coerceAtLeast(0) || dur <= 0)) {
+							stop()
+							return
+						}
+						if (isPlaying && mp.isPlaying) {
+							handler.postDelayed(this, 100)
+						} else if (!mp.isPlaying) {
+							isPlaying = false
+						}
+					} catch (_: Exception) {
+						stop()
+					}
+				} else {
+					isPlaying = false
 				}
 			}
 		}

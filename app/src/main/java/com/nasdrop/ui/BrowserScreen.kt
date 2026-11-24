@@ -182,6 +182,18 @@ import com.nasdrop.hasMemo
 import com.nasdrop.NasFolderIcon
 import com.nasdrop.videoDurationMs
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.PieChart
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.EaseInOutSine
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.delay
 import com.nasdrop.MainTab
 import com.nasdrop.NasSystemInfo
 import com.nasdrop.RouteInfo
@@ -3083,13 +3095,13 @@ private fun HomeScreenContent(
 								horizontalArrangement = Arrangement.spacedBy(8.dp),
 							) {
 								Icon(
-									Icons.Rounded.CloudDone,
+									Icons.Rounded.PieChart,
 									contentDescription = null,
 									tint = MaterialTheme.colorScheme.primary,
 									modifier = Modifier.size(20.dp),
 								)
 								Text(
-									text = "NasDrop",
+									text = "数据资产概览",
 									style = MaterialTheme.typography.titleMedium,
 									fontWeight = FontWeight.Bold,
 								)
@@ -3241,7 +3253,7 @@ private fun HomeScreenContent(
 				}
 			}
 
-			// 4. 近期精彩动态
+			// 4. 近期精彩动态（动态焦点画卷 + 水平滑轨）
 			if (recentItems.isNotEmpty()) {
 				item(key = "home_recent_header") {
 					Row(
@@ -3249,80 +3261,336 @@ private fun HomeScreenContent(
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.SpaceBetween,
 					) {
-						Text(
-							"近期精彩动态",
-							style = MaterialTheme.typography.titleMedium,
-							fontWeight = FontWeight.Bold,
-							color = MaterialTheme.colorScheme.onSurface,
-						)
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(6.dp),
+						) {
+							Icon(
+								Icons.Rounded.Whatshot,
+								contentDescription = null,
+								tint = Color(0xFFEF4444),
+								modifier = Modifier.size(18.dp),
+							)
+							Text(
+								"近期精彩动态",
+								style = MaterialTheme.typography.titleMedium,
+								fontWeight = FontWeight.Bold,
+								color = MaterialTheme.colorScheme.onSurface,
+							)
+						}
 						TextButton(onClick = { vm.currentTab = MainTab.Photos }) {
-							Text("查看全部", fontSize = 13.sp)
+							Text("查看全部 (${allMedia.size})", fontSize = 13.sp)
 						}
 					}
 				}
 
-				// 3列网格展示最近12张照片/视频
-				item(key = "home_recent_grid") {
-					val rows = recentItems.chunked(3)
-					Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-						rows.forEach { rowItems ->
-							Row(
-								modifier = Modifier.fillMaxWidth(),
-								horizontalArrangement = Arrangement.spacedBy(4.dp),
+				// 4.1 动态焦点画卷轮播（最新精选，自动滑变与呼吸微动）
+				item(key = "home_spotlight_pager") {
+					val spotlightItems = remember(recentItems) { recentItems.take(5) }
+					val spotlightPagerState = rememberPagerState(pageCount = { spotlightItems.size })
+
+					LaunchedEffect(spotlightPagerState, spotlightItems.size) {
+						if (spotlightItems.size > 1) {
+							while (true) {
+								delay(4000)
+								val next = (spotlightPagerState.currentPage + 1) % spotlightItems.size
+								spotlightPagerState.animateScrollToPage(next)
+							}
+						}
+					}
+
+					val infiniteTransition = rememberInfiniteTransition(label = "spotlight_zoom")
+					val spotlightScale by infiniteTransition.animateFloat(
+						initialValue = 1.0f,
+						targetValue = 1.06f,
+						animationSpec = infiniteRepeatable(
+							animation = tween(4500, easing = EaseInOutSine),
+							repeatMode = RepeatMode.Reverse
+						),
+						label = "spotlight_scale"
+					)
+
+					Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+						HorizontalPager(
+							state = spotlightPagerState,
+							modifier = Modifier
+								.fillMaxWidth()
+								.height(160.dp),
+							pageSpacing = 10.dp,
+						) { page ->
+							val entry = spotlightItems[page]
+							val isCurrent = page == spotlightPagerState.currentPage
+
+							Surface(
+								modifier = Modifier
+									.fillMaxSize()
+									.clip(RoundedCornerShape(16.dp))
+									.clickable {
+										if (entry.isVideo) onOpenVideo(entry)
+										else onOpenImage(entry)
+									},
+								shape = RoundedCornerShape(16.dp),
+								shadowElevation = 3.dp,
+								color = MaterialTheme.colorScheme.surfaceVariant,
 							) {
-								rowItems.forEach { entry ->
+								Box(modifier = Modifier.fillMaxSize()) {
+									val thumbTarget = urlOf(entry.path)
+									var thumbFailed by remember(entry.path) { mutableStateOf(false) }
+									val actualData = if (!thumbFailed) thumbTarget else null
+									if (!actualData.isNullOrBlank()) {
+										AsyncImage(
+											model = ImageRequest.Builder(LocalContext.current)
+												.data(actualData)
+												.memoryCacheKey("thumb:${entry.path.trim('/')}")
+												.diskCacheKey("thumb:${entry.path.trim('/')}")
+												.size(640, 360)
+												.precision(coil.size.Precision.INEXACT)
+												.allowRgb565(true)
+												.crossfade(false)
+												.build(),
+											contentDescription = entry.name,
+											contentScale = ContentScale.Crop,
+											onError = {
+												thumbFailed = true
+												vm.markThumbnailFailed(entry.path)
+											},
+											modifier = Modifier
+												.fillMaxSize()
+												.graphicsLayer {
+													if (isCurrent) {
+														scaleX = spotlightScale
+														scaleY = spotlightScale
+													}
+												},
+										)
+									} else {
+										Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+											FileIcon(category = if (entry.isVideo) FileCategory.Video else FileCategory.Image, isDir = false, size = 48.dp)
+										}
+									}
+
+									// 遮罩渐变
 									Box(
 										modifier = Modifier
-											.weight(1f)
-											.aspectRatio(1f)
-											.clip(RoundedCornerShape(8.dp))
-											.background(MaterialTheme.colorScheme.surfaceVariant)
-											.clickable {
-												if (entry.isVideo) onOpenVideo(entry)
-												else onOpenImage(entry)
-											},
-									) {
-										val thumbTarget = urlOf(entry.path)
-										var thumbFailed by remember(entry.path) { mutableStateOf(false) }
-										val actualData = if (!thumbFailed) thumbTarget else null
-										if (!actualData.isNullOrBlank()) {
-											AsyncImage(
-												model = ImageRequest.Builder(LocalContext.current)
-													.data(actualData)
-													.memoryCacheKey("thumb:${entry.path.trim('/')}")
-													.diskCacheKey("thumb:${entry.path.trim('/')}")
-													.size(240, 240)
-													.precision(coil.size.Precision.INEXACT)
-													.allowRgb565(true)
-													.crossfade(false)
-													.build(),
-												contentDescription = entry.name,
-												contentScale = ContentScale.Crop,
-												onError = {
-													thumbFailed = true
-													vm.markThumbnailFailed(entry.path)
-												},
-												modifier = Modifier.fillMaxSize(),
+											.fillMaxSize()
+											.background(
+												Brush.verticalGradient(
+													colors = listOf(
+														Color.Black.copy(alpha = 0.35f),
+														Color.Transparent,
+														Color.Black.copy(alpha = 0.8f),
+													)
+												)
 											)
-										} else {
-											Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-												FileIcon(category = if (entry.isVideo) FileCategory.Video else FileCategory.Image, isDir = false, size = 32.dp)
+									)
+
+									// 顶部高光标签
+									Row(
+										modifier = Modifier
+											.align(Alignment.TopStart)
+											.padding(8.dp),
+										horizontalArrangement = Arrangement.spacedBy(6.dp),
+										verticalAlignment = Alignment.CenterVertically,
+									) {
+										Surface(
+											shape = RoundedCornerShape(8.dp),
+											color = Color(0xFFEF4444).copy(alpha = 0.9f),
+										) {
+											Row(
+												modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp),
+												verticalAlignment = Alignment.CenterVertically,
+												horizontalArrangement = Arrangement.spacedBy(3.dp),
+											) {
+												Icon(
+													Icons.Rounded.Whatshot,
+													contentDescription = null,
+													tint = Color.White,
+													modifier = Modifier.size(12.dp),
+												)
+												Text(
+													text = "焦点聚焦",
+													fontSize = 10.5.sp,
+													fontWeight = FontWeight.Bold,
+													color = Color.White,
+												)
 											}
 										}
 
-										// 角标（伴随录音、记事、视频与时长）
-										MediaThumbBadges(
-											entry = entry,
-											modifier = Modifier.fillMaxSize().padding(3.dp),
-											compact = false,
+										if (entry.hasAudio) {
+											Surface(
+												shape = RoundedCornerShape(8.dp),
+												color = Color(0xFF38BDF8).copy(alpha = 0.9f),
+											) {
+												Row(
+													modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp),
+													verticalAlignment = Alignment.CenterVertically,
+													horizontalArrangement = Arrangement.spacedBy(3.dp),
+												) {
+													Icon(
+														Icons.Rounded.Mic,
+														contentDescription = null,
+														tint = Color.White,
+														modifier = Modifier.size(11.dp),
+													)
+													Text(
+														text = "伴随语音",
+														fontSize = 10.sp,
+														fontWeight = FontWeight.SemiBold,
+														color = Color.White,
+													)
+												}
+											}
+										}
+									}
+
+									// 右上角页码与格式
+									Row(
+										modifier = Modifier
+											.align(Alignment.TopEnd)
+											.padding(8.dp),
+										horizontalArrangement = Arrangement.spacedBy(4.dp),
+										verticalAlignment = Alignment.CenterVertically,
+									) {
+										if (entry.isVideo) {
+											Surface(
+												shape = RoundedCornerShape(8.dp),
+												color = Color.Black.copy(alpha = 0.6f),
+											) {
+												Row(
+													modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+													verticalAlignment = Alignment.CenterVertically,
+													horizontalArrangement = Arrangement.spacedBy(2.dp),
+												) {
+													Icon(
+														Icons.Rounded.PlayArrow,
+														contentDescription = null,
+														tint = Color.White,
+														modifier = Modifier.size(12.dp),
+													)
+													Text(
+														text = "视频",
+														fontSize = 10.sp,
+														color = Color.White,
+													)
+												}
+											}
+										}
+										Surface(
+											shape = RoundedCornerShape(8.dp),
+											color = Color.Black.copy(alpha = 0.5f),
+										) {
+											Text(
+												text = "${page + 1}/${spotlightItems.size}",
+												fontSize = 10.sp,
+												color = Color.White.copy(alpha = 0.85f),
+												modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+											)
+										}
+									}
+
+									// 底部文件名与时间
+									Column(
+										modifier = Modifier
+											.align(Alignment.BottomStart)
+											.padding(horizontal = 10.dp, vertical = 8.dp),
+										verticalArrangement = Arrangement.spacedBy(2.dp),
+									) {
+										Text(
+											text = entry.name,
+											fontSize = 13.sp,
+											fontWeight = FontWeight.Bold,
+											color = Color.White,
+											maxLines = 1,
+											overflow = TextOverflow.Ellipsis,
+										)
+										Text(
+											text = "更新时间 · ${formatDate(entry.effectiveDate)}",
+											fontSize = 10.5.sp,
+											color = Color.White.copy(alpha = 0.8f),
 										)
 									}
 								}
-								// 补齐占位如果最后一行不足3个
-								if (rowItems.size < 3) {
-									repeat(3 - rowItems.size) {
-										Spacer(modifier = Modifier.weight(1f))
+							}
+						}
+
+						// 轮播指示器
+						if (spotlightItems.size > 1) {
+							Row(
+								modifier = Modifier.fillMaxWidth(),
+								horizontalArrangement = Arrangement.Center,
+								verticalAlignment = Alignment.CenterVertically,
+							) {
+								repeat(spotlightItems.size) { iteration ->
+									val isSelected = spotlightPagerState.currentPage == iteration
+									Box(
+										modifier = Modifier
+											.padding(horizontal = 3.dp)
+											.height(4.dp)
+											.width(if (isSelected) 14.dp else 5.dp)
+											.clip(CircleShape)
+											.background(
+												if (isSelected) MaterialTheme.colorScheme.primary
+												else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+											)
+									)
+								}
+							}
+						}
+					}
+				}
+
+				// 4.2 更多近期动态横向滑轨
+				if (recentItems.size > 1) {
+					item(key = "home_recent_strip") {
+						LazyRow(
+							modifier = Modifier.fillMaxWidth(),
+							horizontalArrangement = Arrangement.spacedBy(8.dp),
+						) {
+							items(recentItems.drop(1), key = { it.path }) { entry ->
+								Box(
+									modifier = Modifier
+										.size(100.dp)
+										.clip(RoundedCornerShape(12.dp))
+										.background(MaterialTheme.colorScheme.surfaceVariant)
+										.clickable {
+											if (entry.isVideo) onOpenVideo(entry)
+											else onOpenImage(entry)
+										},
+								) {
+									val thumbTarget = urlOf(entry.path)
+									var thumbFailed by remember(entry.path) { mutableStateOf(false) }
+									val actualData = if (!thumbFailed) thumbTarget else null
+									if (!actualData.isNullOrBlank()) {
+										AsyncImage(
+											model = ImageRequest.Builder(LocalContext.current)
+												.data(actualData)
+												.memoryCacheKey("thumb:${entry.path.trim('/')}")
+												.diskCacheKey("thumb:${entry.path.trim('/')}")
+												.size(200, 200)
+												.precision(coil.size.Precision.INEXACT)
+												.allowRgb565(true)
+												.crossfade(false)
+												.build(),
+											contentDescription = entry.name,
+											contentScale = ContentScale.Crop,
+											onError = {
+												thumbFailed = true
+												vm.markThumbnailFailed(entry.path)
+											},
+											modifier = Modifier.fillMaxSize(),
+										)
+									} else {
+										Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+											FileIcon(category = if (entry.isVideo) FileCategory.Video else FileCategory.Image, isDir = false, size = 32.dp)
+										}
 									}
+
+									// 角标（伴随录音、记事、视频与时长）
+									MediaThumbBadges(
+										entry = entry,
+										modifier = Modifier.fillMaxSize().padding(3.dp),
+										compact = true,
+									)
 								}
 							}
 						}
@@ -6520,117 +6788,197 @@ private fun MemoriesBanner(
 	directUrlOf: ((String) -> String?)?,
 	modifier: Modifier = Modifier,
 ) {
+	val pagerState = rememberPagerState(pageCount = { memoryYearGroups.size })
+
+	LaunchedEffect(pagerState, memoryYearGroups.size) {
+		if (memoryYearGroups.size > 1) {
+			while (true) {
+				delay(4500)
+				val next = (pagerState.currentPage + 1) % memoryYearGroups.size
+				pagerState.animateScrollToPage(next)
+			}
+		}
+	}
+
+	val infiniteTransition = rememberInfiniteTransition(label = "ken_burns_memories")
+	val imageScale by infiniteTransition.animateFloat(
+		initialValue = 1.0f,
+		targetValue = 1.07f,
+		animationSpec = infiniteRepeatable(
+			animation = tween(durationMillis = 5000, easing = EaseInOutSine),
+			repeatMode = RepeatMode.Reverse
+		),
+		label = "scale"
+	)
+
 	Column(
 		modifier = modifier
 			.fillMaxWidth()
-			.padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp)
+			.padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
+		verticalArrangement = Arrangement.spacedBy(8.dp),
 	) {
-		LazyRow(
-			horizontalArrangement = Arrangement.spacedBy(10.dp),
-			contentPadding = PaddingValues(horizontal = 2.dp),
-			modifier = Modifier.fillMaxWidth()
-		) {
-			items(memoryYearGroups, key = { it.year }) { group ->
-				Surface(
-					modifier = Modifier
-						.width(if (memoryYearGroups.size == 1) 320.dp else 260.dp)
-						.height(116.dp)
-						.clip(RoundedCornerShape(16.dp))
-						.clickable { onClickGroup(group) },
-					shape = RoundedCornerShape(16.dp),
-					shadowElevation = 3.dp,
-					color = MaterialTheme.colorScheme.surfaceVariant,
-				) {
-					Box(modifier = Modifier.fillMaxSize()) {
-						// 封面图
-						val coverTarget = urlOf(group.coverEntry.path)
-						if (!coverTarget.isNullOrBlank()) {
-							AsyncImage(
-								model = coverTarget,
-								contentDescription = null,
-								contentScale = ContentScale.Crop,
-								modifier = Modifier.fillMaxSize(),
-							)
-						} else {
-							Box(
-								modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
-								contentAlignment = Alignment.Center,
-							) {
-								Icon(
-									Icons.Rounded.PhotoLibrary,
-									contentDescription = null,
-									tint = MaterialTheme.colorScheme.primary,
-									modifier = Modifier.size(36.dp)
-								)
-							}
-						}
+		HorizontalPager(
+			state = pagerState,
+			modifier = Modifier
+				.fillMaxWidth()
+				.height(132.dp),
+			pageSpacing = 10.dp,
+		) { page ->
+			val group = memoryYearGroups[page]
+			val isCurrent = page == pagerState.currentPage
 
-						// 半透明渐变遮罩，确保文字无论在任何背景下均极度清晰
-						Box(
+			Surface(
+				modifier = Modifier
+					.fillMaxSize()
+					.clip(RoundedCornerShape(18.dp))
+					.clickable { onClickGroup(group) },
+				shape = RoundedCornerShape(18.dp),
+				shadowElevation = 3.dp,
+				color = MaterialTheme.colorScheme.surfaceVariant,
+			) {
+				Box(modifier = Modifier.fillMaxSize()) {
+					// 封面图（当前卡片伴随呼吸微动）
+					val coverTarget = urlOf(group.coverEntry.path)
+					if (!coverTarget.isNullOrBlank()) {
+						AsyncImage(
+							model = coverTarget,
+							contentDescription = null,
+							contentScale = ContentScale.Crop,
 							modifier = Modifier
 								.fillMaxSize()
-								.background(
-									Brush.verticalGradient(
-										colors = listOf(
-											Color.Black.copy(alpha = 0.35f),
-											Color.Transparent,
-											Color.Black.copy(alpha = 0.82f),
-										)
-									)
-								)
+								.graphicsLayer {
+									if (isCurrent) {
+										scaleX = imageScale
+										scaleY = imageScale
+									}
+								},
 						)
-
-						// 顶部轻量标签
-						Row(
-							modifier = Modifier
-								.align(Alignment.TopStart)
-								.padding(8.dp)
-								.background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
-								.padding(horizontal = 7.dp, vertical = 2.dp),
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(3.dp),
+					} else {
+						Box(
+							modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
+							contentAlignment = Alignment.Center,
 						) {
-							Text(
-								"✨ 那年今天",
-								fontSize = 10.5.sp,
-								fontWeight = FontWeight.SemiBold,
-								color = Color.White
-							)
-						}
-
-						// 底部核心信息（精简空间，拒绝冗余文字）
-						Column(
-							modifier = Modifier
-								.align(Alignment.BottomStart)
-								.padding(horizontal = 10.dp, vertical = 8.dp)
-						) {
-							Text(
-								"${group.yearsAgo}年前 · ${group.year}",
-								fontSize = 15.sp,
-								fontWeight = FontWeight.Bold,
-								color = Color.White,
-								maxLines = 1,
-							)
-							Spacer(Modifier.height(2.dp))
-							val countsStr = buildString {
-								if (group.photoCount > 0) append("${group.photoCount}张照片")
-								if (group.videoCount > 0) {
-									if (isNotEmpty()) append(" · ")
-									append("${group.videoCount}个视频")
-								}
-								if (group.albumGroups.size > 1) {
-									if (isNotEmpty()) append(" · ")
-									append("${group.albumGroups.size}个相册")
-								}
-							}
-							Text(
-								countsStr,
-								fontSize = 11.5.sp,
-								color = Color.White.copy(alpha = 0.88f),
-								maxLines = 1,
+							Icon(
+								Icons.Rounded.PhotoLibrary,
+								contentDescription = null,
+								tint = MaterialTheme.colorScheme.primary,
+								modifier = Modifier.size(36.dp)
 							)
 						}
 					}
+
+					// 半透明渐变遮罩
+					Box(
+						modifier = Modifier
+							.fillMaxSize()
+							.background(
+								Brush.verticalGradient(
+									colors = listOf(
+										Color.Black.copy(alpha = 0.35f),
+										Color.Transparent,
+										Color.Black.copy(alpha = 0.85f),
+									)
+								)
+							)
+					)
+
+					// 顶部动态标签
+					Row(
+						modifier = Modifier
+							.align(Alignment.TopStart)
+							.padding(10.dp)
+							.background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+							.padding(horizontal = 8.dp, vertical = 3.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(4.dp),
+					) {
+						Box(
+							modifier = Modifier
+								.size(6.dp)
+								.clip(CircleShape)
+								.background(Color(0xFF38BDF8))
+						)
+						Text(
+							"✨ 那年今天 · 动态回顾",
+							fontSize = 11.sp,
+							fontWeight = FontWeight.SemiBold,
+							color = Color.White
+						)
+					}
+
+					if (memoryYearGroups.size > 1) {
+						Surface(
+							shape = RoundedCornerShape(8.dp),
+							color = Color.Black.copy(alpha = 0.45f),
+							modifier = Modifier
+								.align(Alignment.TopEnd)
+								.padding(10.dp),
+						) {
+							Text(
+								"${page + 1}/${memoryYearGroups.size}",
+								fontSize = 10.5.sp,
+								fontWeight = FontWeight.Medium,
+								color = Color.White.copy(alpha = 0.9f),
+								modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+							)
+						}
+					}
+
+					// 底部核心信息
+					Column(
+						modifier = Modifier
+							.align(Alignment.BottomStart)
+							.padding(horizontal = 12.dp, vertical = 10.dp)
+					) {
+						Text(
+							"${group.yearsAgo}年前的今天 · ${group.year}",
+							fontSize = 15.5.sp,
+							fontWeight = FontWeight.Bold,
+							color = Color.White,
+							maxLines = 1,
+						)
+						Spacer(Modifier.height(2.dp))
+						val countsStr = buildString {
+							if (group.photoCount > 0) append("${group.photoCount}张照片")
+							if (group.videoCount > 0) {
+								if (isNotEmpty()) append(" · ")
+								append("${group.videoCount}个视频")
+							}
+							if (group.albumGroups.size > 1) {
+								if (isNotEmpty()) append(" · ")
+								append("${group.albumGroups.size}个相册")
+							}
+						}
+						Text(
+							countsStr,
+							fontSize = 11.5.sp,
+							color = Color.White.copy(alpha = 0.9f),
+							maxLines = 1,
+						)
+					}
+				}
+			}
+		}
+
+		if (memoryYearGroups.size > 1) {
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				horizontalArrangement = Arrangement.Center,
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				repeat(memoryYearGroups.size) { iteration ->
+					val isSelected = pagerState.currentPage == iteration
+					Box(
+						modifier = Modifier
+							.padding(horizontal = 3.dp)
+							.height(4.dp)
+							.width(if (isSelected) 14.dp else 5.dp)
+							.clip(CircleShape)
+							.background(
+								if (isSelected) MaterialTheme.colorScheme.primary
+								else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+							)
+					)
 				}
 			}
 		}

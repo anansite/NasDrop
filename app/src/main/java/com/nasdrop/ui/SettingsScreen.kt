@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
@@ -71,8 +72,11 @@ fun SettingsScreen(
 	var authKey by remember { mutableStateOf("") }
 	var trustAll by remember { mutableStateOf(Settings().trustAllCerts) }
 	var currentPalette by remember { mutableStateOf(Settings().themePalette) }
+	var webdavExpanded by remember { mutableStateOf(false) }
+	var navExpanded by remember { mutableStateOf(false) }
 	var networkExpanded by remember { mutableStateOf(false) }
 	var preferenceExpanded by remember { mutableStateOf(false) }
+	var aboutExpanded by remember { mutableStateOf(false) }
 
 	var testing by remember { mutableStateOf(false) }
 	var logs by remember { mutableStateOf<String?>(null) }
@@ -351,47 +355,39 @@ fun SettingsScreen(
 				}
 			}
 
-			// ==================== 分组 2: WebDAV 服务接入配置 ====================
-			Card(
-				shape = RoundedCornerShape(18.dp),
-				colors = CardDefaults.cardColors(containerColor = colors.surface),
-				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-				modifier = Modifier.fillMaxWidth(),
-			) {
-				Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-					Row(
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(8.dp),
-					) {
-						Box(
-							modifier = Modifier
-								.size(32.dp)
-								.clip(RoundedCornerShape(8.dp))
-								.background(colors.primary.copy(alpha = 0.12f)),
-							contentAlignment = Alignment.Center,
-						) {
-							Icon(
-								imageVector = Icons.Rounded.Cloud,
-								contentDescription = null,
-								tint = colors.primary,
-								modifier = Modifier.size(18.dp),
-							)
-						}
-						Column {
-							Text(
-								text = "WebDAV 服务接入配置",
-								fontSize = 14.sp,
-								fontWeight = FontWeight.Bold,
-								color = colors.onSurface,
-							)
-							Text(
-								text = "私有云接入地址与鉴权信息",
-								fontSize = 11.sp,
-								color = colors.onSurfaceVariant,
-							)
-						}
-					}
+			// ==================== 配置项分类条目（点击条目才展开显示具体配置） ====================
+			Text(
+				text = "系统与服务配置项",
+				fontSize = 12.5.sp,
+				fontWeight = FontWeight.SemiBold,
+				color = colors.onSurfaceVariant,
+				modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+			)
 
+			// 条目 1: WebDAV 服务接入配置
+			SettingsEntryCard(
+				title = "WebDAV 服务接入配置",
+				summary = if (baseUrl.isNotBlank()) "$baseUrl · $user" else "点击展开配置接入地址与账户凭据",
+				icon = Icons.Rounded.Cloud,
+				iconTint = colors.primary,
+				isExpanded = webdavExpanded,
+				onToggle = { webdavExpanded = !webdavExpanded },
+				trailingBadge = {
+					Surface(
+						shape = RoundedCornerShape(6.dp),
+						color = if (baseUrl.isNotBlank() && user.isNotBlank()) Color(0xFF10B981).copy(alpha = 0.12f) else colors.surfaceVariant,
+					) {
+						Text(
+							text = if (baseUrl.isNotBlank() && user.isNotBlank()) "已配置" else "待设置",
+							fontSize = 10.5.sp,
+							fontWeight = FontWeight.SemiBold,
+							color = if (baseUrl.isNotBlank() && user.isNotBlank()) Color(0xFF059669) else colors.onSurfaceVariant,
+							modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+						)
+					}
+				},
+			) {
+				Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
 					// 服务地址
 					OutlinedTextField(
 						value = baseUrl,
@@ -538,86 +534,50 @@ fun SettingsScreen(
 				}
 			}
 
-			// ==================== NAS 聚合导航中心 (NAV) ====================
-			Card(
-				shape = RoundedCornerShape(18.dp),
-				colors = CardDefaults.cardColors(containerColor = colors.surface),
-				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-				modifier = Modifier.fillMaxWidth(),
-			) {
-				Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.SpaceBetween,
+			// 条目 2: NAS 聚合导航中心 (NAV)
+			SettingsEntryCard(
+				title = "NAS 聚合导航中心 (NAV)",
+				summary = if (navUrl.isNotBlank()) navUrl else "https://nav.205002.xyz/ · 快捷工作台",
+				icon = Icons.Rounded.Explore,
+				iconTint = Color(0xFF6366F1),
+				isExpanded = navExpanded,
+				onToggle = { navExpanded = !navExpanded },
+				trailingBadge = {
+					Surface(
+						shape = RoundedCornerShape(6.dp),
+						color = Color(0xFF6366F1).copy(alpha = 0.12f),
+						modifier = Modifier.clickable {
+							try {
+								val target = if (navUrl.isBlank()) "https://nav.205002.xyz/" else navUrl.trim()
+								val intent = Intent(Intent.ACTION_VIEW, Uri.parse(target))
+								context.startActivity(intent)
+							} catch (e: Exception) {
+								Toast.makeText(context, "无法打开浏览器: ${e.message}", Toast.LENGTH_SHORT).show()
+							}
+						},
 					) {
 						Row(
 							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(8.dp),
+							horizontalArrangement = Arrangement.spacedBy(3.dp),
+							modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp),
 						) {
-							Box(
-								modifier = Modifier
-									.size(32.dp)
-									.clip(RoundedCornerShape(8.dp))
-									.background(Color(0xFF6366F1).copy(alpha = 0.15f)),
-								contentAlignment = Alignment.Center,
-							) {
-								Icon(
-									imageVector = Icons.Rounded.Explore,
-									contentDescription = null,
-									tint = Color(0xFF6366F1),
-									modifier = Modifier.size(18.dp),
-								)
-							}
-							Column {
-								Text(
-									text = "NAS 聚合导航中心",
-									fontSize = 14.sp,
-									fontWeight = FontWeight.Bold,
-									color = colors.onSurface,
-								)
-								Text(
-									text = "私有云一站式入口与快捷工作台",
-									fontSize = 11.sp,
-									color = colors.onSurfaceVariant,
-								)
-							}
-						}
-
-						Surface(
-							shape = RoundedCornerShape(8.dp),
-							color = Color(0xFF6366F1).copy(alpha = 0.12f),
-							modifier = Modifier.clickable {
-								try {
-									val target = if (navUrl.isBlank()) "https://nav.205002.xyz/" else navUrl.trim()
-									val intent = Intent(Intent.ACTION_VIEW, Uri.parse(target))
-									context.startActivity(intent)
-								} catch (e: Exception) {
-									Toast.makeText(context, "无法打开浏览器: ${e.message}", Toast.LENGTH_SHORT).show()
-								}
-							},
-						) {
-							Row(
-								verticalAlignment = Alignment.CenterVertically,
-								horizontalArrangement = Arrangement.spacedBy(4.dp),
-								modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-							) {
-								Icon(
-									imageVector = Icons.Rounded.OpenInBrowser,
-									contentDescription = null,
-									tint = Color(0xFF6366F1),
-									modifier = Modifier.size(14.dp),
-								)
-								Text(
-									text = "立即跳转",
-									fontSize = 11.5.sp,
-									fontWeight = FontWeight.Bold,
-									color = Color(0xFF6366F1),
-								)
-							}
+							Icon(
+								imageVector = Icons.Rounded.OpenInBrowser,
+								contentDescription = null,
+								tint = Color(0xFF6366F1),
+								modifier = Modifier.size(12.dp),
+							)
+							Text(
+								text = "跳转",
+								fontSize = 10.5.sp,
+								fontWeight = FontWeight.Bold,
+								color = Color(0xFF6366F1),
+							)
 						}
 					}
-
+				},
+			) {
+				Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
 					OutlinedTextField(
 						value = navUrl,
 						enabled = !saving,
@@ -649,303 +609,222 @@ fun SettingsScreen(
 						},
 						modifier = Modifier.fillMaxWidth(),
 					)
-				}
-			}
-
-			// ==================== 分组 3: 传输模式与网络链路 ====================
-			Card(
-				shape = RoundedCornerShape(18.dp),
-				colors = CardDefaults.cardColors(containerColor = colors.surface),
-				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-				modifier = Modifier.fillMaxWidth(),
-			) {
-				Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-					val isLan = routeInfo.isLan || routeInfo.isLanDirect
-					val isDirect = routeInfo.isDirect && !routeInfo.isRelay
-					val statusDotColor = when {
-						isLan -> Color(0xFF2E7D32)
-						isDirect -> Color(0xFF00796B)
-						routeInfo.isRelay -> Color(0xFFE65100)
-						else -> colors.onSurfaceVariant
-					}
-					val statusBgColor = when {
-						isLan -> Color(0xFFE8F5E9)
-						isDirect -> Color(0xFFE0F2F1)
-						routeInfo.isRelay -> Color(0xFFFFF3E0)
-						else -> colors.surfaceVariant.copy(alpha = 0.5f)
-					}
-					val statusLabel = when {
-						isLan -> "局域网直连"
-						isDirect -> "极速直连 (P2P)"
-						routeInfo.isRelay -> "远程中继"
-						else -> "未连接"
-					}
-
 					Row(
-						modifier = Modifier
-							.fillMaxWidth()
-							.clickable { networkExpanded = !networkExpanded },
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.SpaceBetween,
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.End,
 					) {
-						Row(
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(8.dp),
-						) {
-							Box(
-								modifier = Modifier
-									.size(32.dp)
-									.clip(RoundedCornerShape(8.dp))
-									.background(colors.primary.copy(alpha = 0.12f)),
-								contentAlignment = Alignment.Center,
-							) {
-								Icon(
-									imageVector = Icons.Rounded.Speed,
-									contentDescription = null,
-									tint = colors.primary,
-									modifier = Modifier.size(18.dp),
-								)
-							}
-							Column {
-								Text(
-									text = "传输模式与网络链路",
-									fontSize = 14.sp,
-									fontWeight = FontWeight.Bold,
-									color = colors.onSurface,
-								)
-								Text(
-									text = if (networkExpanded) "点击收起详细设置" else "$statusLabel · 点击展开配置",
-									fontSize = 11.sp,
-									color = colors.onSurfaceVariant,
-								)
-							}
-						}
-
-						Row(
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(6.dp),
-						) {
-							// 紧凑链路状态胶囊
-							Box(
-								modifier = Modifier
-									.clip(RoundedCornerShape(6.dp))
-									.background(statusBgColor)
-									.clickable { vm.reloadSettings() }
-									.padding(horizontal = 7.dp, vertical = 2.5.dp),
-							) {
-								Row(
-									verticalAlignment = Alignment.CenterVertically,
-									horizontalArrangement = Arrangement.spacedBy(4.dp),
-								) {
-									Box(
-										modifier = Modifier
-											.size(5.dp)
-											.clip(CircleShape)
-											.background(statusDotColor),
-									)
-									Text(
-										text = statusLabel,
-										fontSize = 10.5.sp,
-										fontWeight = FontWeight.Medium,
-										color = statusDotColor,
-									)
+						TextButton(
+							onClick = {
+								try {
+									val target = if (navUrl.isBlank()) "https://nav.205002.xyz/" else navUrl.trim()
+									val intent = Intent(Intent.ACTION_VIEW, Uri.parse(target))
+									context.startActivity(intent)
+								} catch (e: Exception) {
+									Toast.makeText(context, "无法打开浏览器: ${e.message}", Toast.LENGTH_SHORT).show()
 								}
 							}
-							Icon(
-								imageVector = if (networkExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-								contentDescription = if (networkExpanded) "收起" else "展开",
-								tint = colors.onSurfaceVariant,
-								modifier = Modifier.size(20.dp),
-							)
-						}
-					}
-
-					AnimatedVisibility(visible = networkExpanded) {
-						Column(
-							modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-							verticalArrangement = Arrangement.spacedBy(10.dp)
 						) {
-							// 模式选择
-							Row(
-								modifier = Modifier.fillMaxWidth(),
-								horizontalArrangement = Arrangement.spacedBy(8.dp),
-							) {
-								FilterChip(
-									selected = connMode == ConnectionMode.Direct,
-									onClick = { connMode = ConnectionMode.Direct },
-									enabled = !saving,
-									label = { Text("⚡ 强制直连", fontSize = 12.sp) },
-									modifier = Modifier.weight(1f),
-								)
-								FilterChip(
-									selected = connMode != ConnectionMode.Direct,
-									onClick = { connMode = ConnectionMode.Auto },
-									enabled = !saving,
-									label = { Text("🏠 智能自适应", fontSize = 12.sp) },
-									modifier = Modifier.weight(1f),
-								)
-							}
-
-							HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.4f), thickness = 0.5.dp)
-
-							// 信任自签 SSL 证书
-							SettingItemRow(
-								icon = Icons.Rounded.Security,
-								iconBg = colors.primary,
-								title = "放行自签 SSL 证书",
-								desc = "仅用于可信私有自建 WebDAV 服务",
-								trailing = {
-									Switch(
-										checked = trustAll,
-										enabled = !saving,
-										onCheckedChange = { trustAll = it },
-										colors = SwitchDefaults.colors(checkedThumbColor = colors.onPrimary, checkedTrackColor = colors.primary),
-									)
-								},
-							)
+							Icon(Icons.Rounded.OpenInBrowser, null, modifier = Modifier.size(15.dp), tint = Color(0xFF6366F1))
+							Spacer(Modifier.width(4.dp))
+							Text("在浏览器中打开", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF6366F1))
 						}
 					}
 				}
 			}
 
-			// ==================== 分组 4: 本地离线与外观偏好 ====================
-			Card(
-				shape = RoundedCornerShape(18.dp),
-				colors = CardDefaults.cardColors(containerColor = colors.surface),
-				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-				modifier = Modifier.fillMaxWidth(),
-			) {
-				Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-					Row(
+			// 条目 3: 传输模式与网络链路
+			val isLan = routeInfo.isLan || routeInfo.isLanDirect
+			val isDirect = routeInfo.isDirect && !routeInfo.isRelay
+			val statusDotColor = when {
+				isLan -> Color(0xFF2E7D32)
+				isDirect -> Color(0xFF00796B)
+				routeInfo.isRelay -> Color(0xFFE65100)
+				else -> colors.onSurfaceVariant
+			}
+			val statusBgColor = when {
+				isLan -> Color(0xFFE8F5E9)
+				isDirect -> Color(0xFFE0F2F1)
+				routeInfo.isRelay -> Color(0xFFFFF3E0)
+				else -> colors.surfaceVariant.copy(alpha = 0.5f)
+			}
+			val statusLabel = when {
+				isLan -> "局域网直连"
+				isDirect -> "极速直连 (P2P)"
+				routeInfo.isRelay -> "远程中继"
+				else -> "未连接"
+			}
+
+			SettingsEntryCard(
+				title = "传输模式与网络链路",
+				summary = "$statusLabel · ${if (connMode == ConnectionMode.Direct) "强制直连" else "智能自适应"}",
+				icon = Icons.Rounded.Speed,
+				iconTint = colors.primary,
+				isExpanded = networkExpanded,
+				onToggle = { networkExpanded = !networkExpanded },
+				trailingBadge = {
+					Box(
 						modifier = Modifier
-							.fillMaxWidth()
-							.clickable { preferenceExpanded = !preferenceExpanded },
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.SpaceBetween,
+							.clip(RoundedCornerShape(6.dp))
+							.background(statusBgColor)
+							.clickable { vm.reloadSettings() }
+							.padding(horizontal = 7.dp, vertical = 2.5.dp),
 					) {
 						Row(
 							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(8.dp),
+							horizontalArrangement = Arrangement.spacedBy(4.dp),
 						) {
 							Box(
 								modifier = Modifier
-									.size(32.dp)
-									.clip(RoundedCornerShape(8.dp))
-									.background(colors.primary.copy(alpha = 0.12f)),
-								contentAlignment = Alignment.Center,
-							) {
-								Icon(
-									imageVector = Icons.Rounded.FolderSpecial,
-									contentDescription = null,
-									tint = colors.primary,
-									modifier = Modifier.size(18.dp),
-								)
-							}
-							Column {
-								Text(
-									text = "本地离线与外观偏好",
-									fontSize = 14.sp,
-									fontWeight = FontWeight.Bold,
-									color = colors.onSurface,
-								)
-								Text(
-									text = if (preferenceExpanded) "点击收起选项" else "缩略图缓存 $cacheSizeStr · 主题配色 · 点击展开",
-									fontSize = 11.sp,
-									color = colors.onSurfaceVariant,
-								)
-							}
+									.size(5.dp)
+									.clip(CircleShape)
+									.background(statusDotColor),
+							)
+							Text(
+								text = statusLabel,
+								fontSize = 10.5.sp,
+								fontWeight = FontWeight.Medium,
+								color = statusDotColor,
+							)
 						}
-
-						Icon(
-							imageVector = if (preferenceExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-							contentDescription = if (preferenceExpanded) "收起" else "展开",
-							tint = colors.onSurfaceVariant,
-							modifier = Modifier.size(20.dp),
+					}
+				},
+			) {
+				Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+					// 模式选择
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.spacedBy(8.dp),
+					) {
+						FilterChip(
+							selected = connMode == ConnectionMode.Direct,
+							onClick = { connMode = ConnectionMode.Direct },
+							enabled = !saving,
+							label = { Text("⚡ 强制直连", fontSize = 12.sp) },
+							modifier = Modifier.weight(1f),
+						)
+						FilterChip(
+							selected = connMode != ConnectionMode.Direct,
+							onClick = { connMode = ConnectionMode.Auto },
+							enabled = !saving,
+							label = { Text("🏠 智能自适应", fontSize = 12.sp) },
+							modifier = Modifier.weight(1f),
 						)
 					}
 
-					AnimatedVisibility(visible = preferenceExpanded) {
-						Column(
-							modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-							verticalArrangement = Arrangement.spacedBy(10.dp)
-						) {
-							// 清理缩略图
-							SettingItemRow(
-								icon = Icons.Rounded.CleaningServices,
-								iconBg = colors.primary,
-								title = "清理本地缩略图缓存",
-								desc = "当前已占用 $cacheSizeStr",
-								trailing = {
-									TextButton(enabled = !clearingCache && !saving, onClick = {
-										clearingCache = true
-										scope.launch {
-											try {
-												withContext(Dispatchers.IO) { app.repo.clearImageCache() }
-												calculateCacheSize()
-												Toast.makeText(context, "缩略图缓存已清理", Toast.LENGTH_SHORT).show()
-											} catch (e: CancellationException) {
-												throw e
-											} catch (e: Exception) {
-												Log.e("SettingsScreen", "缩略图缓存清理失败", e)
-												Toast.makeText(context, "清理失败，请重试", Toast.LENGTH_SHORT).show()
-											} finally {
-												clearingCache = false
-											}
-										}
-									}) {
-										Text(if (clearingCache) "清理中…" else "立即清理", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = colors.primary)
-									}
-								},
+					HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.4f), thickness = 0.5.dp)
+
+					// 信任自签 SSL 证书
+					SettingItemRow(
+						icon = Icons.Rounded.Security,
+						iconBg = colors.primary,
+						title = "放行自签 SSL 证书",
+						desc = "仅用于可信私有自建 WebDAV 服务",
+						trailing = {
+							Switch(
+								checked = trustAll,
+								enabled = !saving,
+								onCheckedChange = { trustAll = it },
+								colors = SwitchDefaults.colors(checkedThumbColor = colors.onPrimary, checkedTrackColor = colors.primary),
 							)
+						},
+					)
+				}
+			}
 
-							HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.4f), thickness = 0.5.dp)
+			// 条目 4: 本地离线与外观偏好
+			val paletteTitle = ThemePalette.entries.firstOrNull { it.id.equals(currentPalette, ignoreCase = true) }?.title ?: "经典蓝"
+			SettingsEntryCard(
+				title = "本地离线与外观偏好",
+				summary = "缩略图缓存 $cacheSizeStr · $paletteTitle",
+				icon = Icons.Rounded.FolderSpecial,
+				iconTint = colors.primary,
+				isExpanded = preferenceExpanded,
+				onToggle = { preferenceExpanded = !preferenceExpanded },
+				trailingBadge = {
+					Box(
+						modifier = Modifier
+							.size(13.dp)
+							.clip(CircleShape)
+							.background(colors.primary)
+					)
+				},
+			) {
+				Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+					// 清理缩略图
+					SettingItemRow(
+						icon = Icons.Rounded.CleaningServices,
+						iconBg = colors.primary,
+						title = "清理本地缩略图缓存",
+						desc = "当前已占用 $cacheSizeStr",
+						trailing = {
+							TextButton(enabled = !clearingCache && !saving, onClick = {
+								clearingCache = true
+								scope.launch {
+									try {
+										withContext(Dispatchers.IO) { app.repo.clearImageCache() }
+										calculateCacheSize()
+										Toast.makeText(context, "缩略图缓存已清理", Toast.LENGTH_SHORT).show()
+									} catch (e: CancellationException) {
+										throw e
+									} catch (e: Exception) {
+										Log.e("SettingsScreen", "缩略图缓存清理失败", e)
+										Toast.makeText(context, "清理失败，请重试", Toast.LENGTH_SHORT).show()
+									} finally {
+										clearingCache = false
+									}
+								}
+							}) {
+								Text(if (clearingCache) "清理中…" else "立即清理", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = colors.primary)
+							}
+						},
+					)
 
-							// 主题配色
-							Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-								Text(text = "全局主题配色方案", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = colors.onSurface)
-								Row(
-									modifier = Modifier.fillMaxWidth(),
-									horizontalArrangement = Arrangement.SpaceBetween,
-								) {
-									ThemePalette.entries.forEach { p ->
-										val isSelected = currentPalette.equals(p.id, ignoreCase = true)
-										Column(
-											horizontalAlignment = Alignment.CenterHorizontally,
-											modifier = Modifier
-												.clip(RoundedCornerShape(8.dp))
-												.clickable {
-													currentPalette = p.id
-													scope.launch {
-														val cur = app.prefs.current()
-														app.prefs.save(cur.copy(themePalette = p.id))
-													}
-												}
-												.padding(4.dp),
-										) {
-											Box(
-												modifier = Modifier
-													.size(30.dp)
-													.clip(CircleShape)
-													.background(Color(p.primaryHex))
-													.then(
-														if (isSelected) Modifier.border(2.5.dp, colors.onSurface, CircleShape)
-														else Modifier
-													),
-												contentAlignment = Alignment.Center,
-											) {
-												if (isSelected) {
-													Text("✓", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-												}
+					HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.4f), thickness = 0.5.dp)
+
+					// 主题配色
+					Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+						Text(text = "全局主题配色方案", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = colors.onSurface)
+						Row(
+							modifier = Modifier.fillMaxWidth(),
+							horizontalArrangement = Arrangement.SpaceBetween,
+						) {
+							ThemePalette.entries.forEach { p ->
+								val isSelected = currentPalette.equals(p.id, ignoreCase = true)
+								Column(
+									horizontalAlignment = Alignment.CenterHorizontally,
+									modifier = Modifier
+										.clip(RoundedCornerShape(8.dp))
+										.clickable {
+											currentPalette = p.id
+											scope.launch {
+												val cur = app.prefs.current()
+												app.prefs.save(cur.copy(themePalette = p.id))
 											}
-											Spacer(modifier = Modifier.height(2.dp))
-											Text(
-												text = p.title,
-												fontSize = 10.sp,
-												fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-												color = if (isSelected) colors.primary else colors.onSurfaceVariant,
-											)
+										}
+										.padding(4.dp),
+								) {
+									Box(
+										modifier = Modifier
+											.size(30.dp)
+											.clip(CircleShape)
+											.background(Color(p.primaryHex))
+											.then(
+												if (isSelected) Modifier.border(2.5.dp, colors.onSurface, CircleShape)
+												else Modifier
+											),
+										contentAlignment = Alignment.Center,
+									) {
+										if (isSelected) {
+											Text("✓", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
 										}
 									}
+									Spacer(modifier = Modifier.height(2.dp))
+									Text(
+										text = p.title,
+										fontSize = 10.sp,
+										fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+										color = if (isSelected) colors.primary else colors.onSurfaceVariant,
+									)
 								}
 							}
 						}
@@ -953,78 +832,92 @@ fun SettingsScreen(
 				}
 			}
 
-			// ==================== 分组 5: 关于与单独设计的更新模块 ====================
-			Card(
-				shape = RoundedCornerShape(18.dp),
-				colors = CardDefaults.cardColors(
-					containerColor = if (vm.hasUpdate) colors.primaryContainer.copy(alpha = 0.6f) else colors.surface
-				),
-				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-				modifier = Modifier.fillMaxWidth(),
-			) {
-				Row(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(16.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.SpaceBetween,
-				) {
-					Row(
-						modifier = Modifier.weight(1f),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(10.dp),
+			// 条目 5: 底层网络诊断日志
+			SettingsEntryCard(
+				title = "底层网络诊断日志",
+				summary = "实时查看网络请求抓包、连接跟踪与排错输出",
+				icon = Icons.Rounded.BugReport,
+				iconTint = Color(0xFFF59E0B),
+				isExpanded = false,
+				onToggle = {
+					scope.launch(Dispatchers.IO) {
+						val text = vm.logs().ifEmpty { "（暂无日志）" }
+						withContext(Dispatchers.Main) { logs = text }
+					}
+				},
+				trailingBadge = {
+					Surface(
+						shape = RoundedCornerShape(6.dp),
+						color = Color(0xFFF59E0B).copy(alpha = 0.12f),
 					) {
-						Box(
-							modifier = Modifier
-								.size(36.dp)
-								.clip(RoundedCornerShape(10.dp))
-								.background(colors.primary.copy(alpha = 0.12f)),
-							contentAlignment = Alignment.Center,
+						Text(
+							text = "查看日志",
+							fontSize = 10.5.sp,
+							fontWeight = FontWeight.SemiBold,
+							color = Color(0xFFD97706),
+							modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp),
+						)
+					}
+				},
+			) {}
+
+			// 条目 6: 关于与系统版本更新
+			SettingsEntryCard(
+				title = "关于与系统版本",
+				summary = "NasDrop v${vm.currentVersionName} · ${if (vm.hasUpdate) "发现新版本" else "已是最新版本"}",
+				icon = Icons.Rounded.RocketLaunch,
+				iconTint = colors.primary,
+				isExpanded = aboutExpanded,
+				onToggle = { aboutExpanded = !aboutExpanded },
+				trailingBadge = {
+					if (vm.hasUpdate) {
+						Surface(
+							shape = RoundedCornerShape(6.dp),
+							color = colors.error,
 						) {
-							Icon(
-								imageVector = Icons.Rounded.RocketLaunch,
-								contentDescription = null,
-								tint = colors.primary,
-								modifier = Modifier.size(20.dp),
+							Text(
+								text = "NEW",
+								fontSize = 9.5.sp,
+								fontWeight = FontWeight.ExtraBold,
+								color = colors.onPrimary,
+								modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
 							)
 						}
-
-						Column {
-							Row(verticalAlignment = Alignment.CenterVertically) {
-								Text(
-									text = "NasDrop v${vm.currentVersionName}",
-									fontSize = 13.5.sp,
-									fontWeight = FontWeight.Bold,
-									color = colors.onSurface,
-								)
-								if (vm.hasUpdate) {
-									Spacer(modifier = Modifier.width(6.dp))
-									Surface(
-										shape = RoundedCornerShape(6.dp),
-										color = colors.error,
-									) {
-										Text(
-											text = "新版本 v${vm.latestUpdateInfo?.versionName}",
-											fontSize = 9.sp,
-											fontWeight = FontWeight.ExtraBold,
-											color = colors.onPrimary,
-											modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp),
-										)
-									}
-								}
-							}
-							Spacer(modifier = Modifier.height(2.dp))
+					} else {
+						Surface(
+							shape = RoundedCornerShape(6.dp),
+							color = colors.surfaceVariant,
+						) {
 							Text(
-								text = if (vm.hasUpdate) "发现新版本，点击立即在线升级" else "已是最新版本 · 已开启国内加速",
-								fontSize = 10.5.sp,
+								text = "v${vm.currentVersionName}",
+								fontSize = 10.sp,
 								color = colors.onSurfaceVariant,
+								modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
 							)
 						}
 					}
+				},
+			) {
+				Row(
+					modifier = Modifier.fillMaxWidth(),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.SpaceBetween,
+				) {
+					Column(modifier = Modifier.weight(1f)) {
+						Text(
+							text = "NasDrop 私有云轻量客户端",
+							fontSize = 13.sp,
+							fontWeight = FontWeight.Bold,
+							color = colors.onSurface,
+						)
+						Spacer(modifier = Modifier.height(2.dp))
+						Text(
+							text = if (vm.hasUpdate) "发现新版本 v${vm.latestUpdateInfo?.versionName}，点击升级" else "已是最新版本 · 国内 CDN 加速中",
+							fontSize = 11.sp,
+							color = colors.onSurfaceVariant,
+						)
+					}
 
-					Spacer(modifier = Modifier.width(8.dp))
-
-					// 单独设计的升级按钮：使用 Upgrade 图标，与下载/上传彻底区分
 					Button(
 						enabled = !checkingUpdate && !saving,
 						onClick = {
@@ -1044,7 +937,7 @@ fun SettingsScreen(
 							containerColor = if (vm.hasUpdate) colors.primary else colors.outlineVariant.copy(alpha = 0.5f),
 							contentColor = if (vm.hasUpdate) colors.onPrimary else colors.onSurfaceVariant,
 						),
-						shape = RoundedCornerShape(12.dp),
+						shape = RoundedCornerShape(10.dp),
 						contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
 						modifier = Modifier.height(34.dp),
 					) {
@@ -1178,6 +1071,107 @@ private fun SettingItemRow(
 			}
 		}
 		trailing()
+	}
+}
+
+/**
+ * 结构化配置折叠卡片：以条目形式清晰展示当前配置摘要，点击整行平滑展开具体参数调节与保存。
+ */
+@Composable
+private fun SettingsEntryCard(
+	title: String,
+	summary: String,
+	icon: ImageVector,
+	iconTint: Color,
+	iconBg: Color = iconTint.copy(alpha = 0.12f),
+	isExpanded: Boolean,
+	onToggle: () -> Unit,
+	trailingBadge: (@Composable () -> Unit)? = null,
+	content: @Composable () -> Unit,
+) {
+	val colors = MaterialTheme.colorScheme
+	Card(
+		shape = RoundedCornerShape(16.dp),
+		colors = CardDefaults.cardColors(containerColor = colors.surface),
+		elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+		modifier = Modifier.fillMaxWidth(),
+	) {
+		Column(modifier = Modifier.fillMaxWidth()) {
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.clickable { onToggle() }
+					.padding(horizontal = 14.dp, vertical = 12.dp),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.SpaceBetween,
+			) {
+				Row(
+					modifier = Modifier.weight(1f),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(10.dp),
+				) {
+					Box(
+						modifier = Modifier
+							.size(34.dp)
+							.clip(RoundedCornerShape(9.dp))
+							.background(iconBg),
+						contentAlignment = Alignment.Center,
+					) {
+						Icon(
+							imageVector = icon,
+							contentDescription = null,
+							tint = iconTint,
+							modifier = Modifier.size(18.dp),
+						)
+					}
+					Column(modifier = Modifier.weight(1f)) {
+						Text(
+							text = title,
+							fontSize = 13.5.sp,
+							fontWeight = FontWeight.Bold,
+							color = colors.onSurface,
+						)
+						Spacer(modifier = Modifier.height(1.5.dp))
+						Text(
+							text = summary,
+							fontSize = 11.sp,
+							color = colors.onSurfaceVariant,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+						)
+					}
+				}
+
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
+				) {
+					trailingBadge?.invoke()
+					Icon(
+						imageVector = if (isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+						contentDescription = if (isExpanded) "收起" else "展开",
+						tint = colors.onSurfaceVariant,
+						modifier = Modifier.size(18.dp),
+					)
+				}
+			}
+
+			AnimatedVisibility(visible = isExpanded) {
+				Column(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+					verticalArrangement = Arrangement.spacedBy(10.dp),
+				) {
+					HorizontalDivider(
+						color = colors.outlineVariant.copy(alpha = 0.35f),
+						thickness = 0.5.dp,
+						modifier = Modifier.padding(bottom = 2.dp),
+					)
+					content()
+				}
+			}
+		}
 	}
 }
 
