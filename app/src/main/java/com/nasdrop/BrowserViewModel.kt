@@ -47,7 +47,7 @@ enum class MediaFilterType(val label: String) {
 	All("全部"),
 	PhotosOnly("仅照片"),
 	VideosOnly("仅视频"),
-	WithAudioMemo("伴随语音/备忘"),
+	WithAudioMemo("伴生记忆"),
 }
 
 enum class ViewMode {

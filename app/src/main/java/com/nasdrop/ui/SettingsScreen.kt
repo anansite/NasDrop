@@ -8,7 +8,7 @@ import android.content.Intent
 import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -355,7 +355,7 @@ fun SettingsScreen(
 				}
 			}
 
-			// ==================== 配置项分类条目（点击条目才展开显示具体配置） ====================
+			// ==================== 配置项分类条目（统一卡片分组，点击条目平滑展开配置） ====================
 			Text(
 				text = "系统与服务配置项",
 				fontSize = 12.5.sp,
@@ -364,8 +364,15 @@ fun SettingsScreen(
 				modifier = Modifier.padding(start = 4.dp, top = 2.dp),
 			)
 
-			// 条目 1: WebDAV 服务接入配置
-			SettingsEntryCard(
+			Card(
+				shape = RoundedCornerShape(16.dp),
+				colors = CardDefaults.cardColors(containerColor = colors.surface),
+				elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+				modifier = Modifier.fillMaxWidth(),
+			) {
+				Column(modifier = Modifier.fillMaxWidth()) {
+					// 条目 1: WebDAV 服务接入配置
+					SettingsEntryCard(
 				title = "WebDAV 服务接入配置",
 				summary = if (baseUrl.isNotBlank()) "$baseUrl · $user" else "点击展开配置接入地址与账户凭据",
 				icon = Icons.Rounded.Cloud,
@@ -534,6 +541,11 @@ fun SettingsScreen(
 				}
 			}
 
+			HorizontalDivider(
+				modifier = Modifier.padding(start = 58.dp),
+				color = colors.outlineVariant.copy(alpha = 0.25f),
+			)
+
 			// 条目 2: NAS 聚合导航中心 (NAV)
 			SettingsEntryCard(
 				title = "NAS 聚合导航中心 (NAV)",
@@ -647,6 +659,11 @@ fun SettingsScreen(
 				routeInfo.isRelay -> Color(0xFFFFF3E0)
 				else -> colors.surfaceVariant.copy(alpha = 0.5f)
 			}
+			HorizontalDivider(
+				modifier = Modifier.padding(start = 58.dp),
+				color = colors.outlineVariant.copy(alpha = 0.25f),
+			)
+
 			val statusLabel = when {
 				isLan -> "局域网直连"
 				isDirect -> "极速直连 (P2P)"
@@ -730,6 +747,11 @@ fun SettingsScreen(
 					)
 				}
 			}
+
+			HorizontalDivider(
+				modifier = Modifier.padding(start = 58.dp),
+				color = colors.outlineVariant.copy(alpha = 0.25f),
+			)
 
 			// 条目 4: 本地离线与外观偏好
 			val paletteTitle = ThemePalette.entries.firstOrNull { it.id.equals(currentPalette, ignoreCase = true) }?.title ?: "经典蓝"
@@ -832,6 +854,11 @@ fun SettingsScreen(
 				}
 			}
 
+			HorizontalDivider(
+				modifier = Modifier.padding(start = 58.dp),
+				color = colors.outlineVariant.copy(alpha = 0.25f),
+			)
+
 			// 条目 5: 底层网络诊断日志
 			SettingsEntryCard(
 				title = "底层网络诊断日志",
@@ -860,6 +887,11 @@ fun SettingsScreen(
 					}
 				},
 			) {}
+
+			HorizontalDivider(
+				modifier = Modifier.padding(start = 58.dp),
+				color = colors.outlineVariant.copy(alpha = 0.25f),
+			)
 
 			// 条目 6: 关于与系统版本更新
 			SettingsEntryCard(
@@ -961,6 +993,8 @@ fun SettingsScreen(
 							}
 						}
 					}
+				}
+			}
 				}
 			}
 		}
@@ -1090,86 +1124,79 @@ private fun SettingsEntryCard(
 	content: @Composable () -> Unit,
 ) {
 	val colors = MaterialTheme.colorScheme
-	Card(
-		shape = RoundedCornerShape(16.dp),
-		colors = CardDefaults.cardColors(containerColor = colors.surface),
-		elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-		modifier = Modifier.fillMaxWidth(),
-	) {
-		Column(modifier = Modifier.fillMaxWidth()) {
+	Column(modifier = Modifier.fillMaxWidth()) {
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.clickable { onToggle() }
+				.padding(horizontal = 14.dp, vertical = 13.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.SpaceBetween,
+		) {
 			Row(
-				modifier = Modifier
-					.fillMaxWidth()
-					.clickable { onToggle() }
-					.padding(horizontal = 14.dp, vertical = 12.dp),
+				modifier = Modifier.weight(1f),
 				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.SpaceBetween,
+				horizontalArrangement = Arrangement.spacedBy(10.dp),
 			) {
-				Row(
-					modifier = Modifier.weight(1f),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(10.dp),
+				Box(
+					modifier = Modifier
+						.size(34.dp)
+						.clip(RoundedCornerShape(9.dp))
+						.background(iconBg),
+					contentAlignment = Alignment.Center,
 				) {
-					Box(
-						modifier = Modifier
-							.size(34.dp)
-							.clip(RoundedCornerShape(9.dp))
-							.background(iconBg),
-						contentAlignment = Alignment.Center,
-					) {
-						Icon(
-							imageVector = icon,
-							contentDescription = null,
-							tint = iconTint,
-							modifier = Modifier.size(18.dp),
-						)
-					}
-					Column(modifier = Modifier.weight(1f)) {
-						Text(
-							text = title,
-							fontSize = 13.5.sp,
-							fontWeight = FontWeight.Bold,
-							color = colors.onSurface,
-						)
-						Spacer(modifier = Modifier.height(1.5.dp))
-						Text(
-							text = summary,
-							fontSize = 11.sp,
-							color = colors.onSurfaceVariant,
-							maxLines = 1,
-							overflow = TextOverflow.Ellipsis,
-						)
-					}
-				}
-
-				Row(
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(6.dp),
-				) {
-					trailingBadge?.invoke()
 					Icon(
-						imageVector = if (isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-						contentDescription = if (isExpanded) "收起" else "展开",
-						tint = colors.onSurfaceVariant,
+						imageVector = icon,
+						contentDescription = null,
+						tint = iconTint,
 						modifier = Modifier.size(18.dp),
+					)
+				}
+				Column(modifier = Modifier.weight(1f)) {
+					Text(
+						text = title,
+						fontSize = 13.5.sp,
+						fontWeight = FontWeight.Bold,
+						color = colors.onSurface,
+					)
+					Spacer(modifier = Modifier.height(1.5.dp))
+					Text(
+						text = summary,
+						fontSize = 11.sp,
+						color = colors.onSurfaceVariant,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
 					)
 				}
 			}
 
-			AnimatedVisibility(visible = isExpanded) {
-				Column(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
-					verticalArrangement = Arrangement.spacedBy(10.dp),
-				) {
-					HorizontalDivider(
-						color = colors.outlineVariant.copy(alpha = 0.35f),
-						thickness = 0.5.dp,
-						modifier = Modifier.padding(bottom = 2.dp),
-					)
-					content()
-				}
+			Row(
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(6.dp),
+			) {
+				trailingBadge?.invoke()
+				Icon(
+					imageVector = if (isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ChevronRight,
+					contentDescription = if (isExpanded) "收起" else "展开",
+					tint = colors.onSurfaceVariant.copy(alpha = 0.7f),
+					modifier = Modifier.size(18.dp),
+				)
+			}
+		}
+
+		AnimatedVisibility(
+			visible = isExpanded,
+			enter = expandVertically() + fadeIn(),
+			exit = shrinkVertically() + fadeOut(),
+		) {
+			Column(
+				modifier = Modifier
+					.fillMaxWidth()
+					.background(colors.surfaceVariant.copy(alpha = 0.35f))
+					.padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 14.dp),
+				verticalArrangement = Arrangement.spacedBy(10.dp),
+			) {
+				content()
 			}
 		}
 	}

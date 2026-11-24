@@ -262,7 +262,7 @@ fun ImageViewer(
 		if (isGranted) {
 			audioRecorder.start()
 		} else {
-			Toast.makeText(context, "需要麦克风权限才能录制伴随解说", Toast.LENGTH_SHORT).show()
+			Toast.makeText(context, "需要麦克风权限才能录制伴生记忆解说", Toast.LENGTH_SHORT).show()
 		}
 	}
 
@@ -569,9 +569,9 @@ fun ImageViewer(
 							shape = CircleShape,
 							color = MaterialTheme.colorScheme.primary,
 							onClick = {
-								val companionPath = current.photoMeta?.companionAudioPath?.ifBlank { null }
+								val companionPath = current.photoMeta?.audioPath?.ifBlank { null }
 									?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
-								val audioUrl = audioUrlOf?.invoke(companionPath) ?: (audioUrlOf ?: urlOf).invoke(current.path)
+								val audioUrl = audioUrlOf?.invoke(companionPath) ?: urlOf(companionPath)
 								if (!audioUrl.isNullOrBlank()) {
 									audioPlayer.prepare(audioUrl)
 								}
@@ -706,9 +706,9 @@ fun ImageViewer(
 								shape = CircleShape,
 								color = MaterialTheme.colorScheme.primary,
 								onClick = {
-									val companionPath = current.photoMeta?.companionAudioPath?.ifBlank { null }
+									val companionPath = current.photoMeta?.audioPath?.ifBlank { null }
 										?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
-									val audioUrl = audioUrlOf?.invoke(companionPath) ?: (audioUrlOf ?: urlOf).invoke(current.path)
+									val audioUrl = audioUrlOf?.invoke(companionPath) ?: urlOf(companionPath)
 									if (!audioUrl.isNullOrBlank()) {
 										audioPlayer.prepare(audioUrl)
 									}
@@ -719,7 +719,7 @@ fun ImageViewer(
 								Box(contentAlignment = Alignment.Center) {
 									Icon(
 										imageVector = if (audioPlayer.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-										contentDescription = if (audioPlayer.isPlaying) "暂停伴随解说" else "播放伴随解说",
+										contentDescription = if (audioPlayer.isPlaying) "暂停伴生记忆解说" else "播放伴生记忆解说",
 										tint = Color.White,
 										modifier = Modifier.size(20.dp),
 									)
@@ -772,7 +772,7 @@ fun ImageViewer(
 									modifier = Modifier.fillMaxWidth(),
 									horizontalArrangement = Arrangement.SpaceBetween,
 								) {
-									Text("伴随语音旁白", fontSize = 10.sp, color = Color(0xFF94A3B8))
+									Text("伴生记忆旁白", fontSize = 10.sp, color = Color(0xFF94A3B8))
 									val curSec = audioPlayer.currentPositionMs / 1000
 									val totalSec = ((if (audioPlayer.durationMs > 0) audioPlayer.durationMs.toLong() else current.photoMeta?.audioDurationMs ?: 0L) / 1000).toInt()
 									Text(
@@ -790,7 +790,7 @@ fun ImageViewer(
 							) {
 								Icon(
 									Icons.Rounded.DeleteOutline,
-									contentDescription = "删除伴随录音",
+									contentDescription = "删除伴生记忆旁白",
 									tint = Color(0xFFEF4444),
 									modifier = Modifier.size(18.dp),
 								)
@@ -1126,7 +1126,7 @@ fun ImageViewer(
 					horizontalAlignment = Alignment.CenterHorizontally,
 					verticalArrangement = Arrangement.spacedBy(16.dp),
 				) {
-					Text("为照片录制伴随旁白", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+					Text("为照片录制伴生记忆旁白", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 					Text(
 						"录音文件存放在照片同级目录下以'.'开头（默认隐藏），数据库仅记指针，零二进制",
 						fontSize = 12.sp,
@@ -1176,7 +1176,7 @@ fun ImageViewer(
 											audioPlayer.prepare(directAudio)
 										}
 										onSaveAudio?.invoke(current, bytes, durMs) { ok, err ->
-											Toast.makeText(context, if (ok) "伴随旁白已保存 (${durMs/1000}秒)" else (err ?: "保存失败"), Toast.LENGTH_SHORT).show()
+											Toast.makeText(context, if (ok) "伴生记忆旁白已保存 (${durMs/1000}秒)" else (err ?: "保存失败"), Toast.LENGTH_SHORT).show()
 										}
 									} else {
 										Toast.makeText(context, "未录制有效声音", Toast.LENGTH_SHORT).show()
@@ -1198,7 +1198,7 @@ fun ImageViewer(
 		if (showDeleteAudioConfirm) {
 			AlertDialog(
 				onDismissRequest = { showDeleteAudioConfirm = false },
-				title = { Text("确认删除伴随旁白？") },
+				title = { Text("确认删除伴生记忆旁白？") },
 				text = { Text("将删除照片绑定的语音解说文件，照片本体保留完好。此操作不可撤销。") },
 				confirmButton = {
 					Button(
@@ -1207,7 +1207,7 @@ fun ImageViewer(
 							audioPlayer.stop()
 							PhotoMetadataStore.updateAudio(current.path, null, 0L)
 							onDeleteAudio?.invoke(current) { ok, err ->
-								Toast.makeText(context, if (ok) "伴随旁白已删除" else (err ?: "删除失败"), Toast.LENGTH_SHORT).show()
+								Toast.makeText(context, if (ok) "伴生记忆旁白已删除" else (err ?: "删除失败"), Toast.LENGTH_SHORT).show()
 							}
 						},
 						colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
@@ -1731,7 +1731,7 @@ fun VideoPlayer(
 		if (isGranted) {
 			audioRecorder.start()
 		} else {
-			Toast.makeText(context, "需要麦克风权限才能录制伴随解说", Toast.LENGTH_SHORT).show()
+			Toast.makeText(context, "需要麦克风权限才能录制伴生记忆解说", Toast.LENGTH_SHORT).show()
 		}
 	}
 
@@ -2459,9 +2459,9 @@ fun VideoPlayer(
 							shape = CircleShape,
 							color = MaterialTheme.colorScheme.primary,
 							onClick = {
-								val companionPath = currentEntry.photoMeta?.companionAudioPath?.ifBlank { null }
+								val companionPath = currentEntry.photoMeta?.audioPath?.ifBlank { null }
 									?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
-								val audioUrl = audioUrlOf?.invoke(companionPath) ?: (audioUrlOf ?: urlOf).invoke(currentEntry.path)
+								val audioUrl = audioUrlOf?.invoke(companionPath) ?: ""
 								if (!audioUrl.isNullOrBlank()) {
 									audioPlayer.prepare(audioUrl)
 								}
@@ -2596,9 +2596,9 @@ fun VideoPlayer(
 								shape = CircleShape,
 								color = MaterialTheme.colorScheme.primary,
 								onClick = {
-									val companionPath = currentEntry.photoMeta?.companionAudioPath?.ifBlank { null }
+									val companionPath = currentEntry.photoMeta?.audioPath?.ifBlank { null }
 										?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
-									val audioUrl = audioUrlOf?.invoke(companionPath) ?: (audioUrlOf ?: urlOf).invoke(currentEntry.path)
+									val audioUrl = audioUrlOf?.invoke(companionPath) ?: ""
 									if (!audioUrl.isNullOrBlank()) {
 										audioPlayer.prepare(audioUrl)
 									}
@@ -2609,7 +2609,7 @@ fun VideoPlayer(
 								Box(contentAlignment = Alignment.Center) {
 									Icon(
 										imageVector = if (audioPlayer.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-										contentDescription = if (audioPlayer.isPlaying) "暂停伴随解说" else "播放伴随解说",
+										contentDescription = if (audioPlayer.isPlaying) "暂停伴生记忆解说" else "播放伴生记忆解说",
 										tint = Color.White,
 										modifier = Modifier.size(20.dp),
 									)
@@ -2662,7 +2662,7 @@ fun VideoPlayer(
 									modifier = Modifier.fillMaxWidth(),
 									horizontalArrangement = Arrangement.SpaceBetween,
 								) {
-									Text("伴随语音旁白", fontSize = 10.sp, color = Color(0xFF94A3B8))
+									Text("伴生记忆旁白", fontSize = 10.sp, color = Color(0xFF94A3B8))
 									val curSec = audioPlayer.currentPositionMs / 1000
 									val totalSec = ((if (audioPlayer.durationMs > 0) audioPlayer.durationMs.toLong() else currentEntry.photoMeta?.audioDurationMs ?: 0L) / 1000).toInt()
 									Text(
@@ -2680,7 +2680,7 @@ fun VideoPlayer(
 							) {
 								Icon(
 									Icons.Rounded.DeleteOutline,
-									contentDescription = "删除伴随录音",
+									contentDescription = "删除伴生记忆旁白",
 									tint = Color(0xFFEF4444),
 									modifier = Modifier.size(18.dp),
 								)
@@ -3102,7 +3102,7 @@ fun VideoPlayer(
 					horizontalAlignment = Alignment.CenterHorizontally,
 					verticalArrangement = Arrangement.spacedBy(16.dp),
 				) {
-					Text("为视频录制伴随旁白", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+					Text("为视频录制伴生记忆旁白", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 					Text(
 						"录音文件存放在视频同级目录下以'.'开头（默认隐藏），数据库仅记指针，零二进制",
 						fontSize = 12.sp,
@@ -3152,7 +3152,7 @@ fun VideoPlayer(
 											audioPlayer.prepare(directAudio)
 										}
 										onSaveAudio?.invoke(currentEntry, bytes, durMs) { ok, err ->
-											Toast.makeText(context, if (ok) "伴随旁白已保存 (${durMs/1000}秒)" else (err ?: "保存失败"), Toast.LENGTH_SHORT).show()
+											Toast.makeText(context, if (ok) "伴生记忆旁白已保存 (${durMs/1000}秒)" else (err ?: "保存失败"), Toast.LENGTH_SHORT).show()
 										}
 									} else {
 										Toast.makeText(context, "未录制有效声音", Toast.LENGTH_SHORT).show()
@@ -3174,7 +3174,7 @@ fun VideoPlayer(
 		if (showDeleteAudioConfirm) {
 			androidx.compose.material3.AlertDialog(
 				onDismissRequest = { showDeleteAudioConfirm = false },
-				title = { Text("确认删除伴随旁白？") },
+				title = { Text("确认删除伴生记忆旁白？") },
 				text = { Text("将删除视频绑定的语音解说文件，视频本体保留完好。此操作不可撤销。") },
 				confirmButton = {
 					Button(
@@ -3183,7 +3183,7 @@ fun VideoPlayer(
 							audioPlayer.stop()
 							PhotoMetadataStore.updateAudio(currentEntry.path, null, 0L)
 							onDeleteAudio?.invoke(currentEntry) { ok, err ->
-								Toast.makeText(context, if (ok) "伴随旁白已删除" else (err ?: "删除失败"), Toast.LENGTH_SHORT).show()
+								Toast.makeText(context, if (ok) "伴生记忆旁白已删除" else (err ?: "删除失败"), Toast.LENGTH_SHORT).show()
 							}
 						},
 						colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
