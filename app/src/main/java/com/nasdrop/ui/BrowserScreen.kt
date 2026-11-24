@@ -3144,7 +3144,7 @@ private fun HomeScreenContent(
 								},
 							)
 							HomeStatDivider()
-							val memoCount = remember(vm.allPhotos, vm.allVideos) {
+							val memoCount = remember(vm.allPhotos, vm.allVideos, PhotoMetadataStore.revision) {
 								allMedia.count { it.hasAudio || it.hasMemo }
 							}
 							HomeStatItem(

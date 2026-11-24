@@ -195,7 +195,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				MediaFilterType.All -> filtered
 				MediaFilterType.PhotosOnly -> filtered.filter { it.isImage }
 				MediaFilterType.VideosOnly -> filtered.filter { it.isVideo }
-				MediaFilterType.WithAudioMemo -> filtered.filter { it.hasAudio || it.hasMemo }
+				MediaFilterType.WithAudioMemo -> {
+					@Suppress("UNUSED_VARIABLE") val rev = PhotoMetadataStore.revision
+					filtered.filter { it.hasAudio || it.hasMemo }
+				}
 			}
 			return typeFiltered.sortedByDescending { it.effectiveDate }
 		}
@@ -484,15 +487,25 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		loadUserPreferences()
 		open("")
 		viewModelScope.launch(Dispatchers.IO) {
-			// 后台异步扫描远端相册目录中的伴生记忆隐藏文件，自动同步元数据入库
-			val knownAlbums = listOf("", "Photos", "Photos/默认相册", "Photos/作业", "Photos/证件", "Photos/宝宝", "Photos/旅行记忆", "Photos/最美班级")
+			// 后台异步递归扫描远端相册目录中的伴生记忆隐藏文件，自动同步元数据入库
 			val conf = app.prefs.current()
 			val c = clientOf(conf)
-			for (alb in knownAlbums) {
+			val queue = ArrayDeque<String>()
+			queue.add("")
+			queue.add("Photos")
+			val visited = mutableSetOf<String>()
+			while (queue.isNotEmpty() && visited.size < 30) {
+				val cur = queue.removeFirst()
+				if (!visited.add(cur)) continue
 				runCatching {
-					val list = c.list(alb)
+					val list = c.list(cur)
 					withContext(Dispatchers.Main) {
-						applyDirectoryListing(alb, list)
+						applyDirectoryListing(cur, list)
+					}
+					for (e in list) {
+						if (e.isDir && !e.name.startsWith(".") && !visited.contains(e.path.trim('/'))) {
+							queue.add(e.path.trim('/'))
+						}
 					}
 				}
 			}
@@ -740,6 +753,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			if (raw.contains('.')) raw.substringBeforeLast('.') else raw
 		}
 
+		val companionMemos = fresh.filter {
+			it.name.startsWith(".") && (it.name.endsWith(".memo") || it.name.endsWith(".txt"))
+		}
+		val memoByBaseName = companionMemos.associateBy {
+			val raw = it.name.removePrefix(".")
+			if (raw.contains('.')) raw.substringBeforeLast('.') else raw
+		}
+
 		// 过滤隐藏的 .thumbnails 缩略图目录及点开头目录，不让其干扰主目录浏览
 		val filteredFresh = fresh.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }
 
@@ -754,12 +775,26 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				val fileName = entry.name
 				val baseName = if (fileName.contains('.')) fileName.substringBeforeLast('.') else fileName
 				val matchedAudio = audioByBaseName[baseName]
+				val matchedMemo = memoByBaseName[baseName]
 
 				val audioPath = matchedAudio?.path ?: meta?.audioPath
 				val audioDurationMs = when {
 					(meta?.audioDurationMs ?: 0L) > 0L -> meta!!.audioDurationMs
 					matchedAudio != null -> 1000L // 远端检测到伴生音频文件，自动关联
 					else -> 0L
+				}
+
+				// 远端如果存在伴生备忘文件且本地备忘为空，启动异步拉取
+				if (matchedMemo != null && meta?.memo.isNullOrEmpty()) {
+					viewModelScope.launch(Dispatchers.IO) {
+						val s = app.prefs.current()
+						val content = clientOf(s).downloadText(matchedMemo.path)?.trim()
+						if (!content.isNullOrEmpty()) {
+							withContext(Dispatchers.Main) {
+								PhotoMetadataStore.updateMemo(entry.path, content)
+							}
+						}
+					}
 				}
 
 				val takenAt = if (meta != null && meta.takenAt > 0L && meta.size == entry.size && meta.modified == entry.modified && meta.audioPath == audioPath && meta.audioDurationMs == audioDurationMs) {
@@ -2503,19 +2538,52 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	/**
-	 * 保存照片文字备注（写入 SQLite，绝不写 JSON 文件）
+	 * 保存照片/视频文字备注（写入本地 SQLite + 异步云同步伴生隐藏文件到 WebDAV）
 	 */
 	fun savePhotoMemo(photoPath: String, memo: String) {
-		PhotoMetadataStore.updateMemo(photoPath, memo)
+		val cleanMemo = memo.trim()
+		PhotoMetadataStore.updateMemo(photoPath, cleanMemo)
 		uiMessage = "备注已保存"
+		if (cleanMemo.isNotEmpty()) {
+			viewModelScope.launch(Dispatchers.IO) {
+				try {
+					val s = app.prefs.current()
+					val clean = photoPath.trim('/')
+					val parentDir = if (clean.contains('/')) clean.substringBeforeLast('/') else ""
+					val fileName = clean.substringAfterLast('/')
+					val baseName = if (fileName.contains('.')) fileName.substringBeforeLast('.') else fileName
+					val memoFileName = ".$baseName.memo"
+					val bytes = cleanMemo.toByteArray(Charsets.UTF_8)
+					clientOf(s).uploadBytes(
+						bytes = bytes,
+						remoteDir = parentDir,
+						name = memoFileName,
+						mimeType = "text/plain; charset=utf-8",
+					)
+				} catch (e: Exception) {
+					if (e is CancellationException) throw e
+					android.util.Log.w("BrowserViewModel", "上传伴生备注至WebDAV失败: ${e.message}")
+				}
+			}
+		}
 	}
 
 	/**
-	 * 清空删除照片文字备注
+	 * 清空删除照片/视频文字备注（从本地 SQLite 清空 + 异步从 WebDAV 删除伴生隐藏文件）
 	 */
 	fun deletePhotoMemo(photoPath: String) {
 		PhotoMetadataStore.updateMemo(photoPath, null)
 		uiMessage = "备注已清空"
+		viewModelScope.launch(Dispatchers.IO) {
+			try {
+				val s = app.prefs.current()
+				val memoPath = PhotoMetadataStore.computeCompanionMemoPath(photoPath)
+				clientOf(s).delete(memoPath, false)
+			} catch (e: Exception) {
+				if (e is CancellationException) throw e
+				android.util.Log.w("BrowserViewModel", "从WebDAV删除伴生备注失败: ${e.message}")
+			}
+		}
 	}
 
 	private fun parentOf(p: String): String {

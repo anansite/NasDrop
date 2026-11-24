@@ -376,6 +376,19 @@ object PhotoMetadataStore {
 	}
 
 	/**
+	 * 计算照片/视频伴随文字备忘的隐藏文件相对路径（保存在同级目录下，以"."开头，以".memo"结尾）。
+	 * 例如: "Photos/作业/IMG_001.jpg" -> "Photos/作业/.IMG_001.memo"
+	 */
+	fun computeCompanionMemoPath(photoPath: String): String {
+		val clean = photoPath.trim('/')
+		val parentDir = if (clean.contains('/')) clean.substringBeforeLast('/') else ""
+		val fileName = clean.substringAfterLast('/')
+		val baseName = if (fileName.contains('.')) fileName.substringBeforeLast('.') else fileName
+		val dotMemoName = ".$baseName.memo"
+		return if (parentDir.isEmpty()) dotMemoName else "$parentDir/$dotMemoName"
+	}
+
+	/**
 	 * 更新照片伴随录音信息（audioPath 为 null 时代表删除伴随录音）。
 	 * 纯文本路径与时长毫秒，绝对不存录音文件二进制。
 	 */

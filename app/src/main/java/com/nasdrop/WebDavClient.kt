@@ -798,6 +798,22 @@ class WebDavClient(
 	}
 
 	/**
+	 * 下载远端文本文件内容（例如伴生文字备忘 .*.memo）
+	 */
+	fun downloadText(path: String): String? {
+		return try {
+			val targetUrl = runCatching { directUrlFor(path) }.getOrNull() ?: urlFor(path)
+			val req = Request.Builder().url(targetUrl).header("Accept-Encoding", "identity").get().build()
+			metaCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) null
+				else resp.body?.string()
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
+
+	/**
 	 * 读取远端配置与相册元数据 (.nasdrop_meta.json)
 	 */
 	fun loadRemoteMetadata(): RemoteMetadata? {
