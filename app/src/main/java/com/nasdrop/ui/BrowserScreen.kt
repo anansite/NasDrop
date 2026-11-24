@@ -4,7 +4,9 @@ package com.nasdrop.ui
 
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
@@ -306,7 +308,7 @@ fun BrowserScreen(
 	}
 
 	val photoPicker = rememberLauncherForActivityResult(
-		contract = ActivityResultContracts.OpenMultipleDocuments(),
+		contract = ActivityResultContracts.PickMultipleVisualMedia(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
 			val targetDir = if (vm.selectedAlbumPath.isNotBlank() && vm.selectedAlbumPath != "__ALL_FOLDERS__") vm.selectedAlbumPath else "Photos/默认相册"
@@ -315,7 +317,7 @@ fun BrowserScreen(
 	}
 
 	val videoPicker = rememberLauncherForActivityResult(
-		contract = ActivityResultContracts.OpenMultipleDocuments(),
+		contract = ActivityResultContracts.PickMultipleVisualMedia(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
 			val targetDir = if (vm.selectedMediaPath.isNotBlank() && vm.selectedMediaPath != "__ALL_FOLDERS__") vm.selectedMediaPath else "movies/默认影集"
@@ -391,7 +393,7 @@ fun BrowserScreen(
 							activeTransferCount = vm.activeTransferCount,
 							hasUpdate = vm.hasUpdate,
 							onOpenUpdateDialog = { vm.openUpdateDialog() },
-							onUploadPhoto = { photoPicker.launch(arrayOf("image/*", "video/*")) },
+							onUploadPhoto = { photoPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo)) },
 							onUpAlbum = { vm.upAlbum() },
 							onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 							onDeleteCurrentAlbum = if (vm.selectedAlbumPath == "Photos/默认相册" || vm.selectedAlbumPath.endsWith("/默认相册")) null else {
@@ -415,7 +417,7 @@ fun BrowserScreen(
 							activeTransferCount = vm.activeTransferCount,
 							hasUpdate = vm.hasUpdate,
 							onOpenUpdateDialog = { vm.openUpdateDialog() },
-							onUploadVideo = { videoPicker.launch(arrayOf("video/*")) },
+							onUploadVideo = { videoPicker.launch(PickVisualMediaRequest(PickVisualMedia.VideoOnly)) },
 							onUpMedia = { vm.upMedia() },
 							onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
 							onDeleteCurrentMedia = if (vm.selectedMediaPath == "movies/默认影集" || vm.selectedMediaPath.endsWith("/默认影集") || vm.selectedMediaPath.endsWith("/默认影音")) null else {
@@ -634,8 +636,8 @@ fun BrowserScreen(
 					DraggableUploadFab(
 						currentTab = vm.currentTab,
 						onUploadFile = { filePicker.launch(arrayOf("*/*")) },
-						onUploadPhoto = { photoPicker.launch(arrayOf("image/*", "video/*")) },
-						onUploadVideo = { videoPicker.launch(arrayOf("video/*")) },
+						onUploadPhoto = { photoPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo)) },
+						onUploadVideo = { videoPicker.launch(PickVisualMediaRequest(PickVisualMedia.VideoOnly)) },
 					)
 				}
 
