@@ -647,7 +647,7 @@ fun ImageViewer(
 						) {
 							Text("📝", fontSize = 11.sp)
 							Text(
-								text = "故事",
+								text = "碎语",
 								fontSize = 11.sp,
 								fontWeight = FontWeight.Medium,
 								color = Color(0xFF34D399),
@@ -986,7 +986,7 @@ fun ImageViewer(
 									verticalAlignment = Alignment.CenterVertically,
 									horizontalArrangement = Arrangement.spacedBy(6.dp),
 								) {
-									Text("伴生文字故事", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+									Text("伴生文字碎语", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 									if (current.hasMemo) {
 										Surface(
 											shape = RoundedCornerShape(8.dp),
@@ -1003,7 +1003,7 @@ fun ImageViewer(
 								}
 								Spacer(Modifier.height(2.dp))
 								Text(
-									if (current.hasMemo) (current.memoText ?: "") else "书写时光备忘，记录背后的故事与细节随笔",
+									if (current.hasMemo) (current.memoText ?: "") else "书写时光备忘，记录背后的碎语与细节随笔",
 									style = MaterialTheme.typography.bodySmall,
 									color = MaterialTheme.colorScheme.onSurfaceVariant,
 									maxLines = 1,
@@ -1237,13 +1237,13 @@ fun ImageViewer(
 		if (showMemoDialog) {
 			AlertDialog(
 				onDismissRequest = { showMemoDialog = false },
-				title = { Text("照片故事与备注") },
+				title = { Text("照片碎语与备注") },
 				text = {
 					Column {
 						OutlinedTextField(
 							value = memoInput,
 							onValueChange = { memoInput = it },
-							placeholder = { Text("记录这张照片背后的故事…") },
+							placeholder = { Text("记录这张照片背后的碎语…") },
 							modifier = Modifier.fillMaxWidth(),
 							maxLines = 5,
 						)
@@ -2761,7 +2761,7 @@ fun VideoPlayer(
 						) {
 							Text("📝", fontSize = 11.sp)
 							Text(
-								text = "故事",
+								text = "碎语",
 								fontSize = 11.sp,
 								fontWeight = FontWeight.Medium,
 								color = Color(0xFF38BDF8),
@@ -3402,7 +3402,7 @@ fun VideoPlayer(
 									verticalAlignment = Alignment.CenterVertically,
 									horizontalArrangement = Arrangement.spacedBy(6.dp),
 								) {
-									Text("伴生文字故事", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+									Text("伴生文字碎语", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 									if (currentEntry.hasMemo) {
 										Surface(
 											shape = RoundedCornerShape(8.dp),
@@ -3419,7 +3419,7 @@ fun VideoPlayer(
 								}
 								Spacer(Modifier.height(2.dp))
 								Text(
-									if (currentEntry.hasMemo) (currentEntry.memoText ?: "") else "书写时光备忘，记录视频背后的故事与细节随笔",
+									if (currentEntry.hasMemo) (currentEntry.memoText ?: "") else "书写时光备忘，记录视频背后的碎语与细节随笔",
 									style = MaterialTheme.typography.bodySmall,
 									color = MaterialTheme.colorScheme.onSurfaceVariant,
 									maxLines = 1,
@@ -3437,13 +3437,13 @@ fun VideoPlayer(
 		if (showMemoDialog) {
 			androidx.compose.material3.AlertDialog(
 				onDismissRequest = { showMemoDialog = false },
-				title = { Text("视频故事与备注") },
+				title = { Text("视频碎语与备注") },
 				text = {
 					Column {
 						OutlinedTextField(
 							value = memoInput,
 							onValueChange = { memoInput = it },
-							placeholder = { Text("记录这段视频背后的难忘故事…") },
+							placeholder = { Text("记录这段视频背后的难忘碎语…") },
 							modifier = Modifier.fillMaxWidth(),
 							maxLines = 5,
 						)
@@ -3692,7 +3692,7 @@ private fun CompanionMemoCapsule(
 					)
 				}
 				Icon(
-					imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+					imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowDown else Icons.Rounded.KeyboardArrowUp,
 					contentDescription = if (isExpanded) "收起" else "展开",
 					tint = Color(0xFF64748B),
 					modifier = Modifier.size(16.dp),
