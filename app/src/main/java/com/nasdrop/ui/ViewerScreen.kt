@@ -1978,9 +1978,26 @@ fun VideoPlayer(
 		}
 	}
 
-	// 手势 HUD 状态
+	// 手势 HUD 状态与居中动效
 	var hudText by remember { mutableStateOf("") }
 	var hudVisible by remember { mutableStateOf(false) }
+	var centerPulseIcon by remember { mutableStateOf<androidx.compose.ui.graphics.vector.ImageVector?>(null) }
+
+	// 居中播放/暂停瞬态动效自动淡出
+	LaunchedEffect(centerPulseIcon) {
+		if (centerPulseIcon != null) {
+			delay(650)
+			centerPulseIcon = null
+		}
+	}
+
+	// 提示类 HUD（如倍速切换）自动延时隐藏
+	LaunchedEffect(hudVisible, hudText) {
+		if (hudVisible && (hudText.contains("倍速") || hudText.contains("正常"))) {
+			delay(1200)
+			hudVisible = false
+		}
+	}
 
 	val nasDb = remember { NasDb.getInstance(context) }
 	val savedProgress = remember(entry.path) { nasDb.getVideoProgress(entry.path) }
@@ -2188,16 +2205,15 @@ fun VideoPlayer(
 									if (distSq < deadZonePx * deadZonePx && elapsed < 400) {
 										val now = System.currentTimeMillis()
 										if (now - lastTapTimestamp < 350) {
-											// 双击：暂停 / 播放切换（消抖分流，不误触显隐）
+											// 双击：暂停 / 播放切换（消抖分流，不误触显隐，采用极简微动效）
 											lastTapTimestamp = 0L
 											if (player.isPlaying) {
 												player.pause()
-												hudText = "⏸ 暂停"
+												centerPulseIcon = Icons.Rounded.Pause
 											} else {
 												player.play()
-												hudText = "▶ 播放"
+												centerPulseIcon = Icons.Rounded.PlayArrow
 											}
-											hudVisible = true
 											lastInteractionTime = System.currentTimeMillis()
 										} else {
 											// 单击：记录时间戳并切换控制栏显隐
@@ -2279,9 +2295,70 @@ fun VideoPlayer(
 				},
 		)
 
-		// 居中手势 HUD 浮动指示窗
+		// 1. 居中双击播放/暂停微动效胶囊（650ms 优雅淡入淡出，彻底替代粗糙的文字占位弹窗）
 		AnimatedVisibility(
-			visible = hudVisible,
+			visible = centerPulseIcon != null,
+			enter = fadeIn() + scaleIn(initialScale = 0.75f),
+			exit = fadeOut() + scaleOut(targetScale = 1.15f),
+			modifier = Modifier.align(Alignment.Center),
+		) {
+			Surface(
+				shape = CircleShape,
+				color = MediaBackdrop.copy(alpha = 0.7f),
+				border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.3f)),
+				shadowElevation = 8.dp,
+				modifier = Modifier.size(72.dp),
+			) {
+				Box(contentAlignment = Alignment.Center) {
+					centerPulseIcon?.let { icon ->
+						Icon(
+							imageVector = icon,
+							contentDescription = null,
+							tint = OnMediaBackdrop,
+							modifier = Modifier
+								.size(38.dp)
+								.offset(x = if (icon == Icons.Rounded.PlayArrow) 2.dp else 0.dp),
+						)
+					}
+				}
+			}
+		}
+
+		// 2. 居中大播放常驻按钮（视频暂停且控制栏可见时优雅呈现，引导点击起播）
+		AnimatedVisibility(
+			visible = !isPlaying && showControls && centerPulseIcon == null,
+			enter = fadeIn() + scaleIn(initialScale = 0.85f),
+			exit = fadeOut() + scaleOut(targetScale = 0.85f),
+			modifier = Modifier.align(Alignment.Center),
+		) {
+			Surface(
+				shape = CircleShape,
+				color = MediaBackdrop.copy(alpha = 0.65f),
+				border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.35f)),
+				shadowElevation = 10.dp,
+				onClick = {
+					player.play()
+					centerPulseIcon = Icons.Rounded.PlayArrow
+					lastInteractionTime = System.currentTimeMillis()
+				},
+				modifier = Modifier.size(68.dp),
+			) {
+				Box(contentAlignment = Alignment.Center) {
+					Icon(
+						Icons.Rounded.PlayArrow,
+						contentDescription = "播放",
+						tint = OnMediaBackdrop,
+						modifier = Modifier
+							.size(38.dp)
+							.offset(x = 2.dp),
+					)
+				}
+			}
+		}
+
+		// 3. 居中手势 HUD 浮动指示窗（音量、亮度、拖拽进度、倍速调节）
+		AnimatedVisibility(
+			visible = hudVisible && !hudText.contains("暂停") && !hudText.contains("播放"),
 			enter = fadeIn(),
 			exit = fadeOut(),
 			modifier = Modifier.align(Alignment.Center),
@@ -2302,8 +2379,6 @@ fun VideoPlayer(
 						else if (hudText.contains("快退") || hudText.contains("⏪")) Icons.Rounded.Replay10
 						else if (hudText.contains("快进") || hudText.contains("⏩")) Icons.Rounded.Forward10
 						else if (hudText.contains("2.0X")) Icons.Rounded.FastForward
-						else if (hudText.contains("暂停")) Icons.Rounded.Pause
-						else if (hudText.contains("播放")) Icons.Rounded.PlayArrow
 						else Icons.Rounded.FastForward,
 						contentDescription = null,
 						tint = OnMediaBackdrop,
@@ -2489,7 +2564,82 @@ fun VideoPlayer(
 							verticalAlignment = Alignment.CenterVertically,
 							horizontalArrangement = Arrangement.spacedBy(8.dp),
 						) {
-							// 伴生记忆入口（与照片记忆对齐）
+							// 1. 播放 / 暂停大按钮（始终位于最左侧）
+							Surface(
+								shape = CircleShape,
+								color = OnMediaBackdrop,
+								onClick = {
+									if (player.isPlaying) {
+										player.pause()
+										centerPulseIcon = Icons.Rounded.Pause
+									} else {
+										player.play()
+										centerPulseIcon = Icons.Rounded.PlayArrow
+									}
+									lastInteractionTime = System.currentTimeMillis()
+								},
+								modifier = Modifier.size(40.dp),
+							) {
+								Box(contentAlignment = Alignment.Center) {
+									Icon(
+										imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+										contentDescription = if (isPlaying) "暂停" else "播放",
+										tint = MediaBackdrop,
+										modifier = Modifier.size(24.dp),
+									)
+								}
+							}
+
+							// 2. 快退 10 秒
+							IconButton(onClick = {
+								val target = (player.currentPosition - 10_000L).coerceAtLeast(0L)
+								player.seekTo(target)
+								lastInteractionTime = System.currentTimeMillis()
+							}) {
+								Icon(Icons.Rounded.Replay10, contentDescription = "快退10秒", tint = OnMediaBackdrop)
+							}
+
+							// 3. 快进 10 秒
+							IconButton(onClick = {
+								val target = (player.currentPosition + 10_000L).coerceAtMost(duration)
+								player.seekTo(target)
+								lastInteractionTime = System.currentTimeMillis()
+							}) {
+								Icon(Icons.Rounded.Forward10, contentDescription = "快进10秒", tint = OnMediaBackdrop)
+							}
+						}
+
+						// 右侧控制：倍速药丸、伴生记忆、全屏切换（伴生记忆位于全屏左侧）
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(6.dp),
+						) {
+							// 1. 倍速切换药丸
+							val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+							Surface(
+								shape = RoundedCornerShape(16.dp),
+								color = OnMediaBackdrop.copy(alpha = 0.2f),
+								onClick = {
+									val nextIdx = (speeds.indexOf(playbackSpeed) + 1) % speeds.size
+									val nextSpeed = speeds[nextIdx]
+									playbackSpeed = nextSpeed
+									normalPlaybackSpeed = nextSpeed
+									player.playbackParameters = PlaybackParameters(nextSpeed)
+									hudText = "播放倍速: ${if (nextSpeed == 1.0f) "1.0X 正常" else "${nextSpeed}X"}"
+									hudVisible = true
+									lastInteractionTime = System.currentTimeMillis()
+								},
+							) {
+								Text(
+									text = if (playbackSpeed == 1.0f) "1.0x" else "${playbackSpeed}x",
+									color = OnMediaBackdrop,
+									fontSize = 12.sp,
+									fontWeight = FontWeight.Bold,
+									modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+								)
+							}
+
+							// 2. 伴生记忆入口（位于全屏按钮左侧，与照片记忆对齐）
 							val hasAnyMemory = currentEntry.hasAudio || currentEntry.hasMemo
 							Surface(
 								shape = RoundedCornerShape(16.dp),
@@ -2520,76 +2670,7 @@ fun VideoPlayer(
 								}
 							}
 
-							// 播放 / 暂停大按钮
-							Surface(
-								shape = CircleShape,
-								color = OnMediaBackdrop,
-								onClick = {
-									if (player.isPlaying) player.pause() else player.play()
-									lastInteractionTime = System.currentTimeMillis()
-								},
-								modifier = Modifier.size(40.dp),
-							) {
-								Box(contentAlignment = Alignment.Center) {
-									Icon(
-										imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-										contentDescription = if (isPlaying) "暂停" else "播放",
-										tint = MediaBackdrop,
-										modifier = Modifier.size(24.dp),
-									)
-								}
-							}
-
-							// 快退 10 秒
-							IconButton(onClick = {
-								val target = (player.currentPosition - 10_000L).coerceAtLeast(0L)
-								player.seekTo(target)
-								lastInteractionTime = System.currentTimeMillis()
-							}) {
-								Icon(Icons.Rounded.Replay10, contentDescription = "快退10秒", tint = OnMediaBackdrop)
-							}
-
-							// 快进 10 秒
-							IconButton(onClick = {
-								val target = (player.currentPosition + 10_000L).coerceAtMost(duration)
-								player.seekTo(target)
-								lastInteractionTime = System.currentTimeMillis()
-							}) {
-								Icon(Icons.Rounded.Forward10, contentDescription = "快进10秒", tint = OnMediaBackdrop)
-							}
-						}
-
-						// 右侧控制：倍速药丸与全屏切换（画幅功能已按要求移除）
-						Row(
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(6.dp),
-						) {
-							// 倍速切换药丸
-							val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
-							Surface(
-								shape = RoundedCornerShape(16.dp),
-								color = OnMediaBackdrop.copy(alpha = 0.2f),
-								onClick = {
-									val nextIdx = (speeds.indexOf(playbackSpeed) + 1) % speeds.size
-									val nextSpeed = speeds[nextIdx]
-									playbackSpeed = nextSpeed
-									normalPlaybackSpeed = nextSpeed
-									player.playbackParameters = PlaybackParameters(nextSpeed)
-									hudText = "播放倍速: ${if (nextSpeed == 1.0f) "1.0X 正常" else "${nextSpeed}X"}"
-									hudVisible = true
-									lastInteractionTime = System.currentTimeMillis()
-								},
-							) {
-								Text(
-									text = if (playbackSpeed == 1.0f) "1.0x" else "${playbackSpeed}x",
-									color = OnMediaBackdrop,
-									fontSize = 12.sp,
-									fontWeight = FontWeight.Bold,
-									modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-								)
-							}
-
-							// 全屏 / 横竖屏旋转切换按钮（从顶栏移至此处）
+							// 3. 全屏 / 横竖屏旋转切换按钮
 							IconButton(
 								onClick = {
 									lastInteractionTime = System.currentTimeMillis()

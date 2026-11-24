@@ -1801,7 +1801,7 @@ private fun FilesTopBar(
 					horizontalArrangement = Arrangement.spacedBy(6.dp),
 				) {
 					Text(
-						if (parts.isEmpty()) "NasDrop" else parts.last(),
+						if (parts.isEmpty()) "全部文件" else parts.last(),
 						style = MaterialTheme.typography.titleMedium,
 						fontWeight = FontWeight.ExtraBold,
 						letterSpacing = (-0.3).sp,
