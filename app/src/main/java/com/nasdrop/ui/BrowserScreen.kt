@@ -176,6 +176,7 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.CloudDone
+import androidx.compose.material.icons.rounded.Mic
 import com.nasdrop.PhotoMetadataStore
 import com.nasdrop.hasAudio
 import com.nasdrop.hasMemo
@@ -3266,7 +3267,7 @@ private fun HomeScreenContent(
 							horizontalArrangement = Arrangement.spacedBy(6.dp),
 						) {
 							Icon(
-								Icons.Rounded.Whatshot,
+								Icons.Rounded.FlashOn,
 								contentDescription = null,
 								tint = Color(0xFFEF4444),
 								modifier = Modifier.size(18.dp),
@@ -3402,7 +3403,7 @@ private fun HomeScreenContent(
 												horizontalArrangement = Arrangement.spacedBy(3.dp),
 											) {
 												Icon(
-													Icons.Rounded.Whatshot,
+													Icons.Rounded.FlashOn,
 													contentDescription = null,
 													tint = Color.White,
 													modifier = Modifier.size(12.dp),
