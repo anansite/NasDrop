@@ -427,6 +427,25 @@ object PhotoMetadataStore {
 	}
 
 	/**
+	 * 仅纠正更新真实播放音频时长（从解码器反哺）
+	 */
+	fun updateAudioDuration(path: String, durationMs: Long) {
+		if (durationMs <= 0L) return
+		val key = path.trim('/')
+		val existing = cache[key] ?: return
+		if (existing.audioDurationMs == durationMs) return
+		val updated = existing.copy(audioDurationMs = durationMs, updatedAt = System.currentTimeMillis())
+		cache[key] = updated
+		notifyUpdated()
+		ioScope.launch {
+			try {
+				val db = dbHelper?.writableDatabase ?: return@launch
+				db.insertWithOnConflict(TABLE_NAME, null, toContentValues(updated), SQLiteDatabase.CONFLICT_REPLACE)
+			} catch (_: Exception) {}
+		}
+	}
+
+	/**
 	 * 更新照片文字备注（memo 为 null 或空时代表删除备注）。
 	 */
 	fun updateMemo(path: String, memo: String?) {

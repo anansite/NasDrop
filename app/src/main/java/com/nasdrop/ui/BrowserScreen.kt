@@ -431,6 +431,8 @@ fun BrowserScreen(
 						SettingsTopBar(
 							vm = vm,
 							onOpenTransferSheet = { showTransferSheet = true },
+							routeInfo = routeInfo,
+							onShowNetworkSheet = { showNetSheet = true },
 						)
 					}
 
@@ -1346,7 +1348,7 @@ private fun SettingsWithStatusButton(
 
 // ==================== 顶部导航栏与状态胶囊 ====================
 
-/** 相册与影音共用稳定顶栏；标题占剩余宽度，次级操作收进菜单。 */
+/** 相册与影音共用稳定顶栏；与文件顶栏严格保持 54dp 高度与排版风格对齐。 */
 @Composable
 private fun CollectionTopBar(
 	title: String,
@@ -1365,13 +1367,15 @@ private fun CollectionTopBar(
 	routeInfo: RouteInfo? = null,
 	onShowNetworkSheet: () -> Unit = {},
 ) {
-	var menuOpen by remember { mutableStateOf(false) }
-	Surface(color = MaterialTheme.colorScheme.surface) {
+	Surface(
+		color = MaterialTheme.colorScheme.surface,
+		tonalElevation = 1.dp,
+	) {
 		Row(
 			Modifier
 				.fillMaxWidth()
 				.heightIn(min = 54.dp)
-				.padding(horizontal = 8.dp, vertical = 6.dp),
+				.padding(horizontal = 14.dp, vertical = 6.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
 			if (isInside) {
@@ -1382,23 +1386,48 @@ private fun CollectionTopBar(
 			Column(
 				modifier = Modifier
 					.weight(1f)
-					.padding(start = if (isInside) 2.dp else 8.dp),
+					.padding(start = if (isInside) 2.dp else 2.dp),
 				verticalArrangement = Arrangement.Center,
 			) {
-				Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-					Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
+				) {
+					Text(
+						text = title,
+						style = MaterialTheme.typography.titleMedium,
+						fontSize = 16.sp,
+						fontWeight = FontWeight.ExtraBold,
+						letterSpacing = (-0.3).sp,
+						color = MaterialTheme.colorScheme.onSurface,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
 					if (routeInfo != null) {
 						CompactNetworkBadge(routeInfo = routeInfo, onClick = onShowNetworkSheet)
 					}
 				}
 				if (subtitle.isNotBlank()) {
 					Spacer(Modifier.height(1.dp))
-					Text(subtitle, style = MaterialTheme.typography.bodySmall, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+					Text(
+						text = subtitle,
+						style = MaterialTheme.typography.bodySmall,
+						fontSize = 11.sp,
+						fontWeight = FontWeight.Medium,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
 				}
 			}
-			TransferButton(activeTransferCount, onTransfer)
-			if (hasUpdate && onOpenUpdateDialog != null) {
-				UpdateBadgeButton(onClick = onOpenUpdateDialog)
+			Row(
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
+			) {
+				TransferButton(activeTransferCount, onTransfer)
+				if (hasUpdate && onOpenUpdateDialog != null) {
+					UpdateBadgeButton(onClick = onOpenUpdateDialog)
+				}
 			}
 		}
 	}
@@ -1597,6 +1626,8 @@ private fun NetworkTopBar(
 private fun SettingsTopBar(
 	vm: BrowserViewModel,
 	onOpenTransferSheet: () -> Unit = {},
+	routeInfo: RouteInfo? = null,
+	onShowNetworkSheet: () -> Unit = {},
 ) {
 	Surface(
 		color = MaterialTheme.colorScheme.surface,
@@ -1605,46 +1636,49 @@ private fun SettingsTopBar(
 		Row(
 			modifier = Modifier
 				.fillMaxWidth()
-				.padding(horizontal = 16.dp, vertical = 10.dp),
+				.heightIn(min = 54.dp)
+				.padding(horizontal = 14.dp, vertical = 6.dp),
 			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.SpaceBetween,
 		) {
-			Row(
-				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(10.dp),
+			Column(
+				modifier = Modifier
+					.weight(1f)
+					.padding(start = 2.dp),
+				verticalArrangement = Arrangement.Center,
 			) {
-				Surface(
-					shape = CircleShape,
-					color = MaterialTheme.colorScheme.primaryContainer,
-					modifier = Modifier.size(36.dp),
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
 				) {
-					Box(contentAlignment = Alignment.Center) {
-						Icon(
-							Icons.Rounded.Settings,
-							contentDescription = null,
-							tint = MaterialTheme.colorScheme.primary,
-							modifier = Modifier.size(20.dp),
-						)
-					}
-				}
-				Column {
 					Text(
 						text = "系统与配置",
-						style = MaterialTheme.typography.titleLarge,
+						style = MaterialTheme.typography.titleMedium,
+						fontSize = 16.sp,
 						fontWeight = FontWeight.ExtraBold,
+						letterSpacing = (-0.3).sp,
 						color = MaterialTheme.colorScheme.onSurface,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
 					)
-					Text(
-						text = "NAS 服务状态与偏好设置",
-						style = MaterialTheme.typography.labelSmall,
-						color = MaterialTheme.colorScheme.onSurfaceVariant,
-					)
+					if (routeInfo != null) {
+						CompactNetworkBadge(routeInfo = routeInfo, onClick = onShowNetworkSheet)
+					}
 				}
+				Spacer(Modifier.height(1.dp))
+				Text(
+					text = "NAS 服务状态与偏好设置",
+					style = MaterialTheme.typography.bodySmall,
+					fontSize = 11.sp,
+					fontWeight = FontWeight.Medium,
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+					maxLines = 1,
+					overflow = TextOverflow.Ellipsis,
+				)
 			}
 
 			Row(
 				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(6.dp),
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
 			) {
 				TransferButton(
 					count = vm.activeTransferCount,
@@ -1677,57 +1711,47 @@ private fun HomeTopBar(
 		Row(
 			modifier = Modifier
 				.fillMaxWidth()
-				.padding(horizontal = 16.dp, vertical = 10.dp),
+				.heightIn(min = 54.dp)
+				.padding(horizontal = 14.dp, vertical = 6.dp),
 			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.SpaceBetween,
 		) {
-			Row(
-				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(10.dp),
+			Column(
+				modifier = Modifier
+					.weight(1f)
+					.padding(start = 2.dp),
+				verticalArrangement = Arrangement.Center,
 			) {
-				Surface(
-					shape = CircleShape,
-					color = MaterialTheme.colorScheme.primaryContainer,
-					modifier = Modifier.size(36.dp),
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
 				) {
-					Box(contentAlignment = Alignment.Center) {
-						Icon(
-							imageVector = Icons.Rounded.Home,
-							contentDescription = null,
-							tint = MaterialTheme.colorScheme.primary,
-							modifier = Modifier.size(20.dp),
-						)
-					}
-				}
-				Column {
 					Text(
 						text = "NasDrop",
-						style = MaterialTheme.typography.titleLarge,
+						style = MaterialTheme.typography.titleMedium,
+						fontSize = 16.sp,
 						fontWeight = FontWeight.ExtraBold,
+						letterSpacing = (-0.3).sp,
 						color = MaterialTheme.colorScheme.onSurface,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
 					)
-					Row(
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(4.dp),
-						modifier = Modifier.clickable { onShowNetworkSheet() },
-					) {
-						Box(
-							modifier = Modifier
-								.size(6.dp)
-								.background(Color(0xFF10B981), CircleShape)
-						)
-						Text(
-							text = routeInfo.label.ifBlank { "已连接" },
-							style = MaterialTheme.typography.labelSmall,
-							color = MaterialTheme.colorScheme.onSurfaceVariant,
-						)
-					}
+					CompactNetworkBadge(routeInfo = routeInfo, onClick = onShowNetworkSheet)
 				}
+				Spacer(Modifier.height(1.dp))
+				Text(
+					text = "智能家庭私有云存储",
+					style = MaterialTheme.typography.bodySmall,
+					fontSize = 11.sp,
+					fontWeight = FontWeight.Medium,
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+					maxLines = 1,
+					overflow = TextOverflow.Ellipsis,
+				)
 			}
 
 			Row(
 				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(6.dp),
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
 			) {
 				TransferButton(
 					count = activeTransferCount,
@@ -3161,96 +3185,46 @@ private fun HomeScreenContent(
 				}
 			}
 
-			// 2. 那年今日（Memories Banner Carousel）
-			item(key = "home_memories_section") {
-				Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.SpaceBetween,
-					) {
+			// 2. 那年今日（仅在存在往年今日历史回忆时呈现，无数据时完全隐藏）
+			if (memoryYearGroups.isNotEmpty()) {
+				item(key = "home_memories_section") {
+					Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
 						Row(
+							modifier = Modifier.fillMaxWidth(),
 							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(6.dp),
+							horizontalArrangement = Arrangement.SpaceBetween,
 						) {
-							Icon(
-								Icons.Rounded.AutoAwesome,
-								contentDescription = null,
-								tint = MaterialTheme.colorScheme.primary,
-								modifier = Modifier.size(18.dp),
-							)
-							Text(
-								"那年今日",
-								style = MaterialTheme.typography.titleMedium,
-								fontWeight = FontWeight.Bold,
-								color = MaterialTheme.colorScheme.onSurface,
-							)
-						}
-						if (memoryYearGroups.isNotEmpty()) {
+							Row(
+								verticalAlignment = Alignment.CenterVertically,
+								horizontalArrangement = Arrangement.spacedBy(6.dp),
+							) {
+								Icon(
+									Icons.Rounded.AutoAwesome,
+									contentDescription = null,
+									tint = MaterialTheme.colorScheme.primary,
+									modifier = Modifier.size(18.dp),
+								)
+								Text(
+									"那年今日",
+									style = MaterialTheme.typography.titleMedium,
+									fontWeight = FontWeight.Bold,
+									color = MaterialTheme.colorScheme.onSurface,
+								)
+							}
 							Text(
 								"共 ${memoryYearGroups.size} 个历史时刻",
 								style = MaterialTheme.typography.labelSmall,
 								color = MaterialTheme.colorScheme.onSurfaceVariant,
 							)
 						}
-					}
 
-					if (memoryYearGroups.isNotEmpty()) {
 						MemoriesBanner(
 							memoryYearGroups = memoryYearGroups,
 							onClickGroup = onSelectMemoryGroup,
 							urlOf = urlOf,
 							directUrlOf = directUrlOf,
 						)
-					} else {
-						Surface(
-							shape = RoundedCornerShape(16.dp),
-							color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-							modifier = Modifier.fillMaxWidth(),
-						) {
-							Row(
-								modifier = Modifier.padding(16.dp),
-								verticalAlignment = Alignment.CenterVertically,
-								horizontalArrangement = Arrangement.spacedBy(12.dp),
-							) {
-								Icon(
-									Icons.Rounded.History,
-									contentDescription = null,
-									tint = MaterialTheme.colorScheme.onSurfaceVariant,
-									modifier = Modifier.size(24.dp),
-								)
-								Column {
-									Text("往年今日暂无记录", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-									Text("随手记录生活，明年今日重温此时此刻", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-								}
-							}
-						}
 					}
-				}
-			}
-
-			// 3. 快捷导航入口
-			item(key = "home_quick_actions") {
-				Row(
-					modifier = Modifier.fillMaxWidth(),
-					horizontalArrangement = Arrangement.spacedBy(10.dp),
-				) {
-					HomeQuickCard(
-						title = "浏览相册",
-						sub = "${vm.allPhotos.size} 张照片",
-						icon = Icons.Rounded.PhotoLibrary,
-						color = Color(0xFF3B82F6),
-						onClick = { vm.currentTab = MainTab.Photos },
-						modifier = Modifier.weight(1f),
-					)
-					HomeQuickCard(
-						title = "文件存储",
-						sub = "全部目录",
-						icon = Icons.Rounded.Folder,
-						color = Color(0xFF10B981),
-						onClick = { vm.currentTab = MainTab.Files },
-						modifier = Modifier.weight(1f),
-					)
 				}
 			}
 
@@ -3812,6 +3786,7 @@ private fun PhotoTimelineContent(
 				onRenameAlbum = onRenameAlbum,
 				onChangeIcon = onChangeIcon,
 				onDeleteAlbum = onDeleteAlbum,
+				onReorderAlbums = onReorderAlbums,
 				onCreateAlbum = onCreateAlbum,
 				urlOf = urlOf,
 				directUrlOf = directUrlOf,
@@ -4101,6 +4076,7 @@ private fun AlbumFoldersGrid(
 	onRenameAlbum: (DavEntry) -> Unit,
 	onChangeIcon: (DavEntry) -> Unit,
 	onDeleteAlbum: (DavEntry) -> Unit,
+	onReorderAlbums: (fromPath: String, toPath: String) -> Unit = { _, _ -> },
 	onCreateAlbum: () -> Unit,
 	urlOf: (String) -> String? = { null },
 	directUrlOf: ((String) -> String?)? = null,
@@ -4114,6 +4090,12 @@ private fun AlbumFoldersGrid(
 				it.path.endsWith("/默认影集") || it.path.endsWith("/默认影音")
 		}
 	}
+	var draggingAlbumPath by remember { mutableStateOf<String?>(null) }
+	var dragOffsetXPx by remember { mutableFloatStateOf(0f) }
+	var dragOffsetYPx by remember { mutableFloatStateOf(0f) }
+	val haptic = LocalHapticFeedback.current
+	val currentValidAlbums by rememberUpdatedState(validAlbums)
+
 	PullToRefreshBox(
 		isRefreshing = isRefreshing,
 		onRefresh = onRefresh,
@@ -4193,13 +4175,86 @@ private fun AlbumFoldersGrid(
 						allPhotos.firstOrNull { it.path.startsWith(album.path.trim('/') + "/") }
 					} else null
 				}
+				val isDragging = draggingAlbumPath == album.path
 				Card(
 					shape = RoundedCornerShape(14.dp),
-					colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-					border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+					colors = CardDefaults.cardColors(
+						containerColor = if (isDragging) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface
+					),
+					border = BorderStroke(
+						if (isDragging) 1.5.dp else 1.dp,
+						if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+					),
 					modifier = Modifier
 						.fillMaxWidth()
 						.clip(RoundedCornerShape(14.dp))
+						.graphicsLayer {
+							if (isDragging) {
+								translationX = dragOffsetXPx
+								translationY = dragOffsetYPx
+								scaleX = 1.05f
+								scaleY = 1.05f
+								shadowElevation = 8.dp.toPx()
+							}
+						}
+						.pointerInput(album.path) {
+							detectDragGesturesAfterLongPress(
+								onDragStart = {
+									draggingAlbumPath = album.path
+									dragOffsetXPx = 0f
+									dragOffsetYPx = 0f
+									haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+								},
+								onDrag = { change, dragAmount ->
+									change.consume()
+									dragOffsetXPx += dragAmount.x
+									dragOffsetYPx += dragAmount.y
+									val currPath = draggingAlbumPath ?: return@detectDragGesturesAfterLongPress
+									val list = currentValidAlbums
+									val curr = list.indexOfFirst { it.path == currPath }
+									if (curr < 0) return@detectDragGesturesAfterLongPress
+
+									val stepXPx = 100.dp.toPx()
+									val stepYPx = 60.dp.toPx()
+
+									if (dragOffsetXPx > stepXPx && curr < list.size - 1) {
+										val fromPath = list[curr].path
+										val toPath = list[curr + 1].path
+										onReorderAlbums(fromPath, toPath)
+										dragOffsetXPx -= stepXPx
+										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+									} else if (dragOffsetXPx < -stepXPx && curr > 0) {
+										val fromPath = list[curr].path
+										val toPath = list[curr - 1].path
+										onReorderAlbums(fromPath, toPath)
+										dragOffsetXPx += stepXPx
+										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+									} else if (dragOffsetYPx > stepYPx && curr + 2 < list.size) {
+										val fromPath = list[curr].path
+										val toPath = list[curr + 2].path
+										onReorderAlbums(fromPath, toPath)
+										dragOffsetYPx -= stepYPx
+										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+									} else if (dragOffsetYPx < -stepYPx && curr - 2 >= 0) {
+										val fromPath = list[curr].path
+										val toPath = list[curr - 2].path
+										onReorderAlbums(fromPath, toPath)
+										dragOffsetYPx += stepYPx
+										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+									}
+								},
+								onDragEnd = {
+									draggingAlbumPath = null
+									dragOffsetXPx = 0f
+									dragOffsetYPx = 0f
+								},
+								onDragCancel = {
+									draggingAlbumPath = null
+									dragOffsetXPx = 0f
+									dragOffsetYPx = 0f
+								}
+							)
+						}
 						.clickable { onSelectAlbum(album.path) },
 				) {
 					Row(
@@ -6294,6 +6349,11 @@ private fun CommercialNavigationBar(
 	currentTab: MainTab,
 	onTabSelect: (MainTab) -> Unit,
 ) {
+	val homeWeight by animateFloatAsState(if (currentTab == MainTab.Home) 1.6f else 1.0f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow), label = "w_home")
+	val photosWeight by animateFloatAsState(if (currentTab == MainTab.Photos) 1.6f else 1.0f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow), label = "w_photos")
+	val filesWeight by animateFloatAsState(if (currentTab == MainTab.Files) 1.6f else 1.0f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow), label = "w_files")
+	val settingsWeight by animateFloatAsState(if (currentTab == MainTab.Settings) 1.6f else 1.0f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow), label = "w_settings")
+
 	Box(
 		modifier = Modifier
 			.fillMaxWidth()
@@ -6336,7 +6396,7 @@ private fun CommercialNavigationBar(
 					inactiveIcon = Icons.Rounded.Home,
 					selected = currentTab == MainTab.Home,
 					onClick = { onTabSelect(MainTab.Home) },
-					modifier = Modifier.weight(1f),
+					modifier = Modifier.weight(homeWeight),
 				)
 				CompactTabItem(
 					title = "相册",
@@ -6344,7 +6404,7 @@ private fun CommercialNavigationBar(
 					inactiveIcon = Icons.Rounded.PhotoLibrary,
 					selected = currentTab == MainTab.Photos,
 					onClick = { onTabSelect(MainTab.Photos) },
-					modifier = Modifier.weight(1f),
+					modifier = Modifier.weight(photosWeight),
 				)
 				CompactTabItem(
 					title = "文件",
@@ -6352,7 +6412,7 @@ private fun CommercialNavigationBar(
 					inactiveIcon = Icons.Rounded.Folder,
 					selected = currentTab == MainTab.Files,
 					onClick = { onTabSelect(MainTab.Files) },
-					modifier = Modifier.weight(1f),
+					modifier = Modifier.weight(filesWeight),
 				)
 				CompactTabItem(
 					title = "配置",
@@ -6360,7 +6420,7 @@ private fun CommercialNavigationBar(
 					inactiveIcon = Icons.Rounded.Settings,
 					selected = currentTab == MainTab.Settings,
 					onClick = { onTabSelect(MainTab.Settings) },
-					modifier = Modifier.weight(1f),
+					modifier = Modifier.weight(settingsWeight),
 				)
 			}
 		}
@@ -6396,10 +6456,10 @@ private fun CompactTabItem(
 			},
 			modifier = Modifier
 				.fillMaxHeight(0.85f)
-				.widthIn(min = 64.dp, max = 112.dp),
+				.wrapContentWidth(),
 		) {
 			Row(
-				modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+				modifier = Modifier.padding(horizontal = if (selected) 14.dp else 8.dp, vertical = 4.dp),
 				horizontalArrangement = Arrangement.Center,
 				verticalAlignment = Alignment.CenterVertically,
 			) {
@@ -6414,7 +6474,7 @@ private fun CompactTabItem(
 						imageVector = if (selected) activeIcon else inactiveIcon,
 						contentDescription = title,
 						tint = animatedColor,
-						modifier = Modifier.size(22.dp),
+						modifier = Modifier.size(20.dp),
 					)
 				}
 				AnimatedVisibility(
@@ -6427,6 +6487,8 @@ private fun CompactTabItem(
 						style = MaterialTheme.typography.labelMedium,
 						fontWeight = FontWeight.Bold,
 						color = animatedColor,
+						maxLines = 1,
+						softWrap = false,
 						modifier = Modifier.padding(start = 6.dp),
 					)
 				}

@@ -39,6 +39,8 @@ class CompanionAudioPlayer(private val context: Context) {
 	var durationMs by mutableIntStateOf(0)
 		private set
 
+	var onDurationResolved: ((Long) -> Unit)? = null
+
 	var currentUrl: String = ""
 		private set
 
@@ -97,6 +99,9 @@ class CompanionAudioPlayer(private val context: Context) {
 				setOnPreparedListener { mp ->
 					val dur = if (mp.duration > 0) mp.duration else fallbackDurationMs.toInt()
 					this@CompanionAudioPlayer.durationMs = dur
+					if (dur > 0) {
+						onDurationResolved?.invoke(dur.toLong())
+					}
 					mp.start()
 					this@CompanionAudioPlayer.isPlaying = true
 					startProgressTracker()
