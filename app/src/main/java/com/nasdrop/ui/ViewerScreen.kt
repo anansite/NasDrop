@@ -2336,9 +2336,6 @@ fun VideoPlayer(
 					)
 					// 沉浸式全屏下给状态栏/刘海留白，避免返回键和标题被"眉毛"遮挡
 					.statusBarsPadding()
-					.pointerInput(Unit) {
-						detectTapGestures(onTap = { showControls = !showControls })
-					}
 					.padding(horizontal = 12.dp, vertical = 8.dp),
 			) {
 				Row(
@@ -2434,9 +2431,6 @@ fun VideoPlayer(
 							colors = listOf(Color.Transparent, MediaBackdrop.copy(alpha = 0.9f)),
 						),
 					)
-					.pointerInput(Unit) {
-						detectTapGestures(onTap = { showControls = !showControls })
-					}
 					.padding(horizontal = 16.dp, vertical = 12.dp),
 			) {
 				Column(modifier = Modifier.fillMaxWidth()) {
