@@ -11,6 +11,21 @@
 	<uses-permission android:name="android.permission.RECORD_AUDIO" />
 	<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+	<queries>
+		<intent>
+			<action android:name="android.intent.action.PICK" />
+			<data android:mimeType="image/*" />
+		</intent>
+		<intent>
+			<action android:name="android.intent.action.PICK" />
+			<data android:mimeType="video/*" />
+		</intent>
+		<intent>
+			<action android:name="android.intent.action.GET_CONTENT" />
+			<data android:mimeType="*/*" />
+		</intent>
+	</queries>
+
 	<application
 		android:name=".NasDropApp"
 		android:allowBackup="false"

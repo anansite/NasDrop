@@ -251,20 +251,9 @@ class GalleryAlbumPickerContract : ActivityResultContract<String, List<Uri>>() {
 		val mimeTypes = if (isVideo) arrayOf("video/*") else arrayOf("image/*", "video/*")
 		val targetUri = if (isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
 
-		// 1. 优先调用 ACTION_PICK 呼起系统原生图库相册（华为图库直接展示所有相簿列表）
-		val pickIntent = android.content.Intent(android.content.Intent.ACTION_PICK, targetUri).apply {
+		// 直接调用 ACTION_PICK 呼起系统原生官方图库相册（华为图库直接展示所有照片、相机、微信、相册列表）
+		return android.content.Intent(android.content.Intent.ACTION_PICK, targetUri).apply {
 			setDataAndType(targetUri, if (isVideo) "video/*" else "image/*")
-			putExtra(android.content.Intent.EXTRA_MIME_TYPES, mimeTypes)
-			putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
-		}
-		if (pickIntent.resolveActivity(context.packageManager) != null) {
-			return pickIntent
-		}
-
-		// 2. 备用：ACTION_GET_CONTENT 开启多选与媒体过滤
-		return android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply {
-			addCategory(android.content.Intent.CATEGORY_OPENABLE)
-			type = if (isVideo) "video/*" else "*/*"
 			putExtra(android.content.Intent.EXTRA_MIME_TYPES, mimeTypes)
 			putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
 		}
