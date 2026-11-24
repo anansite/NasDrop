@@ -309,25 +309,37 @@ fun RandomPhotoGameScreen(
 	val context = LocalContext.current
 	val scope = rememberCoroutineScope()
 
-	// 选定相册路径（空代表全部照片）
-	var selectedAlbumPath by remember { mutableStateOf("") }
+	// 选定相册路径集合（空代表从全部照片中抽取）
+	var selectedAlbumPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
 	var shuffleSeed by remember { mutableIntStateOf(0) }
 	var showAlbumPickerSheet by remember { mutableStateOf(false) }
 	var hideDateGuessMode by remember { mutableStateOf(false) }
 
-	// 依据选定相册过滤出的候选照片池
-	val candidatePhotos = remember(selectedAlbumPath, vm.allPhotos, shuffleSeed) {
-		val pool = if (selectedAlbumPath.isBlank() || selectedAlbumPath == "__ALL_FOLDERS__") {
+	val validFolders = remember(vm.allAlbumFolders) {
+		vm.allAlbumFolders.filter { it.path.isNotBlank() }
+	}
+
+	// 依据选定相册集合过滤出的候选照片池
+	val candidatePhotos = remember(selectedAlbumPaths, vm.allPhotos, shuffleSeed) {
+		val pool = if (selectedAlbumPaths.isEmpty()) {
 			vm.allPhotos.filter { it.isImage }
 		} else {
-			vm.allPhotos.filter { it.isImage && isPathWithin(it.path, selectedAlbumPath) }
+			vm.allPhotos.filter { photo ->
+				photo.isImage && selectedAlbumPaths.any { albumPath -> isPathWithin(photo.path, albumPath) }
+			}
 		}
 		pool.shuffled()
 	}
 
-	val currentAlbumName = remember(selectedAlbumPath, vm.allAlbumFolders) {
-		if (selectedAlbumPath.isBlank() || selectedAlbumPath == "__ALL_FOLDERS__") "全部照片"
-		else vm.allAlbumFolders.firstOrNull { it.path == selectedAlbumPath }?.name ?: "已选相册"
+	val currentAlbumName = remember(selectedAlbumPaths, validFolders) {
+		when {
+			selectedAlbumPaths.isEmpty() || selectedAlbumPaths.size == validFolders.size -> "全部照片"
+			selectedAlbumPaths.size == 1 -> {
+				val single = selectedAlbumPaths.first()
+				validFolders.firstOrNull { it.path == single }?.name ?: "已选 1 个相册"
+			}
+			else -> "已选 ${selectedAlbumPaths.size} 个相册"
+		}
 	}
 
 	// 虚拟无限滑动页码（总共 100,000 页，从 50,000 起始，左右滑均可无限循环）
@@ -634,10 +646,22 @@ fun RandomPhotoGameScreen(
 		}
 	}
 
-	// 选定相册底部抽屉
+	// 选定相册底部抽屉（支持多相册勾选、全选与反选）
 	if (showAlbumPickerSheet) {
+		var tempSelectedPaths by remember(showAlbumPickerSheet) {
+			mutableStateOf(selectedAlbumPaths)
+		}
+		val totalPhotosCount = remember(vm.allPhotos) { vm.allPhotos.count { it.isImage } }
+		val tempCandidateCount = remember(tempSelectedPaths, vm.allPhotos) {
+			if (tempSelectedPaths.isEmpty()) totalPhotosCount
+			else vm.allPhotos.count { photo -> photo.isImage && tempSelectedPaths.any { isPathWithin(photo.path, it) } }
+		}
+
 		ModalBottomSheet(
-			onDismissRequest = { showAlbumPickerSheet = false },
+			onDismissRequest = {
+				selectedAlbumPaths = tempSelectedPaths
+				showAlbumPickerSheet = false
+			},
 			containerColor = MaterialTheme.colorScheme.surface,
 		) {
 			Column(
@@ -645,51 +669,116 @@ fun RandomPhotoGameScreen(
 					.fillMaxWidth()
 					.padding(horizontal = 24.dp)
 					.padding(bottom = 36.dp),
-				verticalArrangement = Arrangement.spacedBy(16.dp),
+				verticalArrangement = Arrangement.spacedBy(14.dp),
 			) {
 				Row(
 					modifier = Modifier.fillMaxWidth(),
 					verticalAlignment = Alignment.CenterVertically,
 					horizontalArrangement = Arrangement.SpaceBetween,
 				) {
-					Text(
-						"选定抽取相册",
-						style = MaterialTheme.typography.titleLarge,
-						fontWeight = FontWeight.Bold,
-					)
-					IconButton(onClick = { showAlbumPickerSheet = false }) {
+					Column {
+						Text(
+							"选定抽取相册",
+							style = MaterialTheme.typography.titleLarge,
+							fontWeight = FontWeight.Bold,
+						)
+						Text(
+							"支持多相册勾选组合，打造专属时光漫游池",
+							style = MaterialTheme.typography.bodySmall,
+							color = MaterialTheme.colorScheme.onSurfaceVariant,
+						)
+					}
+					IconButton(onClick = {
+						selectedAlbumPaths = tempSelectedPaths
+						showAlbumPickerSheet = false
+					}) {
 						Icon(Icons.Rounded.Close, contentDescription = "关闭")
 					}
 				}
 
-				Text(
-					"选择从哪个相册池中随机抽取照片进行无限漫游：",
-					style = MaterialTheme.typography.bodySmall,
-					color = MaterialTheme.colorScheme.onSurfaceVariant,
-				)
+				// 顶部快捷控制胶囊栏：全选、全部/重置、选中统计
+				Row(
+					modifier = Modifier.fillMaxWidth(),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(8.dp),
+				) {
+					// 快捷全选
+					Surface(
+						shape = RoundedCornerShape(10.dp),
+						color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+						modifier = Modifier
+							.clip(RoundedCornerShape(10.dp))
+							.clickable {
+								tempSelectedPaths = validFolders.map { it.path }.toSet()
+							},
+					) {
+						Text(
+							"全选相册",
+							fontSize = 12.sp,
+							fontWeight = FontWeight.Bold,
+							color = MaterialTheme.colorScheme.primary,
+							modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+						)
+					}
+
+					// 全部照片 / 清空重置
+					Surface(
+						shape = RoundedCornerShape(10.dp),
+						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+						modifier = Modifier
+							.clip(RoundedCornerShape(10.dp))
+							.clickable {
+								tempSelectedPaths = emptySet()
+							},
+					) {
+						Text(
+							"全部照片",
+							fontSize = 12.sp,
+							fontWeight = FontWeight.Medium,
+							color = MaterialTheme.colorScheme.onSurfaceVariant,
+							modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+						)
+					}
+
+					Spacer(Modifier.weight(1f))
+
+					// 选中计数气泡
+					Surface(
+						shape = RoundedCornerShape(10.dp),
+						color = Color(0xFF10B981).copy(alpha = 0.15f),
+					) {
+						Text(
+							text = if (tempSelectedPaths.isEmpty()) "全部相册 · $tempCandidateCount 张"
+								else "已勾选 ${tempSelectedPaths.size} 个相册 · $tempCandidateCount 张",
+							fontSize = 12.sp,
+							fontWeight = FontWeight.Bold,
+							color = Color(0xFF059669),
+							modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+						)
+					}
+				}
 
 				LazyColumn(
-					modifier = Modifier.fillMaxWidth(),
+					modifier = Modifier
+						.fillMaxWidth()
+						.weight(1f, fill = false),
 					verticalArrangement = Arrangement.spacedBy(8.dp),
 				) {
-					// 选项 1：全部照片
-					val totalPhotosCount = vm.allPhotos.count { it.isImage }
+					// 选项 1：全部照片（点击重置为全量相册）
 					item {
-						val isSelected = selectedAlbumPath.isBlank() || selectedAlbumPath == "__ALL_FOLDERS__"
+						val isAllActive = tempSelectedPaths.isEmpty() || (validFolders.isNotEmpty() && tempSelectedPaths.size == validFolders.size)
 						Surface(
 							shape = RoundedCornerShape(14.dp),
-							color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+							color = if (isAllActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
 							border = BorderStroke(
 								1.dp,
-								if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+								if (isAllActive) MaterialTheme.colorScheme.primary else Color.Transparent,
 							),
 							modifier = Modifier
 								.fillMaxWidth()
 								.clip(RoundedCornerShape(14.dp))
 								.clickable {
-									selectedAlbumPath = ""
-									shuffleSeed++
-									showAlbumPickerSheet = false
+									tempSelectedPaths = emptySet()
 								},
 						) {
 							Row(
@@ -704,13 +793,13 @@ fun RandomPhotoGameScreen(
 									Icon(
 										Icons.Rounded.Casino,
 										contentDescription = null,
-										tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+										tint = if (isAllActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
 										modifier = Modifier.size(20.dp),
 									)
 									Text(
-										"全部照片",
-										fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-										color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+										"全部相册 (全局混抽)",
+										fontWeight = if (isAllActive) FontWeight.Bold else FontWeight.Medium,
+										color = if (isAllActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
 									)
 								}
 								Row(
@@ -722,38 +811,49 @@ fun RandomPhotoGameScreen(
 										style = MaterialTheme.typography.bodySmall,
 										color = MaterialTheme.colorScheme.onSurfaceVariant,
 									)
-									if (isSelected) {
-										Icon(
-											Icons.Rounded.Check,
-											contentDescription = null,
-											tint = MaterialTheme.colorScheme.primary,
-											modifier = Modifier.size(18.dp),
-										)
+									Surface(
+										shape = RoundedCornerShape(6.dp),
+										color = if (isAllActive) MaterialTheme.colorScheme.primary else Color.Transparent,
+										border = BorderStroke(1.5.dp, if (isAllActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+										modifier = Modifier.size(20.dp),
+									) {
+										Box(contentAlignment = Alignment.Center) {
+											if (isAllActive) {
+												Icon(
+													Icons.Rounded.Check,
+													contentDescription = null,
+													tint = MaterialTheme.colorScheme.onPrimary,
+													modifier = Modifier.size(14.dp),
+												)
+											}
+										}
 									}
 								}
 							}
 						}
 					}
 
-					// 选项 2+：每个独立的子相册
-					items(vm.allAlbumFolders.filter { it.path.isNotBlank() }) { folder ->
-						val isSelected = selectedAlbumPath == folder.path
+					// 选项 2+：每个独立的子相册（支持多选勾选）
+					items(validFolders, key = { it.path }) { folder ->
+						val isChecked = folder.path in tempSelectedPaths
 						val albumPhotoCount = vm.allPhotos.count { it.isImage && isPathWithin(it.path, folder.path) }
 
 						Surface(
 							shape = RoundedCornerShape(14.dp),
-							color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+							color = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
 							border = BorderStroke(
 								1.dp,
-								if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+								if (isChecked) MaterialTheme.colorScheme.primary else Color.Transparent,
 							),
 							modifier = Modifier
 								.fillMaxWidth()
 								.clip(RoundedCornerShape(14.dp))
 								.clickable {
-									selectedAlbumPath = folder.path
-									shuffleSeed++
-									showAlbumPickerSheet = false
+									tempSelectedPaths = if (isChecked) {
+										tempSelectedPaths - folder.path
+									} else {
+										tempSelectedPaths + folder.path
+									}
 								},
 						) {
 							Row(
@@ -764,39 +864,77 @@ fun RandomPhotoGameScreen(
 								Row(
 									verticalAlignment = Alignment.CenterVertically,
 									horizontalArrangement = Arrangement.spacedBy(10.dp),
+									modifier = Modifier.weight(1f, fill = false),
 								) {
 									Icon(
 										Icons.Rounded.FolderOpen,
 										contentDescription = null,
-										tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+										tint = if (isChecked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
 										modifier = Modifier.size(20.dp),
 									)
 									Text(
 										folder.name,
-										fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-										color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+										fontWeight = if (isChecked) FontWeight.Bold else FontWeight.Medium,
+										color = if (isChecked) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+										maxLines = 1,
+										overflow = TextOverflow.Ellipsis,
 									)
 								}
 								Row(
 									verticalAlignment = Alignment.CenterVertically,
-									horizontalArrangement = Arrangement.spacedBy(6.dp),
+									horizontalArrangement = Arrangement.spacedBy(8.dp),
 								) {
 									Text(
 										"$albumPhotoCount 张",
 										style = MaterialTheme.typography.bodySmall,
 										color = MaterialTheme.colorScheme.onSurfaceVariant,
 									)
-									if (isSelected) {
-										Icon(
-											Icons.Rounded.Check,
-											contentDescription = null,
-											tint = MaterialTheme.colorScheme.primary,
-											modifier = Modifier.size(18.dp),
-										)
+									Surface(
+										shape = RoundedCornerShape(6.dp),
+										color = if (isChecked) MaterialTheme.colorScheme.primary else Color.Transparent,
+										border = BorderStroke(1.5.dp, if (isChecked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+										modifier = Modifier.size(20.dp),
+									) {
+										Box(contentAlignment = Alignment.Center) {
+											if (isChecked) {
+												Icon(
+													Icons.Rounded.Check,
+													contentDescription = null,
+													tint = MaterialTheme.colorScheme.onPrimary,
+													modifier = Modifier.size(14.dp),
+												)
+											}
+										}
 									}
 								}
 							}
 						}
+					}
+				}
+
+				// 底部显式确认抽取大按钮
+				Button(
+					onClick = {
+						selectedAlbumPaths = tempSelectedPaths
+						shuffleSeed++
+						showAlbumPickerSheet = false
+					},
+					modifier = Modifier
+						.fillMaxWidth()
+						.height(48.dp),
+					shape = RoundedCornerShape(14.dp),
+					colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+				) {
+					Row(
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(8.dp),
+					) {
+						Icon(Icons.Rounded.Shuffle, contentDescription = null, modifier = Modifier.size(18.dp))
+						Text(
+							text = "确定抽取 (${if (tempSelectedPaths.isEmpty()) "全部相册" else "已选 ${tempSelectedPaths.size} 个相册"} · ${tempCandidateCount} 张)",
+							fontWeight = FontWeight.Bold,
+							fontSize = 15.sp,
+						)
 					}
 				}
 			}

@@ -10,10 +10,10 @@ enum class ConnectionMode(val title: String, val desc: String) {
 
 /** 持久化的服务、上传目录及网络配置；密码保留用户原始输入。 */
 data class Settings(
-	val baseUrl: String = "https://nas.205002.xyz/",
+	val baseUrl: String = BuildConfig.DEFAULT_WEBDAV_URL,
 	val navUrl: String = "https://nav.205002.xyz/",
-	val user: String = "admin",
-	val password: String = "admin",
+	val user: String = BuildConfig.DEFAULT_WEBDAV_USER,
+	val password: String = BuildConfig.DEFAULT_WEBDAV_PASS,
 	val lastDir: String = "",
 	val useTailscale: Boolean = true,
 	val connectionMode: ConnectionMode = ConnectionMode.Auto,
@@ -32,7 +32,7 @@ data class Settings(
 	fun normalized(): Settings {
 		val address = baseUrl.trim()
 		require(address.isNotEmpty()) { "请输入 WebDAV 服务地址" }
-		val url = (if ("://" in address) address else "https://$address").toHttpUrlOrNull()
+		val url = (if ("://" in address) address else "http://$address").toHttpUrlOrNull()
 			?: throw IllegalArgumentException("请输入有效的 HTTP 或 HTTPS 服务地址")
 		require(url.username.isEmpty() && url.password.isEmpty()) { "请在账号和密码栏填写凭据" }
 		require(url.query == null && url.fragment == null) { "服务地址不能包含查询参数或片段" }

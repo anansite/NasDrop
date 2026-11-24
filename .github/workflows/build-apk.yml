@@ -117,6 +117,9 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          DEFAULT_WEBDAV_URL: ${{ secrets.DEFAULT_WEBDAV_URL }}
+          DEFAULT_WEBDAV_USER: ${{ secrets.DEFAULT_WEBDAV_USER }}
+          DEFAULT_WEBDAV_PASS: ${{ secrets.DEFAULT_WEBDAV_PASS }}
 
       - name: 整理产物
         run: |

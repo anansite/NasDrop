@@ -401,7 +401,7 @@ fun SettingsScreen(
 						enabled = !saving,
 						onValueChange = { baseUrl = it },
 						label = { Text("WebDAV 服务接入地址", fontSize = 12.sp) },
-						placeholder = { Text("https://nas.205002.xyz/") },
+						placeholder = { Text(Settings().baseUrl) },
 						singleLine = true,
 						shape = RoundedCornerShape(12.dp),
 						colors = OutlinedTextFieldDefaults.colors(

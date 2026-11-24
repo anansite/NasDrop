@@ -14,9 +14,20 @@ android {
 		targetSdk = 35
 		val runNumber = providers.environmentVariable("GITHUB_RUN_NUMBER").orNull?.toIntOrNull()
 			?: providers.environmentVariable("BUILD_NUMBER").orNull?.toIntOrNull()
-			?: 213
+			?: 214
 		versionCode = runNumber
 		versionName = "1.0.$runNumber"
+
+		val defaultWebDavUrl = providers.environmentVariable("DEFAULT_WEBDAV_URL").orNull
+			?: "http://nas.205002.xyz/"
+		val defaultWebDavUser = providers.environmentVariable("DEFAULT_WEBDAV_USER").orNull
+			?: "admin"
+		val defaultWebDavPass = providers.environmentVariable("DEFAULT_WEBDAV_PASS").orNull
+			?: "admin"
+
+		buildConfigField("String", "DEFAULT_WEBDAV_URL", "\"$defaultWebDavUrl\"")
+		buildConfigField("String", "DEFAULT_WEBDAV_USER", "\"$defaultWebDavUser\"")
+		buildConfigField("String", "DEFAULT_WEBDAV_PASS", "\"$defaultWebDavPass\"")
 
 		ndk {
 			abiFilters += listOf("arm64-v8a", "x86_64")
@@ -63,6 +74,7 @@ android {
 
 	buildFeatures {
 		compose = true
+		buildConfig = true
 	}
 
 	packaging {

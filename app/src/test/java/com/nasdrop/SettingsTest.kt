@@ -13,7 +13,7 @@ class SettingsTest {
 			connectionMode = ConnectionMode.Tailscale, useTailscale = false,
 			hostname = " my-phone ", authKey = " key ", lastDir = "/Photos/",
 		).normalized()
-		assertEquals("https://nas.example.com/dav/", normalized.baseUrl)
+		assertEquals("http://nas.example.com/dav/", normalized.baseUrl)
 		assertEquals("alice", normalized.user)
 		assertEquals(" password ", normalized.password)
 		assertEquals(ConnectionMode.Tailscale, normalized.connectionMode)
