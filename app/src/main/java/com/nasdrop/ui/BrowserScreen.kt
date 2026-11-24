@@ -499,6 +499,13 @@ fun BrowserScreen(
 				val contentError = if (mediaTab) vm.mediaError else vm.error
 				val initialLoading = (if (mediaTab) vm.mediaScanning else vm.loading) && vm.currentTabEntries.isEmpty()
 				when {
+					vm.currentTab == MainTab.Settings -> {
+						SettingsScreen(
+							vm = vm,
+							onBack = { vm.currentTab = MainTab.Home },
+							isInsideTab = true,
+						)
+					}
 					vm.needsLogin -> BrowserStatus(
 						title = "需要授权内网连接",
 						detail = contentError ?: "请先完成 Tailscale 授权，再访问 NAS。",

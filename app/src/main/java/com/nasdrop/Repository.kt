@@ -101,8 +101,8 @@ class Repository(private val context: Context) {
 
 	@Volatile private var trustAllCerts = false
 	private val okHttp: OkHttpClient get() = if (trustAllCerts) permissiveHttp else verifiedHttp
-	private val verifiedProbe = verifiedHttp.newBuilder().connectTimeout(1200, TimeUnit.MILLISECONDS).readTimeout(1200, TimeUnit.MILLISECONDS).build()
-	private val permissiveProbe by lazy { permissiveHttp.newBuilder().connectTimeout(1200, TimeUnit.MILLISECONDS).readTimeout(1200, TimeUnit.MILLISECONDS).build() }
+	private val verifiedProbe = verifiedHttp.newBuilder().connectTimeout(3500, TimeUnit.MILLISECONDS).readTimeout(3500, TimeUnit.MILLISECONDS).build()
+	private val permissiveProbe by lazy { permissiveHttp.newBuilder().connectTimeout(3500, TimeUnit.MILLISECONDS).readTimeout(3500, TimeUnit.MILLISECONDS).build() }
 	private val probeHttp: OkHttpClient get() = if (trustAllCerts) permissiveProbe else verifiedProbe
 
 	private fun imageClient(client: OkHttpClient): OkHttpClient = client.newBuilder()

@@ -377,7 +377,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	val isRoot: Boolean get() = path.isEmpty()
-	val needsLogin: Boolean get() = linkStatus.contains("等待登录")
+	val needsLogin: Boolean get() = (connectionMode != ConnectionMode.Direct && !app.repo.isDirectConfirmed) && linkStatus.contains("等待登录")
 
 	/** 经过分类筛选与搜索后的条目列表 */
 	val filteredEntries: List<DavEntry>
@@ -2317,6 +2317,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 
 	private fun pollPeerStatus() {
+		if (connectionMode == ConnectionMode.Direct || app.repo.isDirectConfirmed) {
+			linkStatus = if (app.repo.isDirectConfirmed) "系统直连" else "直连模式"
+			authUrl = ""
+			return
+		}
 		val embedded = TsBridge.available
 		if (embedded) {
 			app.repo.updateRouteInfo()
