@@ -54,12 +54,15 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BrightnessMedium
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.FastForward
+import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.VolumeOff
+import kotlinx.coroutines.Job
 import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.FullscreenExit
@@ -1954,22 +1957,20 @@ fun VideoPlayer(
 		}
 	}
 
-	// 手势 HUD 状态与居中动效
-	var hudText by remember { mutableStateOf("") }
+	// 手势 HUD 状态（结构化呈现，彻底杜绝图标与文本重复、Emoji混排）
 	var hudVisible by remember { mutableStateOf(false) }
-	var centerPulseIcon by remember { mutableStateOf<androidx.compose.ui.graphics.vector.ImageVector?>(null) }
+	var hudIcon by remember { mutableStateOf<androidx.compose.ui.graphics.vector.ImageVector>(Icons.Rounded.FastForward) }
+	var hudTitle by remember { mutableStateOf("") }
+	var hudBadge by remember { mutableStateOf<String?>(null) }
+	var hudBadgeColor by remember { mutableStateOf<Color>(Color.Unspecified) }
+	var hudProgressPercent by remember { mutableFloatStateOf(-1f) }
 
-	// 居中播放/暂停瞬态动效自动淡出
-	LaunchedEffect(centerPulseIcon) {
-		if (centerPulseIcon != null) {
-			delay(650)
-			centerPulseIcon = null
-		}
-	}
+	val coroutineScope = rememberCoroutineScope()
+	var pendingSingleTapJob by remember { mutableStateOf<Job?>(null) }
 
 	// 提示类 HUD（如倍速切换）自动延时隐藏
-	LaunchedEffect(hudVisible, hudText) {
-		if (hudVisible && (hudText.contains("倍速") || hudText.contains("正常"))) {
+	LaunchedEffect(hudVisible, hudTitle) {
+		if (hudVisible && (hudTitle.contains("倍速") || hudTitle.contains("正常"))) {
 			delay(1200)
 			hudVisible = false
 		}
@@ -2015,13 +2016,11 @@ fun VideoPlayer(
 	val togglePlayPause: () -> Unit = {
 		if (player.isPlaying) {
 			player.pause()
-			centerPulseIcon = Icons.Rounded.Pause
 		} else {
 			if (player.playbackState == Player.STATE_ENDED) {
 				player.seekTo(0L)
 			}
 			player.play()
-			centerPulseIcon = Icons.Rounded.PlayArrow
 		}
 		lastInteractionTime = System.currentTimeMillis()
 	}
@@ -2194,15 +2193,21 @@ fun VideoPlayer(
 									val distSq = dx * dx + dy * dy
 									if (distSq < deadZonePx * deadZonePx && elapsed < 400) {
 										val now = System.currentTimeMillis()
-										if (now - lastTapTimestamp < 350) {
-											// 双击：暂停 / 播放切换（消抖分流，不误触显隐，采用极简微动效）
+										if (now - lastTapTimestamp < 300L) {
+											// 双击：取消待触发的单击，立即切换播放/暂停（暂停时屏幕中间直接显现播放按钮，无暂停大图标遮挡）
 											lastTapTimestamp = 0L
+											pendingSingleTapJob?.cancel()
+											pendingSingleTapJob = null
 											togglePlayPause()
 										} else {
-											// 单击：记录时间戳并切换控制栏显隐
+											// 首次点击：记录时间戳，延时 260ms 分发单击，防双击时误触控制栏闪烁
 											lastTapTimestamp = now
-											showControls = !showControls
-											lastInteractionTime = System.currentTimeMillis()
+											pendingSingleTapJob?.cancel()
+											pendingSingleTapJob = coroutineScope.launch {
+												delay(260L)
+												showControls = !showControls
+												lastInteractionTime = System.currentTimeMillis()
+											}
 										}
 									}
 								}
@@ -2213,13 +2218,16 @@ fun VideoPlayer(
 								val dy = change.position.y - startPos.y
 								val distSq = dx * dx + dy * dy
 
-								// 1. 长按检测（未发生明显位移且持续按压满 400ms 触发 2.0X 极速快进）
+								// 1. 长按检测（持续按压满 400ms 触发 2.0X 极速快进）
 								if (dragLockedType == 0 && distSq < deadZonePx * deadZonePx && elapsed >= 400 && !longPressTriggered) {
 									longPressTriggered = true
 									haptic.performHapticFeedback(HapticFeedbackType.LongPress)
 									normalPlaybackSpeed = player.playbackParameters.speed
 									player.playbackParameters = PlaybackParameters(2.0f)
-									hudText = "▶▶ 2.0X 极速快进中"
+									hudIcon = Icons.Rounded.FastForward
+									hudTitle = "2.0X 极速快进"
+									hudBadge = null
+									hudProgressPercent = -1f
 									hudVisible = true
 								}
 
@@ -2233,7 +2241,7 @@ fun VideoPlayer(
 										}
 									}
 
-									// 3. 执行单向锁定后的线性调节（基准偏移映射，平滑灵敏无过冲）
+									// 3. 执行单向锁定后的线性调节（纯粹数据结构，无重复图标与Emoji）
 									when (dragLockedType) {
 										1 -> {
 											change.consume()
@@ -2241,9 +2249,13 @@ fun VideoPlayer(
 											val seekFraction = dx / (size.width.toFloat() * 0.75f)
 											val seekDeltaMs = (seekFraction * 90_000L).toLong() // 左右滑动全量程 +/- 90秒
 											targetSeekPos = (initialPos + seekDeltaMs).coerceIn(0L, duration.coerceAtLeast(1L))
-											val sign = if (seekDeltaMs >= 0) "+" else ""
-											val deltaSec = seekDeltaMs / 1000
-											hudText = "${formatTime(targetSeekPos)} / ${formatTime(duration)} (${sign}${deltaSec}s)"
+											val isForward = seekDeltaMs >= 0
+											val deltaSec = kotlin.math.abs(seekDeltaMs / 1000)
+											hudIcon = if (isForward) Icons.Rounded.FastForward else Icons.Rounded.FastRewind
+											hudTitle = "${formatTime(targetSeekPos)} / ${formatTime(duration)}"
+											hudBadge = if (isForward) "+${deltaSec}s" else "-${deltaSec}s"
+											hudBadgeColor = if (isForward) Color(0xFF34D399) else Color(0xFFFBBF24)
+											hudProgressPercent = targetSeekPos.toFloat() / duration.coerceAtLeast(1L).toFloat()
 											hudVisible = true
 										}
 										2 -> {
@@ -2255,7 +2267,11 @@ fun VideoPlayer(
 												val lp = win.attributes
 												lp.screenBrightness = newB
 												win.attributes = lp
-												hudText = "☀️ 亮度: ${(newB * 100).toInt()}%"
+												val percent = (newB * 100).toInt()
+												hudIcon = Icons.Rounded.BrightnessMedium
+												hudTitle = "$percent%"
+												hudBadge = null
+												hudProgressPercent = newB
 												hudVisible = true
 											}
 										}
@@ -2266,8 +2282,10 @@ fun VideoPlayer(
 											val newVol = (initialVol + (deltaFraction * maxVol)).roundToInt().coerceIn(0, maxVol)
 											audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
 											val percent = (newVol * 100) / maxVol.coerceAtLeast(1)
-											val volIcon = if (newVol == 0) "🔇" else "🔊"
-											hudText = "$volIcon 音量: $percent%"
+											hudIcon = if (newVol == 0) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp
+											hudTitle = if (newVol == 0) "静音" else "$percent%"
+											hudBadge = null
+											hudProgressPercent = newVol.toFloat() / maxVol.coerceAtLeast(1).toFloat()
 											hudVisible = true
 										}
 									}
@@ -2278,38 +2296,9 @@ fun VideoPlayer(
 				},
 		)
 
-		// 1. 居中双击播放/暂停微动效胶囊（650ms 优雅淡入淡出，彻底替代粗糙的文字占位弹窗）
+		// 1. 居中大播放常驻按钮（视频暂停时直接优雅呈现半透明毛玻璃播放按钮；双击播放时自动淡出消失）
 		AnimatedVisibility(
-			visible = centerPulseIcon != null,
-			enter = fadeIn() + scaleIn(initialScale = 0.75f),
-			exit = fadeOut() + scaleOut(targetScale = 1.15f),
-			modifier = Modifier.align(Alignment.Center),
-		) {
-			Surface(
-				shape = CircleShape,
-				color = MediaBackdrop.copy(alpha = 0.7f),
-				border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.3f)),
-				shadowElevation = 8.dp,
-				modifier = Modifier.size(72.dp),
-			) {
-				Box(contentAlignment = Alignment.Center) {
-					centerPulseIcon?.let { icon ->
-						Icon(
-							imageVector = icon,
-							contentDescription = null,
-							tint = OnMediaBackdrop,
-							modifier = Modifier
-								.size(38.dp)
-								.offset(x = if (icon == Icons.Rounded.PlayArrow) 2.dp else 0.dp),
-						)
-					}
-				}
-			}
-		}
-
-		// 2. 居中大播放常驻按钮（视频暂停且控制栏可见时优雅呈现，引导点击起播）
-		AnimatedVisibility(
-			visible = !isPlaying && showControls && centerPulseIcon == null,
+			visible = !isPlaying,
 			enter = fadeIn() + scaleIn(initialScale = 0.85f),
 			exit = fadeOut() + scaleOut(targetScale = 0.85f),
 			modifier = Modifier.align(Alignment.Center),
@@ -2337,40 +2326,66 @@ fun VideoPlayer(
 			}
 		}
 
-		// 3. 居中手势 HUD 浮动指示窗（音量、亮度、拖拽进度、倍速调节）
+		// 2. 居中手势 HUD 浮动指示窗（音量、亮度、拖拽进度、倍速调节）
 		AnimatedVisibility(
-			visible = hudVisible && !hudText.contains("暂停") && !hudText.contains("播放"),
+			visible = hudVisible,
 			enter = fadeIn(),
 			exit = fadeOut(),
 			modifier = Modifier.align(Alignment.Center),
 		) {
 			Surface(
 				shape = RoundedCornerShape(16.dp),
-				color = MediaBackdrop.copy(alpha = 0.75f),
-				shadowElevation = 8.dp,
+				color = MediaBackdrop.copy(alpha = 0.82f),
+				border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+				shadowElevation = 10.dp,
 			) {
-				Row(
+				Column(
 					modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(10.dp),
+					horizontalAlignment = Alignment.CenterHorizontally,
+					verticalArrangement = Arrangement.spacedBy(6.dp),
 				) {
-					Icon(
-						imageVector = if (hudText.contains("音量")) Icons.Rounded.VolumeUp
-						else if (hudText.contains("亮度")) Icons.Rounded.BrightnessMedium
-						else if (hudText.contains("快退") || hudText.contains("⏪")) Icons.Rounded.Replay10
-						else if (hudText.contains("快进") || hudText.contains("⏩")) Icons.Rounded.Forward10
-						else if (hudText.contains("2.0X")) Icons.Rounded.FastForward
-						else Icons.Rounded.FastForward,
-						contentDescription = null,
-						tint = OnMediaBackdrop,
-						modifier = Modifier.size(24.dp),
-					)
-					Text(
-						text = hudText,
-						color = OnMediaBackdrop,
-						fontSize = 14.sp,
-						fontWeight = FontWeight.Bold,
-					)
+					Row(
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(10.dp),
+					) {
+						Icon(
+							imageVector = hudIcon,
+							contentDescription = null,
+							tint = OnMediaBackdrop,
+							modifier = Modifier.size(24.dp),
+						)
+						Text(
+							text = hudTitle,
+							color = OnMediaBackdrop,
+							fontSize = 15.sp,
+							fontWeight = FontWeight.Bold,
+						)
+						if (hudBadge != null) {
+							Text(
+								text = hudBadge!!,
+								color = hudBadgeColor,
+								fontSize = 13.sp,
+								fontWeight = FontWeight.Bold,
+							)
+						}
+					}
+					if (hudProgressPercent >= 0f) {
+						Box(
+							modifier = Modifier
+								.width(110.dp)
+								.height(3.dp)
+								.clip(RoundedCornerShape(1.5.dp))
+								.background(Color.White.copy(alpha = 0.25f))
+						) {
+							Box(
+								modifier = Modifier
+									.fillMaxWidth(hudProgressPercent.coerceIn(0f, 1f))
+									.height(3.dp)
+									.clip(RoundedCornerShape(1.5.dp))
+									.background(Color.White)
+							)
+						}
+					}
 				}
 			}
 		}
@@ -2514,7 +2529,10 @@ fun VideoPlayer(
 							},
 							onSeeking = { target, active ->
 								if (active) {
-									hudText = "${formatTime(target)} / ${formatTime(duration)}"
+									hudIcon = Icons.Rounded.FastForward
+									hudTitle = "${formatTime(target)} / ${formatTime(duration)}"
+									hudBadge = null
+									hudProgressPercent = target.toFloat() / duration.coerceAtLeast(1L).toFloat()
 									hudVisible = true
 								} else {
 									hudVisible = false
@@ -2599,7 +2617,10 @@ fun VideoPlayer(
 									playbackSpeed = nextSpeed
 									normalPlaybackSpeed = nextSpeed
 									player.playbackParameters = PlaybackParameters(nextSpeed)
-									hudText = "播放倍速: ${if (nextSpeed == 1.0f) "1.0X 正常" else "${nextSpeed}X"}"
+									hudIcon = Icons.Rounded.FastForward
+									hudTitle = "${nextSpeed}X 倍速"
+									hudBadge = null
+									hudProgressPercent = -1f
 									hudVisible = true
 									lastInteractionTime = System.currentTimeMillis()
 								},
