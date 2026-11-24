@@ -483,6 +483,20 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		loadMediaFromLocalDb()
 		loadUserPreferences()
 		open("")
+		viewModelScope.launch(Dispatchers.IO) {
+			// 后台异步扫描远端相册目录中的伴生记忆隐藏文件，自动同步元数据入库
+			val knownAlbums = listOf("", "Photos", "Photos/默认相册", "Photos/作业", "Photos/证件", "Photos/宝宝", "Photos/旅行记忆", "Photos/最美班级")
+			val conf = app.prefs.current()
+			val c = clientOf(conf)
+			for (alb in knownAlbums) {
+				runCatching {
+					val list = c.list(alb)
+					withContext(Dispatchers.Main) {
+						applyDirectoryListing(alb, list)
+					}
+				}
+			}
+		}
 		viewModelScope.launch {
 			snapshotFlow { PhotoMetadataStore.revision }.collect {
 				loadMediaFromLocalDb()
@@ -716,18 +730,39 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/** 保存服务器原始列表，再合并仍未被目录确认的上传项；所有 UI 状态在主线程更新。 */
 	private fun applyDirectoryListing(dir: String, fresh: List<DavEntry>) {
 		val cleanDir = dir.trim('/')
+
+		// 1. 扫描当前目录下存在的隐藏伴生文件（伴生录音与备忘）
+		val companionAudios = fresh.filter {
+			it.name.startsWith(".") && (it.name.endsWith(".m4a") || it.name.endsWith(".aac") || it.name.endsWith(".wav") || it.name.endsWith(".mp3"))
+		}
+		val audioByBaseName = companionAudios.associateBy {
+			val raw = it.name.removePrefix(".")
+			if (raw.contains('.')) raw.substringBeforeLast('.') else raw
+		}
+
 		// 过滤隐藏的 .thumbnails 缩略图目录及点开头目录，不让其干扰主目录浏览
 		val filteredFresh = fresh.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }
 
 		// 差量对齐：比对远端真实文件，清理已被电脑端删除的孤儿元数据记录（后台 IO 自动执行）
 		PhotoMetadataStore.reconcile(cleanDir, filteredFresh)
 
-		// 注入并同步拍摄时间（takenAt）元数据（内存缓存瞬时更新，后台批量落库）
+		// 注入并同步拍摄时间（takenAt）元数据与伴生资产（内存缓存瞬时更新，后台批量落库）
 		val toPersist = mutableListOf<PhotoMetadata>()
 		val resolvedFresh = filteredFresh.map { entry ->
 			if (entry.isImage || entry.isVideo) {
 				val meta = PhotoMetadataStore.get(entry.path)
-				val takenAt = if (meta != null && meta.takenAt > 0L && meta.size == entry.size && meta.modified == entry.modified) {
+				val fileName = entry.name
+				val baseName = if (fileName.contains('.')) fileName.substringBeforeLast('.') else fileName
+				val matchedAudio = audioByBaseName[baseName]
+
+				val audioPath = matchedAudio?.path ?: meta?.audioPath
+				val audioDurationMs = when {
+					(meta?.audioDurationMs ?: 0L) > 0L -> meta!!.audioDurationMs
+					matchedAudio != null -> 1000L // 远端检测到伴生音频文件，自动关联
+					else -> 0L
+				}
+
+				val takenAt = if (meta != null && meta.takenAt > 0L && meta.size == entry.size && meta.modified == entry.modified && meta.audioPath == audioPath && meta.audioDurationMs == audioDurationMs) {
 					meta.takenAt
 				} else {
 					val parsed = PhotoTimeParser.parseFromFilename(entry.name) ?: if (entry.created > 0L) entry.created else entry.modified
@@ -739,6 +774,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						modified = entry.modified,
 						takenAt = parsed,
 						hasThumbnail = meta?.hasThumbnail == true,
+						audioPath = audioPath,
+						audioDurationMs = audioDurationMs,
+						memo = meta?.memo,
+						memoUpdatedAt = meta?.memoUpdatedAt ?: 0L,
 						mediaType = if (entry.isVideo) 1 else 0,
 					)
 					toPersist.add(newMeta)
@@ -1760,7 +1799,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					}.distinctBy { it.path }
 
 					val itemCal = Calendar.getInstance()
-					val exactMatches = pool.filter { entry ->
+					pool.filter { entry ->
 						val dateMs = entry.effectiveDate
 						if (dateMs <= 0L) false
 						else {
@@ -1768,23 +1807,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 							val y = itemCal.get(Calendar.YEAR)
 							val m = itemCal.get(Calendar.MONTH) + 1
 							val d = itemCal.get(Calendar.DAY_OF_MONTH)
-							m == currentMonth && d == currentDay && y < currentYear
-						}
-					}
-					if (exactMatches.isNotEmpty()) {
-						exactMatches
-					} else {
-						// 容差 ±2 天，避免闰年或跨日误差
-						pool.filter { entry ->
-							val dateMs = entry.effectiveDate
-							if (dateMs <= 0L) false
-							else {
-								itemCal.timeInMillis = dateMs
-								val y = itemCal.get(Calendar.YEAR)
-								val m = itemCal.get(Calendar.MONTH) + 1
-								val d = itemCal.get(Calendar.DAY_OF_MONTH)
-								m == currentMonth && kotlin.math.abs(d - currentDay) <= 2 && y < currentYear
-							}
+							// 严格匹配历史同月同日（闰年 2月29日平年归入 2月28日）
+							val isSameDay = (m == currentMonth && d == currentDay) ||
+								(currentMonth == 2 && currentDay == 28 && m == 2 && d == 29)
+							isSameDay && y < currentYear
 						}
 					}
 				}
