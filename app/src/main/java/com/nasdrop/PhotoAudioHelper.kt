@@ -124,16 +124,20 @@ class CompanionAudioPlayer(private val context: Context) {
 					it.pause()
 				}
 			}
-		} catch (_: Exception) {}
+		} catch (_: Throwable) {}
 		isPlaying = false
 		stopProgressTracker()
 	}
 
 	fun resume() {
-		mediaPlayer?.let {
-			it.start()
-			isPlaying = true
-			startProgressTracker()
+		try {
+			mediaPlayer?.let {
+				it.start()
+				isPlaying = true
+				startProgressTracker()
+			}
+		} catch (_: Throwable) {
+			stop()
 		}
 	}
 
@@ -141,6 +145,9 @@ class CompanionAudioPlayer(private val context: Context) {
 		if (isPlaying) {
 			pause()
 		} else if (mediaPlayer != null) {
+			if (currentPositionMs >= (durationMs - 300).coerceAtLeast(0) || progress >= 0.98f) {
+				seekTo(0f)
+			}
 			resume()
 		} else {
 			play(audioUrlOrPath, fallbackDurationMs)
@@ -149,25 +156,30 @@ class CompanionAudioPlayer(private val context: Context) {
 
 	fun seekTo(fraction: Float) {
 		mediaPlayer?.let {
-			val target = (fraction.coerceIn(0f, 1f) * durationMs).toInt()
-			it.seekTo(target)
-			currentPositionMs = target
-			progress = fraction
+			try {
+				val target = (fraction.coerceIn(0f, 1f) * durationMs).toInt()
+				it.seekTo(target)
+				currentPositionMs = target
+				progress = fraction
+			} catch (_: Throwable) {}
 		}
 	}
 
 	fun stop() {
 		stopProgressTracker()
-		try {
-			mediaPlayer?.apply {
-				if (isPlaying) stop()
-				release()
-			}
-		} catch (_: Exception) {}
+		val player = mediaPlayer
 		mediaPlayer = null
 		isPlaying = false
 		progress = 0f
 		currentPositionMs = 0
+		if (player != null) {
+			try {
+				player.reset()
+			} catch (_: Throwable) {}
+			try {
+				player.release()
+			} catch (_: Throwable) {}
+		}
 	}
 
 	private fun startProgressTracker() {
@@ -194,7 +206,7 @@ class CompanionAudioPlayer(private val context: Context) {
 						} else if (!mp.isPlaying) {
 							isPlaying = false
 						}
-					} catch (_: Exception) {
+					} catch (_: Throwable) {
 						stop()
 					}
 				} else {
