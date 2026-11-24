@@ -2177,9 +2177,10 @@ fun VideoPlayer(
 									player.playbackParameters = PlaybackParameters(normalPlaybackSpeed)
 									hudVisible = false
 								} else if (dragLockedType == 1) {
-									// 水平拖拽松手：跳转至目标进度
-									player.seekTo(targetSeekPos)
-									currentPosition = targetSeekPos
+									// 水平拖拽松手：跳转至目标进度（严格边界截断）
+									val finalTarget = targetSeekPos.coerceIn(0L, duration.coerceAtLeast(0L))
+									player.seekTo(finalTarget)
+									currentPosition = finalTarget
 									hudVisible = false
 									lastInteractionTime = System.currentTimeMillis()
 								} else if (dragLockedType == 2 || dragLockedType == 3) {
@@ -2246,16 +2247,31 @@ fun VideoPlayer(
 										1 -> {
 											change.consume()
 											lastInteractionTime = System.currentTimeMillis()
+											val totalDuration = duration.coerceAtLeast(0L)
 											val seekFraction = dx / (size.width.toFloat() * 0.75f)
 											val seekDeltaMs = (seekFraction * 90_000L).toLong() // 左右滑动全量程 +/- 90秒
-											targetSeekPos = (initialPos + seekDeltaMs).coerceIn(0L, duration.coerceAtLeast(1L))
-											val isForward = seekDeltaMs >= 0
-											val deltaSec = kotlin.math.abs(seekDeltaMs / 1000)
+											targetSeekPos = (initialPos + seekDeltaMs).coerceIn(0L, totalDuration)
+											val actualDeltaMs = targetSeekPos - initialPos
+											val isForward = actualDeltaMs >= 0
+											val deltaSec = kotlin.math.abs(actualDeltaMs / 1000)
+
 											hudIcon = if (isForward) Icons.Rounded.FastForward else Icons.Rounded.FastRewind
-											hudTitle = "${formatTime(targetSeekPos)} / ${formatTime(duration)}"
-											hudBadge = if (isForward) "+${deltaSec}s" else "-${deltaSec}s"
-											hudBadgeColor = if (isForward) Color(0xFF34D399) else Color(0xFFFBBF24)
-											hudProgressPercent = targetSeekPos.toFloat() / duration.coerceAtLeast(1L).toFloat()
+											hudTitle = "${formatTime(targetSeekPos)} / ${formatTime(totalDuration)}"
+
+											if (targetSeekPos <= 0L) {
+												hudBadge = if (initialPos <= 0L) "已在片头" else "退至片头 (-${deltaSec}s)"
+												hudBadgeColor = Color(0xFF94A3B8)
+											} else if (targetSeekPos >= totalDuration) {
+												hudBadge = if (initialPos >= totalDuration) "已在片尾" else "进至片尾 (+${deltaSec}s)"
+												hudBadgeColor = Color(0xFF94A3B8)
+											} else {
+												hudBadge = if (isForward) "+${deltaSec}s" else "-${deltaSec}s"
+												hudBadgeColor = if (isForward) Color(0xFF34D399) else Color(0xFFFBBF24)
+											}
+
+											hudProgressPercent = if (totalDuration > 0L) {
+												(targetSeekPos.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
+											} else 0f
 											hudVisible = true
 										}
 										2 -> {

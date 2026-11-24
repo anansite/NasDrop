@@ -31,6 +31,8 @@ class Prefs(private val context: Context) {
 		val themePalette = stringPreferencesKey("theme_palette")
 		val viewMode = stringPreferencesKey("view_mode")
 		val sortOrder = stringPreferencesKey("sort_order")
+		val albumOrder = stringPreferencesKey("album_order")
+		val mediaOrder = stringPreferencesKey("media_order")
 	}
 
 	val settings: Flow<Settings> = context.dataStore.data.map {
@@ -103,6 +105,34 @@ class Prefs(private val context: Context) {
 	suspend fun getSortOrder(): String? = context.dataStore.data.map { it[Keys.sortOrder] }.first()
 	suspend fun setSortOrder(order: String) {
 		context.dataStore.edit { it[Keys.sortOrder] = order }
+	}
+
+	suspend fun getAlbumOrder(): List<String> = runCatching {
+		val json = context.dataStore.data.map { it[Keys.albumOrder] }.first()
+		if (json.isNullOrBlank()) emptyList()
+		else org.json.JSONArray(json).let { arr -> (0 until arr.length()).map { arr.getString(it) } }
+	}.getOrDefault(emptyList())
+
+	suspend fun setAlbumOrder(order: List<String>) {
+		context.dataStore.edit {
+			val arr = org.json.JSONArray()
+			order.forEach { arr.put(it) }
+			it[Keys.albumOrder] = arr.toString()
+		}
+	}
+
+	suspend fun getMediaOrder(): List<String> = runCatching {
+		val json = context.dataStore.data.map { it[Keys.mediaOrder] }.first()
+		if (json.isNullOrBlank()) emptyList()
+		else org.json.JSONArray(json).let { arr -> (0 until arr.length()).map { arr.getString(it) } }
+	}.getOrDefault(emptyList())
+
+	suspend fun setMediaOrder(order: List<String>) {
+		context.dataStore.edit {
+			val arr = org.json.JSONArray()
+			order.forEach { arr.put(it) }
+			it[Keys.mediaOrder] = arr.toString()
+		}
 	}
 
 	private fun Preferences.toSettings(): Settings {

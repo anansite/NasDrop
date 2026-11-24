@@ -1166,6 +1166,24 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					folderIcons = icons
 				}
 			}
+			runCatching {
+				val savedAlbumOrder = app.prefs.getAlbumOrder()
+				val savedMediaOrder = app.prefs.getMediaOrder()
+				withContext(Dispatchers.Main) {
+					if (savedAlbumOrder.isNotEmpty()) {
+						albumOrder = savedAlbumOrder
+						if (allAlbumFolders.isNotEmpty()) {
+							allAlbumFolders = sortAlbums(allAlbumFolders, savedAlbumOrder)
+						}
+					}
+					if (savedMediaOrder.isNotEmpty()) {
+						mediaOrder = savedMediaOrder
+						if (allMediaFolders.isNotEmpty()) {
+							allMediaFolders = sortAlbums(allMediaFolders, savedMediaOrder)
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -1781,6 +1799,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		mutable.add(toIdx, item)
 		allAlbumFolders = mutable
 		albumOrder = mutable.map { it.path }
+		viewModelScope.launch(Dispatchers.IO) { app.prefs.setAlbumOrder(albumOrder) }
 		syncRemoteMetadata()
 	}
 
@@ -1801,6 +1820,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		mutable.add(toIdx, item)
 		allMediaFolders = mutable
 		mediaOrder = mutable.map { it.path }
+		viewModelScope.launch(Dispatchers.IO) { app.prefs.setMediaOrder(mediaOrder) }
 		syncRemoteMetadata()
 	}
 
@@ -2333,8 +2353,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			remoteMeta.folderIcons.forEach { (p, k) -> db.setFolderIcon(p, k) }
 			withContext(Dispatchers.Main) {
 				folderIcons = folderIcons + remoteMeta.folderIcons
-				if (remoteMeta.albumOrder.isNotEmpty()) albumOrder = remoteMeta.albumOrder
-				if (remoteMeta.mediaOrder.isNotEmpty()) mediaOrder = remoteMeta.mediaOrder
+				if (remoteMeta.albumOrder.isNotEmpty()) {
+					albumOrder = remoteMeta.albumOrder
+					viewModelScope.launch(Dispatchers.IO) { app.prefs.setAlbumOrder(remoteMeta.albumOrder) }
+				}
+				if (remoteMeta.mediaOrder.isNotEmpty()) {
+					mediaOrder = remoteMeta.mediaOrder
+					viewModelScope.launch(Dispatchers.IO) { app.prefs.setMediaOrder(remoteMeta.mediaOrder) }
+				}
 			}
 		}
 
@@ -2406,9 +2432,33 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	private fun sortAlbums(items: List<DavEntry>, order: List<String>): List<DavEntry> {
-		if (order.isEmpty()) return items
+		if (items.isEmpty()) return emptyList()
+		val defaultPath = "Photos/默认相册"
 		val orderMap = order.withIndex().associate { it.value to it.index }
-		return items.sortedWith(compareBy<DavEntry> { orderMap[it.path] ?: (10000 + it.name.hashCode()) }.thenBy { it.name })
+		val collator = java.text.Collator.getInstance(Locale.CHINA).apply {
+			strength = java.text.Collator.PRIMARY
+		}
+
+		return items.sortedWith { a, b ->
+			val isADefault = a.name == "默认相册" || a.path == defaultPath
+			val isBDefault = b.name == "默认相册" || b.path == defaultPath
+
+			val orderA = orderMap[a.path]
+			val orderB = orderMap[b.path]
+
+			if (orderA != null && orderB != null) {
+				orderA.compareTo(orderB)
+			} else if (orderA != null) {
+				-1
+			} else if (orderB != null) {
+				1
+			} else if (isADefault != isBDefault) {
+				if (isADefault) -1 else 1
+			} else {
+				val nameComp = collator.compare(a.name, b.name)
+				if (nameComp != 0) nameComp else a.path.compareTo(b.path)
+			}
+		}
 	}
 
 	private suspend fun scanMediaDirectory(directory: String): List<DavEntry>? = try {
