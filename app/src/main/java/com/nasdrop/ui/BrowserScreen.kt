@@ -241,43 +241,6 @@ enum class BrowserMode {
 	Pick,
 }
 
-/**
- * 全功能系统文件选择器：
- * 采用通用 ACTION_GET_CONTENT（或回退 ACTION_OPEN_DOCUMENT），
- * 默认直接直达系统聚合的「最近 / 近期文件」视图（Recents），支持多选。
- * 避免因历史记忆或图库契约直接陷入特定目录（如 Camera 目录）。
- */
-class SystemFilePickerContract : ActivityResultContract<Unit, List<Uri>>() {
-	override fun createIntent(context: android.content.Context, input: Unit): android.content.Intent {
-		val getContentIntent = android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply {
-			addCategory(android.content.Intent.CATEGORY_OPENABLE)
-			type = "*/*"
-			putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
-		}
-		if (getContentIntent.resolveActivity(context.packageManager) != null) {
-			return getContentIntent
-		}
-		return android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
-			addCategory(android.content.Intent.CATEGORY_OPENABLE)
-			type = "*/*"
-			putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
-		}
-	}
-
-	override fun parseResult(resultCode: Int, intent: android.content.Intent?): List<Uri> {
-		if (resultCode != android.app.Activity.RESULT_OK || intent == null) {
-			return emptyList()
-		}
-		val uris = LinkedHashSet<Uri>()
-		intent.clipData?.let { clipData ->
-			for (i in 0 until clipData.itemCount) {
-				clipData.getItemAt(i).uri?.let { uris.add(it) }
-			}
-		}
-		intent.data?.let { uris.add(it) }
-		return uris.toList()
-	}
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -339,11 +302,11 @@ fun BrowserScreen(
 		}
 	}
 
-	// 全功能系统文件选择器（直接调起 SAF ACTION_OPEN_DOCUMENT，默认直达「最近」视图，顶部支持图片/视频/文档快捷分类，多选支持）
+	// 全功能系统文件选择器（原生 GetMultipleContents，直接直达「最近/近期」聚合视图，支持多选）
 	var activeUploadTargetDir by remember { mutableStateOf("") }
 
 	val systemFilePicker = rememberLauncherForActivityResult(
-		contract = SystemFilePickerContract(),
+		contract = ActivityResultContracts.GetMultipleContents(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
 			val target = activeUploadTargetDir.ifBlank {
@@ -357,7 +320,7 @@ fun BrowserScreen(
 
 	fun launchSystemUpload(targetDir: String) {
 		activeUploadTargetDir = targetDir
-		systemFilePicker.launch(Unit)
+		systemFilePicker.launch("*/*")
 	}
 
 	val folderIconImagePicker = rememberLauncherForActivityResult(
