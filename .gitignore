@@ -14,3 +14,23 @@ out/
 .ci/*.json
 .ci/davroot/
 .ci/__pycache__/
+
+# UI dumps & traces
+dump*.xml
+ui*.xml
+*.xml
+!app/src/main/**/*.xml
+
+# Keystore & signing
+signing/*.jks
+signing/*.keystore
+*.jks
+*.keystore
+
+# Local binaries & databases
+*.apk
+*.db
+*.db-journal
+docs/*.xml
+docs/*.png
+docs/*.apk

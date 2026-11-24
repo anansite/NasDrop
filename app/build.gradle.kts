@@ -33,14 +33,14 @@ android {
 	}
 
 	// 仓库里放了一张固定的自签名证书，这样每次 CI 打出来的包签名一致，
-	// 手机上可以直接覆盖安装升级。私有仓库自用；要上架请换成自己的正式证书。
+	// 手机上可以直接覆盖安装升级。正式发布签名通过 GitHub Secrets 动态注入，私钥不入版本库。
 	val personalStore = rootProject.file("signing/nasdrop.jks")
 	if (personalStore.exists()) {
 		signingConfigs.create("release") {
 			storeFile = personalStore
-			storePassword = "nasdrop123"
-			keyAlias = "nasdrop"
-			keyPassword = "nasdrop123"
+			storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "nasdrop123"
+			keyAlias = System.getenv("KEY_ALIAS") ?: "nasdrop"
+			keyPassword = System.getenv("KEY_PASSWORD") ?: "nasdrop123"
 		}
 	}
 
