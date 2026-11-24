@@ -569,10 +569,11 @@ fun ImageViewer(
 							shape = CircleShape,
 							color = MaterialTheme.colorScheme.primary,
 							onClick = {
-								if (audioPlayer.currentUrl.isEmpty()) {
-									val companionPath = PhotoMetadataStore.computeCompanionAudioPath(current.path)
-									val audioUrl = audioUrlOf?.invoke(companionPath)
-									if (audioUrl != null) audioPlayer.prepare(audioUrl)
+								val companionPath = current.photoMeta?.companionAudioPath?.ifBlank { null }
+									?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
+								val audioUrl = audioUrlOf?.invoke(companionPath) ?: (audioUrlOf ?: urlOf).invoke(current.path)
+								if (!audioUrl.isNullOrBlank()) {
+									audioPlayer.prepare(audioUrl)
 								}
 								audioPlayer.togglePlayPause(current.photoMeta?.audioDurationMs ?: 0L)
 							},
@@ -705,10 +706,11 @@ fun ImageViewer(
 								shape = CircleShape,
 								color = MaterialTheme.colorScheme.primary,
 								onClick = {
-									if (audioPlayer.currentUrl.isEmpty()) {
-										val companionPath = PhotoMetadataStore.computeCompanionAudioPath(current.path)
-										val audioUrl = audioUrlOf?.invoke(companionPath)
-										if (audioUrl != null) audioPlayer.prepare(audioUrl)
+									val companionPath = current.photoMeta?.companionAudioPath?.ifBlank { null }
+										?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
+									val audioUrl = audioUrlOf?.invoke(companionPath) ?: (audioUrlOf ?: urlOf).invoke(current.path)
+									if (!audioUrl.isNullOrBlank()) {
+										audioPlayer.prepare(audioUrl)
 									}
 									audioPlayer.togglePlayPause(current.photoMeta?.audioDurationMs ?: 0L)
 								},
@@ -2457,10 +2459,11 @@ fun VideoPlayer(
 							shape = CircleShape,
 							color = MaterialTheme.colorScheme.primary,
 							onClick = {
-								if (audioPlayer.currentUrl.isEmpty()) {
-									val companionPath = PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
-									val audioUrl = audioUrlOf?.invoke(companionPath)
-									if (audioUrl != null) audioPlayer.prepare(audioUrl)
+								val companionPath = currentEntry.photoMeta?.companionAudioPath?.ifBlank { null }
+									?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
+								val audioUrl = audioUrlOf?.invoke(companionPath) ?: (audioUrlOf ?: urlOf).invoke(currentEntry.path)
+								if (!audioUrl.isNullOrBlank()) {
+									audioPlayer.prepare(audioUrl)
 								}
 								audioPlayer.togglePlayPause(currentEntry.photoMeta?.audioDurationMs ?: 0L)
 							},
@@ -2593,10 +2596,11 @@ fun VideoPlayer(
 								shape = CircleShape,
 								color = MaterialTheme.colorScheme.primary,
 								onClick = {
-									if (audioPlayer.currentUrl.isEmpty()) {
-										val companionPath = PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
-										val audioUrl = audioUrlOf?.invoke(companionPath)
-										if (audioUrl != null) audioPlayer.prepare(audioUrl)
+									val companionPath = currentEntry.photoMeta?.companionAudioPath?.ifBlank { null }
+										?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
+									val audioUrl = audioUrlOf?.invoke(companionPath) ?: (audioUrlOf ?: urlOf).invoke(currentEntry.path)
+									if (!audioUrl.isNullOrBlank()) {
+										audioPlayer.prepare(audioUrl)
 									}
 									audioPlayer.togglePlayPause(currentEntry.photoMeta?.audioDurationMs ?: 0L)
 								},

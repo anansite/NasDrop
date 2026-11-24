@@ -54,13 +54,18 @@ class CompanionAudioPlayer(private val context: Context) {
 				seekTo(0f)
 			}
 			resume()
-		} else if (currentUrl.isNotEmpty()) {
+		} else if (currentUrl.isNotBlank()) {
 			play(currentUrl, fallbackDurationMs)
 		}
 	}
 
 	fun play(audioUrlOrPath: String, fallbackDurationMs: Long = 0L) {
 		stop()
+		if (audioUrlOrPath.isBlank()) {
+			Log.w("AudioPlayer", "Cannot play empty or blank audio source")
+			return
+		}
+		currentUrl = audioUrlOrPath
 		try {
 			val player = MediaPlayer().apply {
 				setAudioAttributes(
@@ -97,15 +102,11 @@ class CompanionAudioPlayer(private val context: Context) {
 					startProgressTracker()
 				}
 				setOnCompletionListener {
-					handler.post {
-						stop()
-					}
+					stop()
 				}
 				setOnErrorListener { _, what, extra ->
 					Log.w("AudioPlayer", "MediaPlayer error: what=$what extra=$extra")
-					handler.post {
-						stop()
-					}
+					stop()
 					true
 				}
 				prepareAsync()
