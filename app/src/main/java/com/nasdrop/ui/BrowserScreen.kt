@@ -242,18 +242,18 @@ enum class BrowserMode {
 }
 
 /**
- * 针对各品牌手机（尤其是华为鸿蒙、小米MIUI/HyperOS、OPPO、vivo等）优化的相册媒体选择契约。
- * 优先唤起系统原生图库相册（支持相册分类：相机、微信、屏幕截图、视频等），避免文档管理默认锁定空 Pictures 目录。
+ * 专为相册/媒体上传打造的内容选择器：
+ * 唤起系统全功能内容管理器，顶部横向支持【图片】与【视频】快捷分类切换，
+ * 界面中部提供【图库】（直达相机/微信/所有相簿）与【文件管理】快捷入口，
+ * 满足用户“在同一个浏览器中自由切换视频、相册、文件”的核心诉求。
  */
-class GalleryAlbumPickerContract : ActivityResultContract<String, List<Uri>>() {
+class MediaContentPickerContract : ActivityResultContract<String, List<Uri>>() {
 	override fun createIntent(context: android.content.Context, input: String): android.content.Intent {
 		val isVideo = input.startsWith("video")
 		val mimeTypes = if (isVideo) arrayOf("video/*") else arrayOf("image/*", "video/*")
-		val targetUri = if (isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-
-		// 直接调用 ACTION_PICK 呼起系统原生官方图库相册（华为图库直接展示所有照片、相机、微信、相册列表）
-		return android.content.Intent(android.content.Intent.ACTION_PICK, targetUri).apply {
-			setDataAndType(targetUri, if (isVideo) "video/*" else "image/*")
+		return android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply {
+			addCategory(android.content.Intent.CATEGORY_OPENABLE)
+			type = if (isVideo) "video/*" else "image/*"
 			putExtra(android.content.Intent.EXTRA_MIME_TYPES, mimeTypes)
 			putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
 		}
@@ -342,7 +342,7 @@ fun BrowserScreen(
 	}
 
 	val photoPicker = rememberLauncherForActivityResult(
-		contract = GalleryAlbumPickerContract(),
+		contract = MediaContentPickerContract(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
 			val targetDir = if (vm.selectedAlbumPath.isNotBlank() && vm.selectedAlbumPath != "__ALL_FOLDERS__") vm.selectedAlbumPath else "Photos/默认相册"
@@ -351,7 +351,7 @@ fun BrowserScreen(
 	}
 
 	val videoPicker = rememberLauncherForActivityResult(
-		contract = GalleryAlbumPickerContract(),
+		contract = MediaContentPickerContract(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
 			val targetDir = if (vm.selectedMediaPath.isNotBlank() && vm.selectedMediaPath != "__ALL_FOLDERS__") vm.selectedMediaPath else "movies/默认影集"
