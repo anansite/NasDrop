@@ -3,10 +3,10 @@
 package com.nasdrop.ui
 
 import android.widget.Toast
+import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
@@ -240,6 +240,50 @@ enum class BrowserMode {
 	Pick,
 }
 
+/**
+ * 针对各品牌手机（尤其是华为鸿蒙、小米MIUI/HyperOS、OPPO、vivo等）优化的相册媒体选择契约。
+ * 优先唤起系统原生图库相册（支持相册分类：相机、微信、屏幕截图、视频等），避免文档管理默认锁定空 Pictures 目录。
+ */
+class GalleryAlbumPickerContract : ActivityResultContract<String, List<Uri>>() {
+	override fun createIntent(context: android.content.Context, input: String): android.content.Intent {
+		val isVideo = input.startsWith("video")
+		val mimeTypes = if (isVideo) arrayOf("video/*") else arrayOf("image/*", "video/*")
+		val targetUri = if (isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+
+		// 1. 优先调用 ACTION_PICK 呼起系统原生图库相册（华为图库直接展示所有相簿列表）
+		val pickIntent = android.content.Intent(android.content.Intent.ACTION_PICK, targetUri).apply {
+			setDataAndType(targetUri, if (isVideo) "video/*" else "image/*")
+			putExtra(android.content.Intent.EXTRA_MIME_TYPES, mimeTypes)
+			putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
+		}
+		if (pickIntent.resolveActivity(context.packageManager) != null) {
+			return pickIntent
+		}
+
+		// 2. 备用：ACTION_GET_CONTENT 开启多选与媒体过滤
+		return android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply {
+			addCategory(android.content.Intent.CATEGORY_OPENABLE)
+			type = if (isVideo) "video/*" else "*/*"
+			putExtra(android.content.Intent.EXTRA_MIME_TYPES, mimeTypes)
+			putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
+		}
+	}
+
+	override fun parseResult(resultCode: Int, intent: android.content.Intent?): List<Uri> {
+		if (resultCode != android.app.Activity.RESULT_OK || intent == null) {
+			return emptyList()
+		}
+		val uris = LinkedHashSet<Uri>()
+		intent.clipData?.let { clipData ->
+			for (i in 0 until clipData.itemCount) {
+				clipData.getItemAt(i).uri?.let { uris.add(it) }
+			}
+		}
+		intent.data?.let { uris.add(it) }
+		return uris.toList()
+	}
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(
@@ -300,15 +344,15 @@ fun BrowserScreen(
 		}
 	}
 
-	// 系统文件选择器（上传）
+	// 系统文件选择器（全部文件上传，支持顶部横向分类条自由切换）
 	val filePicker = rememberLauncherForActivityResult(
-		contract = ActivityResultContracts.OpenMultipleDocuments(),
+		contract = ActivityResultContracts.GetMultipleContents(),
 	) { uris ->
 		startUpload(uris, vm.path)
 	}
 
 	val photoPicker = rememberLauncherForActivityResult(
-		contract = ActivityResultContracts.PickMultipleVisualMedia(),
+		contract = GalleryAlbumPickerContract(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
 			val targetDir = if (vm.selectedAlbumPath.isNotBlank() && vm.selectedAlbumPath != "__ALL_FOLDERS__") vm.selectedAlbumPath else "Photos/默认相册"
@@ -317,7 +361,7 @@ fun BrowserScreen(
 	}
 
 	val videoPicker = rememberLauncherForActivityResult(
-		contract = ActivityResultContracts.PickMultipleVisualMedia(),
+		contract = GalleryAlbumPickerContract(),
 	) { uris ->
 		if (uris.isNotEmpty()) {
 			val targetDir = if (vm.selectedMediaPath.isNotBlank() && vm.selectedMediaPath != "__ALL_FOLDERS__") vm.selectedMediaPath else "movies/默认影集"
@@ -369,7 +413,7 @@ fun BrowserScreen(
 					MainTab.Files -> {
 						FilesTopBar(
 							vm = vm,
-							onUpload = { filePicker.launch(arrayOf("*/*")) },
+							onUpload = { filePicker.launch("*/*") },
 							onOpenTransferSheet = { showTransferSheet = true },
 							onToggleViewMode = { vm.cycleViewMode() },
 							onToggleMultiSelect = {
@@ -393,7 +437,7 @@ fun BrowserScreen(
 							activeTransferCount = vm.activeTransferCount,
 							hasUpdate = vm.hasUpdate,
 							onOpenUpdateDialog = { vm.openUpdateDialog() },
-							onUploadPhoto = { photoPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo)) },
+							onUploadPhoto = { photoPicker.launch("image/*") },
 							onUpAlbum = { vm.upAlbum() },
 							onCreateAlbum = { activeCreateType = CreateDialogType.Album },
 							onDeleteCurrentAlbum = if (vm.selectedAlbumPath == "Photos/默认相册" || vm.selectedAlbumPath.endsWith("/默认相册")) null else {
@@ -417,7 +461,7 @@ fun BrowserScreen(
 							activeTransferCount = vm.activeTransferCount,
 							hasUpdate = vm.hasUpdate,
 							onOpenUpdateDialog = { vm.openUpdateDialog() },
-							onUploadVideo = { videoPicker.launch(PickVisualMediaRequest(PickVisualMedia.VideoOnly)) },
+							onUploadVideo = { videoPicker.launch("video/*") },
 							onUpMedia = { vm.upMedia() },
 							onCreateMediaFolder = { activeCreateType = CreateDialogType.MediaFolder },
 							onDeleteCurrentMedia = if (vm.selectedMediaPath == "movies/默认影集" || vm.selectedMediaPath.endsWith("/默认影集") || vm.selectedMediaPath.endsWith("/默认影音")) null else {
@@ -631,13 +675,13 @@ fun BrowserScreen(
 					}
 				}
 
-				// 可自由拖拽吸附的悬浮上传球（按住任意拖动，松手平滑贴边，绝不挡列表底部）
-				if (!vm.isMultiSelectMode && mode == BrowserMode.Browse) {
+				// 可自由拖拽吸附的悬浮上传球（按住任意拖动，松手平滑贴边，绝不挡列表底部；首页不展示上传悬浮球）
+				if (!vm.isMultiSelectMode && mode == BrowserMode.Browse && vm.currentTab != MainTab.Home) {
 					DraggableUploadFab(
 						currentTab = vm.currentTab,
-						onUploadFile = { filePicker.launch(arrayOf("*/*")) },
-						onUploadPhoto = { photoPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo)) },
-						onUploadVideo = { videoPicker.launch(PickVisualMediaRequest(PickVisualMedia.VideoOnly)) },
+						onUploadFile = { filePicker.launch("*/*") },
+						onUploadPhoto = { photoPicker.launch("image/*") },
+						onUploadVideo = { videoPicker.launch("video/*") },
 					)
 				}
 
@@ -6648,7 +6692,7 @@ private fun DraggableUploadFab(
 	onUploadPhoto: () -> Unit,
 	onUploadVideo: () -> Unit,
 ) {
-	if (currentTab == MainTab.Me || currentTab == MainTab.Settings) return
+	if (currentTab == MainTab.Home || currentTab == MainTab.Me || currentTab == MainTab.Settings) return
 
 	BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
 		val density = LocalDensity.current
