@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NasDrop 家庭专属低资源实用功能 - 设计效果图</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --surface: #151c2e;
+      --card-bg: #1c263d;
+      --card-subtle: #182236;
+      --primary: #4f8cff;
+      --primary-gradient: linear-gradient(135deg, #4f8cff 0%, #38bdf8 100%);
+      --accent-warm: #f59e0b;
+      --accent-pink: #ec4899;
+      --accent-purple: #8b5cf6;
+      --accent-green: #10b981;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-focus: rgba(79, 140, 255, 0.4);
+      --font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-family);
+      line-height: 1.5;
+      padding: 32px 24px;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+
+    /* 顶部标题区 */
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 14px;
+      border-radius: 9999px;
+      font-size: 13px;
+      font-weight: 500;
+      background: rgba(79, 140, 255, 0.15);
+      color: #60a5fa;
+      border: 1px solid rgba(79, 140, 255, 0.3);
+      margin-bottom: 12px;
+    }
+    .header h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 8px;
+      letter-spacing: -0.5px;
+    }
+    .header p {
+      color: var(--text-muted);
+      font-size: 15px;
+    }
+
+    /* 主展示网格：双手机并列 */
+    .showcase-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 36px;
+      margin-bottom: 48px;
+    }
+
+    @media (max-width: 960px) {
+      .showcase-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .phone-column {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .category-header {
+      width: 100%;
+      max-width: 400px;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .category-title {
+      font-size: 18px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .category-tag {
+      font-size: 12px;
+      color: var(--accent-warm);
+      background: rgba(245, 158, 11, 0.12);
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(245, 158, 11, 0.25);
+    }
+    .category-tag.blue {
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.12);
+      border-color: rgba(56, 189, 248, 0.25);
+    }
+
+    /* 手机外壳模型 (Phone Mockup) */
+    .phone-mockup {
+      width: 390px;
+      height: 800px;
+      background: #0f172a;
+      border-radius: 44px;
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.7), 0 0 0 8px #1e293b, 0 0 0 10px rgba(255, 255, 255, 0.1);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    /* 顶部刘海/灵动岛与状态栏 */
+    .phone-status-bar {
+      height: 38px;
+      padding: 10px 24px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      font-weight: 600;
+      color: #e2e8f0;
+      z-index: 10;
+    }
+    .dynamic-island {
+      width: 90px;
+      height: 20px;
+      background: #000000;
+      border-radius: 20px;
+    }
+
+    /* 手机内部滚动容器 */
+    .phone-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .phone-content::-webkit-scrollbar { display: none; }
+
+    /* 模拟 App 顶栏 */
+    .app-topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 6px;
+    }
+    .app-logo-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .app-logo-icon {
+      width: 28px;
+      height: 28px;
+      background: var(--primary-gradient);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 14px;
+      color: white;
+    }
+    .app-title-text {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .app-sub-status {
+      font-size: 11px;
+      color: #10b981;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .online-dot {
+      width: 6px;
+      height: 6px;
+      background: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #10b981;
+    }
+
+    /* ===== 功能组件 1：家庭留言板/冰箱贴 ===== */
+    .fridge-board {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(217, 119, 6, 0.05) 100%);
+      border: 1px dashed rgba(245, 158, 11, 0.35);
+      border-radius: 16px;
+      padding: 12px 14px;
+      position: relative;
+    }
+    .fridge-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .fridge-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #fbbf24;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .fridge-action {
+      font-size: 11px;
+      color: #94a3b8;
+      cursor: pointer;
+    }
+    .sticky-note-card {
+      background: #242f49;
+      border-left: 4px solid #f59e0b;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+    }
+    .sticky-note-card:last-child { margin-bottom: 0; }
+    .note-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #94a3b8;
+      margin-bottom: 4px;
+    }
+    .note-author {
+      font-weight: 600;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .note-body {
+      font-size: 13px;
+      color: #f1f5f9;
+      line-height: 1.4;
+    }
+    .note-ack-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 6px;
+      font-size: 11px;
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.12);
+      padding: 2px 8px;
+      border-radius: 12px;
+    }
+
+    /* ===== 功能组件 2：成长月龄轴 ===== */
+    .milestone-section {
+      background: var(--surface);
+      border-radius: 18px;
+      padding: 14px;
+      border: 1px solid var(--border);
+    }
+    .member-chips {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+      overflow-x: auto;
+    }
+    .member-chip {
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: #1e293b;
+      color: #94a3b8;
+      border: 1px solid rgba(255,255,255,0.06);
+      white-space: nowrap;
+    }
+    .member-chip.active {
+      background: rgba(79, 140, 255, 0.2);
+      color: #60a5fa;
+      border-color: rgba(79, 140, 255, 0.5);
+    }
+
+    .timeline-group {
+      margin-bottom: 16px;
+    }
+    .timeline-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 8px;
+    }
+    .age-badge {
+      font-size: 14px;
+      font-weight: 700;
+      color: #f8fafc;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .age-badge span {
+      font-size: 11px;
+      color: #ec4899;
+      background: rgba(236, 72, 153, 0.15);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 500;
+    }
+    .photo-grid-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+    .photo-thumb {
+      aspect-ratio: 1;
+      border-radius: 10px;
+      background-size: cover;
+      background-position: center;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+    .photo-time-label {
+      position: absolute;
+      bottom: 4px;
+      left: 4px;
+      font-size: 10px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 1px 4px;
+      border-radius: 4px;
+      color: #e2e8f0;
+      backdrop-filter: blur(2px);
+    }
+    .voice-capsule-tag {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      background: rgba(79, 140, 255, 0.85);
+      color: #ffffff;
+      font-size: 9px;
+      font-weight: 600;
+      padding: 1px 5px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    /* ===== 功能组件 3：重要证件百宝箱 ===== */
+    .vault-section {
+      background: var(--surface);
+      border-radius: 18px;
+      padding: 14px;
+      border: 1px solid var(--border);
+    }
+    .vault-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .vault-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #f8fafc;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .security-status {
+      font-size: 11px;
+      color: #10b981;
+      background: rgba(16, 185, 129, 0.12);
+      padding: 2px 8px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .vault-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+      overflow-x: auto;
+    }
+    .vault-tab {
+      font-size: 11px;
+      padding: 4px 10px;
+      background: #1e293b;
+      border-radius: 6px;
+      color: #94a3b8;
+      white-space: nowrap;
+    }
+    .vault-tab.active {
+      background: #334155;
+      color: #f8fafc;
+      font-weight: 600;
+    }
+
+    .doc-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .doc-card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      border: 1px solid rgba(255,255,255,0.05);
+      position: relative;
+    }
+    .doc-icon-badge {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+    .badge-medical { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+    .badge-id { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+    .badge-house { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+    .badge-manual { background: rgba(139, 92, 246, 0.2); color: #a78bfa; }
+
+    .doc-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: #f1f5f9;
+      line-height: 1.3;
+    }
+    .doc-number {
+      font-size: 10px;
+      color: #94a3b8;
+      font-family: monospace;
+      letter-spacing: 0.5px;
+    }
+    .doc-action-bar {
+      margin-top: 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 10px;
+      color: #38bdf8;
+    }
+
+    /* ===== 功能组件 4：手机安全空间瘦身 ===== */
+    .cleaner-section {
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.9) 0%, rgba(15, 23, 42, 0.9) 100%);
+      border-radius: 18px;
+      padding: 14px;
+      border: 1px solid rgba(56, 189, 248, 0.2);
+    }
+    .cleaner-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .cleaner-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .storage-status-card {
+      background: #172033;
+      border-radius: 12px;
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+    .storage-circle {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: conic-gradient(#38bdf8 0% 75%, #334155 75% 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .storage-circle::before {
+      content: "";
+      position: absolute;
+      width: 40px;
+      height: 40px;
+      background: #172033;
+      border-radius: 50%;
+    }
+    .storage-circle span {
+      position: relative;
+      font-size: 11px;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+    .storage-info {
+      flex: 1;
+    }
+    .storage-info h4 {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f8fafc;
+      margin-bottom: 2px;
+    }
+    .storage-info p {
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    .clean-items-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .clean-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      background: #1a2438;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+    .clean-item-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .clean-checkbox {
+      width: 16px;
+      height: 16px;
+      background: #0284c7;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 10px;
+    }
+    .clean-btn {
+      width: 100%;
+      background: var(--primary-gradient);
+      color: white;
+      border: none;
+      padding: 10px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(56, 189, 248, 0.3);
+    }
+
+    /* 底部导航栏模拟 */
+    .phone-bottom-nav {
+      height: 54px;
+      background: #090e17;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      padding: 0 10px;
+      z-index: 10;
+    }
+    .nav-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      font-size: 10px;
+      color: #64748b;
+    }
+    .nav-item.active {
+      color: #38bdf8;
+      font-weight: 600;
+    }
+
+    /* 底部特性对照表卡片 */
+    .specs-card {
+      background: var(--surface);
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      padding: 24px 28px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+    }
+    .specs-card h3 {
+      font-size: 18px;
+      margin-bottom: 16px;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .specs-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .specs-table th {
+      text-align: left;
+      padding: 10px 14px;
+      background: rgba(255,255,255,0.03);
+      color: #94a3b8;
+      border-bottom: 1px solid var(--border);
+    }
+    .specs-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      color: #e2e8f0;
+    }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .pill-green { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+    .pill-blue { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
+    .pill-orange { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- 顶栏标题 -->
+    <header class="header">
+      <div class="badge">✨ NasDrop 家庭专属体验设计方案</div>
+      <h1>适合家人之间的低资源实用功能视觉效果图</h1>
+      <p>零重型后端负担 · 纯端侧与轻量 WebDAV 驱动 · 聚焦家庭情感连接与生活痛点</p>
+    </header>
+
+    <!-- 双屏效果图对比展示 -->
+    <div class="showcase-grid">
+
+      <!-- 左屏：家庭温情与记录类 -->
+      <div class="phone-column">
+        <div class="category-header">
+          <div class="category-title">
+            <span>🏡</span> 家庭温情与记录类
+          </div>
+          <span class="category-tag">情感连接 · 温暖回忆</span>
+        </div>
+
+        <div class="phone-mockup">
+          <!-- 状态栏 -->
+          <div class="phone-status-bar">
+            <span>14:30</span>
+            <div class="dynamic-island"></div>
+            <span>5G 📶 92%</span>
+          </div>
+
+          <!-- 内容区 -->
+          <div class="phone-content">
+            <!-- App 顶栏 -->
+            <div class="app-topbar">
+              <div class="app-logo-box">
+                <div class="app-logo-icon">N</div>
+                <div>
+                  <div class="app-title-text">我们的家 · 温馨空间</div>
+                  <div class="app-sub-status"><span class="online-dot"></span> 3 位家人在线 (Tailscale)</div>
+                </div>
+              </div>
+              <div style="font-size: 18px;">⚙️</div>
+            </div>
+
+            <!-- 组件 1：家庭冰箱留言板 -->
+            <div class="fridge-board">
+              <div class="fridge-header">
+                <div class="fridge-title">
+                  <span>📌</span> 家庭冰箱贴 · 留言板
+                </div>
+                <div class="fridge-action">+ 贴便签</div>
+              </div>
+
+              <!-- 便签卡片 1 -->
+              <div class="sticky-note-card">
+                <div class="note-meta">
+                  <span class="note-author">👩 妈妈</span>
+                  <span>10分钟前</span>
+                </div>
+                <div class="note-body">切好的西瓜在冰箱保鲜层，晚上回来记得吃，别放太久啦！🍉</div>
+                <div class="note-ack-btn">❤️ 爸爸已读 · 2人看到</div>
+              </div>
+
+              <!-- 便签卡片 2 -->
+              <div class="sticky-note-card" style="border-left-color: #38bdf8;">
+                <div class="note-meta">
+                  <span class="note-author">👨 爸爸</span>
+                  <span>今天 08:30</span>
+                </div>
+                <div class="note-body">家里客厅电视已连好 NAS，晚上大家一起看小宝百日宴录像 🎬</div>
+              </div>
+            </div>
+
+            <!-- 组件 2：成长月龄轴 -->
+            <div class="milestone-section">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <div style="font-size: 14px; font-weight: 700; color: #f8fafc;">👶 成长足迹相册</div>
+                <div style="font-size: 11px; color: #ec4899; font-weight: 600;">生日: 2023.07.16</div>
+              </div>
+
+              <!-- 成员切换 -->
+              <div class="member-chips">
+                <div class="member-chip active">👶 小宝 (1岁4个月)</div>
+                <div class="member-chip">🐱 咪咪 (2岁)</div>
+                <div class="member-chip">+ 添加成员</div>
+              </div>
+
+              <!-- 时间流 1：1岁4个月 -->
+              <div class="timeline-group">
+                <div class="timeline-header">
+                  <div class="age-badge">
+                    1岁4个月 <span>本月精选</span>
+                  </div>
+                  <span style="font-size: 11px; color: #94a3b8;">12 张 · 2段录音</span>
+                </div>
+                <div class="photo-grid-row">
+                  <div class="photo-thumb" style="background: linear-gradient(135deg, #fbc2eb 0%, #a6c1ee 100%);">
+                    <span class="voice-capsule-tag">🎵 0:24</span>
+                    <span class="photo-time-label">第一次叫妈妈</span>
+                  </div>
+                  <div class="photo-thumb" style="background: linear-gradient(135deg, #fdcbf1 0%, #e6dee9 100%);">
+                    <span class="photo-time-label">在草地上跑</span>
+                  </div>
+                  <div class="photo-thumb" style="background: linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%);">
+                    <span class="photo-time-label">吃草莓冰淇淋</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 时间流 2：1岁3个月 -->
+              <div class="timeline-group" style="margin-bottom: 0;">
+                <div class="timeline-header">
+                  <div class="age-badge">
+                    1岁3个月 <span>学会走路</span>
+                  </div>
+                  <span style="font-size: 11px; color: #94a3b8;">18 张</span>
+                </div>
+                <div class="photo-grid-row">
+                  <div class="photo-thumb" style="background: linear-gradient(135deg, #d4fc79 0%, #96e6a1 100%);">
+                    <span class="photo-time-label">第一步稳稳的</span>
+                  </div>
+                  <div class="photo-thumb" style="background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);">
+                    <span class="voice-capsule-tag">🎵 0:45</span>
+                    <span class="photo-time-label">爷爷拍手鼓励</span>
+                  </div>
+                  <div class="photo-thumb" style="background: linear-gradient(135deg, #cfd9df 0%, #e2ebf0 100%);">
+                    <span class="photo-time-label">海边吹风</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 底部栏 -->
+          <div class="phone-bottom-nav">
+            <div class="nav-item active">
+              <span style="font-size: 16px;">🏡</span>
+              <span>温情家庭</span>
+            </div>
+            <div class="nav-item">
+              <span style="font-size: 16px;">🖼️</span>
+              <span>相册浏览</span>
+            </div>
+            <div class="nav-item">
+              <span style="font-size: 16px;">✨</span>
+              <span>那年今天</span>
+            </div>
+            <div class="nav-item">
+              <span style="font-size: 16px;">📂</span>
+              <span>全部文件</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右屏：互助与生活救急类 -->
+      <div class="phone-column">
+        <div class="category-header">
+          <div class="category-title">
+            <span>🛡️</span> 互助与生活救急类
+          </div>
+          <span class="category-tag blue">办事实用 · 省心护航</span>
+        </div>
+
+        <div class="phone-mockup">
+          <!-- 状态栏 -->
+          <div class="phone-status-bar">
+            <span>14:30</span>
+            <div class="dynamic-island"></div>
+            <span>5G 📶 92%</span>
+          </div>
+
+          <!-- 内容区 -->
+          <div class="phone-content">
+            <!-- App 顶栏 -->
+            <div class="app-topbar">
+              <div class="app-logo-box">
+                <div class="app-logo-icon" style="background: linear-gradient(135deg, #0ea5e9 0%, #3b82f6 100%);">🛡️</div>
+                <div>
+                  <div class="app-title-text">家庭百宝箱 & 工具</div>
+                  <div class="app-sub-status"><span class="online-dot"></span> 生物识别安全锁已开启</div>
+                </div>
+              </div>
+              <div style="font-size: 18px;">🔒</div>
+            </div>
+
+            <!-- 组件 3：家庭常用证照 Vault -->
+            <div class="vault-section">
+              <div class="vault-top">
+                <div class="vault-title">
+                  <span>🗄️</span> 常用证件与紧急资料
+                </div>
+                <div class="security-status">
+                  <span>✓</span> 指纹验证保护
+                </div>
+              </div>
+
+              <!-- 分类 Tabs -->
+              <div class="vault-tabs">
+                <div class="vault-tab active">全部 (16)</div>
+                <div class="vault-tab">医疗医保</div>
+                <div class="vault-tab">户口身份</div>
+                <div class="vault-tab">房屋物业</div>
+                <div class="vault-tab">家电说明书</div>
+              </div>
+
+              <!-- 证件卡片网格 -->
+              <div class="doc-grid">
+                <!-- 卡片 1 -->
+                <div class="doc-card">
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div class="doc-icon-badge badge-medical">🏥</div>
+                    <span style="font-size: 10px; color: #10b981;">高频使用</span>
+                  </div>
+                  <div class="doc-name">小宝医保凭证码</div>
+                  <div class="doc-number">ID: 110108********4213</div>
+                  <div class="doc-action-bar">
+                    <span>点击看高清原件</span>
+                    <span>复制号码</span>
+                  </div>
+                </div>
+
+                <!-- 卡片 2 -->
+                <div class="doc-card">
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div class="doc-icon-badge badge-id">📄</div>
+                    <span style="font-size: 10px; color: #64748b;">全家人</span>
+                  </div>
+                  <div class="doc-name">户口簿首页与常住页</div>
+                  <div class="doc-number">4 张高清扫描件</div>
+                  <div class="doc-action-bar">
+                    <span>打开合辑 ➔</span>
+                  </div>
+                </div>
+
+                <!-- 卡片 3 -->
+                <div class="doc-card">
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div class="doc-icon-badge badge-house">🔥</div>
+                    <span style="font-size: 10px; color: #f59e0b;">缴费卡号</span>
+                  </div>
+                  <div class="doc-name">燃气表 IC 卡与户号</div>
+                  <div class="doc-number">户号: 0288-41092</div>
+                  <div class="doc-action-bar">
+                    <span>一键复制缴费</span>
+                  </div>
+                </div>
+
+                <!-- 卡片 4 -->
+                <div class="doc-card">
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div class="doc-icon-badge badge-manual">📖</div>
+                    <span style="font-size: 10px; color: #8b5cf6;">PDF</span>
+                  </div>
+                  <div class="doc-name">客厅格力空调说明书</div>
+                  <div class="doc-number">附遥控器故障码表</div>
+                  <div class="doc-action-bar">
+                    <span>翻看文档 ➔</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 组件 4：手机安全空间瘦身 -->
+            <div class="cleaner-section">
+              <div class="cleaner-header">
+                <div class="cleaner-title">
+                  <span>🧹</span> 手机一键安全瘦身
+                </div>
+                <span style="font-size: 11px; color: #38bdf8;">已严格对齐 NAS 备份</span>
+              </div>
+
+              <!-- 存储现状卡片 -->
+              <div class="storage-status-card">
+                <div class="storage-circle">
+                  <span>78%</span>
+                </div>
+                <div class="storage-info">
+                  <h4>手机空间即将告急</h4>
+                  <p>本地剩余 14.2 GB / 128 GB</p>
+                  <p style="color: #38bdf8; font-weight: 500; margin-top: 2px;">可安全腾出 <strong>18.6 GB</strong> 空间</p>
+                </div>
+              </div>
+
+              <!-- 清理项目清单 -->
+              <div class="clean-items-list">
+                <div class="clean-item">
+                  <div class="clean-item-left">
+                    <div class="clean-checkbox">✓</div>
+                    <div>
+                      <div style="font-weight: 600; color: #f1f5f9;">已完整备份的 4K 视频</div>
+                      <div style="font-size: 10px; color: #94a3b8;">共 24 个大视频 · NAS 已存有原盘</div>
+                    </div>
+                  </div>
+                  <span style="color: #38bdf8; font-weight: 600;">14.2 GB</span>
+                </div>
+
+                <div class="clean-item">
+                  <div class="clean-item-left">
+                    <div class="clean-checkbox">✓</div>
+                    <div>
+                      <div style="font-weight: 600; color: #f1f5f9;">已同步完成的照片</div>
+                      <div style="font-size: 10px; color: #94a3b8;">共 1,320 张照片 · 本地只留轻量缩略图</div>
+                    </div>
+                  </div>
+                  <span style="color: #38bdf8; font-weight: 600;">4.4 GB</span>
+                </div>
+              </div>
+
+              <!-- 安全清理按钮 -->
+              <button class="clean-btn">
+                <span>🛡️</span> 一键释放 18.6 GB 手机空间 (仅删本地)
+              </button>
+            </div>
+
+          </div>
+
+          <!-- 底部栏 -->
+          <div class="phone-bottom-nav">
+            <div class="nav-item">
+              <span style="font-size: 16px;">🏡</span>
+              <span>温情家庭</span>
+            </div>
+            <div class="nav-item">
+              <span style="font-size: 16px;">🖼️</span>
+              <span>相册浏览</span>
+            </div>
+            <div class="nav-item active">
+              <span style="font-size: 16px;">🛡️</span>
+              <span>百宝箱</span>
+            </div>
+            <div class="nav-item">
+              <span style="font-size: 16px;">📂</span>
+              <span>全部文件</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 技术实现与低资源原理说明 -->
+    <div class="specs-card">
+      <h3>⚡ 低资源特性与实现架构解析</h3>
+      <table class="specs-table">
+        <thead>
+          <tr>
+            <th style="width: 20%;">功能模块</th>
+            <th style="width: 25%;">家庭实际场景与价值</th>
+            <th style="width: 35%;">技术实现方案 (为什么超低资源)</th>
+            <th style="width: 20%;">开发与部署成本</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>🍼 宝宝/成长月龄轴</strong></td>
+            <td>长辈和父母最爱的回忆方式，替代冰冷公历日期，按小宝“X岁X月X天”直观回看。</td>
+            <td><strong>零 NAS 负担</strong>。纯前端利用已有照片 EXIF 拍摄时间与预设生日动态换算，端侧本地分组排版。</td>
+            <td><span class="pill pill-green">极低 · 纯客户端</span></td>
+          </tr>
+          <tr>
+            <td><strong>📌 家庭冰箱贴留言板</strong></td>
+            <td>家人间留便签、备忘提醒、WiFi密码，解决微信消息容易被冲淡、老人容易忘记的痛点。</td>
+            <td><strong>单文件 WebDAV</strong>。NAS 端仅维护一个 2KB 的 <code>family_notes.json</code>，客户端轻量 PUT/GET，秒开秒响应。</td>
+            <td><span class="pill pill-green">极低 · 单 JSON</span></td>
+          </tr>
+          <tr>
+            <td><strong>🎵 声音记忆胶囊</strong></td>
+            <td>留存老人说方言故事、宝宝牙牙学语。比冷冰冰的照片更有沉浸感动。</td>
+            <td>同目录下生成轻量 <code>.m4a</code> 音频文件（几十KB），相册检测同名音频即悬浮展示播放波形，不占用转码资源。</td>
+            <td><span class="pill pill-blue">低 · 标准音频</span></td>
+          </tr>
+          <tr>
+            <td><strong>🗄️ 重要证照百宝箱</strong></td>
+            <td>就医、孩子报名、缴燃气费时快速调出医保卡、户口本、维修卡，带指纹安全锁。</td>
+            <td>约定 <code>_FamilyVault/</code> 特殊文件夹或标星目录，手机本地离线持久化缩略图 + Android 生物识别 BiometricPrompt。</td>
+            <td><span class="pill pill-blue">低 · 目录书签+锁</span></td>
+          </tr>
+          <tr>
+            <td><strong>🧹 手机安全空间瘦身</strong></td>
+            <td>长辈和家人手机容量常年爆满（64G/128G），不敢乱删照片导致手机卡顿。</td>
+            <td>端侧比对已上传到 NAS 的完整哈希/时间大小列表，精准筛选已完备备份文件，通过 MediaStore 仅删除手机本地副本。</td>
+            <td><span class="pill pill-orange">中低 · 客户端比对</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+
+</body>
+</html>

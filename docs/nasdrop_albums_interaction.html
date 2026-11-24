@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NasDrop 相册交互真相 - 怎样看海量相册与点进相册的完整逻辑</title>
+  <style>
+    :root {
+      --bg: #0b0e14;
+      --phone-shell: #121722;
+      --card-bg: #192234;
+      --primary: #3b82f6;
+      --accent-pink: #ec4899;
+      --accent-emerald: #10b981;
+      --accent-amber: #f59e0b;
+      --text-1: #f8fafc;
+      --text-2: #94a3b8;
+      --text-3: #64748b;
+      --border: rgba(255, 255, 255, 0.08);
+      --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text-1);
+      font-family: var(--font);
+      padding: 30px 20px;
+      line-height: 1.45;
+    }
+
+    .wrap {
+      max-width: 1140px;
+      margin: 0 auto;
+    }
+
+    /* 顶部标题区 */
+    .header-box {
+      text-align: center;
+      margin-bottom: 26px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(59, 130, 246, 0.12);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: #60a5fa;
+      font-size: 12px;
+      padding: 3px 12px;
+      border-radius: 20px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+    .header-box h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+    .header-box p {
+      font-size: 13px;
+      color: var(--text-2);
+    }
+
+    /* 双机并列 */
+    .showcase-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+      margin-bottom: 32px;
+    }
+    @media (max-width: 860px) {
+      .showcase-grid { grid-template-columns: 1fr; }
+    }
+
+    .col-title-wrap {
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .col-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .col-badge {
+      font-size: 11px;
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.12);
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    /* 真实手机模型 */
+    .phone-mock {
+      width: 100%;
+      max-width: 410px;
+      margin: 0 auto;
+      height: 840px;
+      background: var(--phone-shell);
+      border-radius: 38px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.8), 0 0 0 6px #1b212f;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* 状态栏 */
+    .status-bar {
+      height: 34px;
+      padding: 6px 20px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #94a3b8;
+      font-weight: 600;
+      z-index: 20;
+    }
+    .island {
+      width: 76px;
+      height: 16px;
+      background: #000;
+      border-radius: 12px;
+    }
+
+    /* 顶栏 PhotosTopBar */
+    .top-bar {
+      padding: 8px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 10;
+    }
+    .top-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .top-actions {
+      display: flex;
+      gap: 14px;
+      color: var(--text-2);
+      font-size: 16px;
+    }
+
+    /* 视口滚动内容 */
+    .scroll-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 14px 80px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .scroll-body::-webkit-scrollbar { display: none; }
+
+    /* =========================================================
+       相册顶部的原生胶囊横滑栏 (LazyRow)
+       ========================================================= */
+    .capsule-row {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 2px 0 4px;
+      flex-shrink: 0;
+    }
+    .capsule-row::-webkit-scrollbar { display: none; }
+
+    .capsule-item {
+      height: 34px;
+      border-radius: 17px;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #cbd5e1;
+      white-space: nowrap;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .capsule-item.active {
+      background: var(--primary);
+      color: #fff;
+      font-weight: 700;
+      border-color: transparent;
+      box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+    }
+    .capsule-dots {
+      color: rgba(255,255,255,0.4);
+      margin-left: 2px;
+      font-size: 14px;
+    }
+
+    /* =========================================================
+       视图 A：海量相册大网格 (AlbumFoldersGrid 完整展开)
+       ========================================================= */
+    .grid-info-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--text-2);
+      padding: 2px 2px;
+    }
+
+    .album-grid-2col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .album-box-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    }
+    .album-box-cover {
+      width: 100%;
+      aspect-ratio: 1;
+      border-radius: 10px;
+      background-size: cover;
+      background-position: center;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .album-box-badge {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      font-size: 9px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 2px 6px;
+      border-radius: 4px;
+      backdrop-filter: blur(4px);
+    }
+    .album-box-lock {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      background: rgba(16, 185, 129, 0.2);
+      color: #10b981;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      font-size: 9px;
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    .album-box-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f8fafc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .album-box-meta {
+      font-size: 11px;
+      color: var(--text-3);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* 新建相册虚线卡片 */
+    .create-card {
+      border: 1.5px dashed rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.02);
+      border-radius: 14px;
+      aspect-ratio: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      color: var(--text-2);
+      cursor: pointer;
+    }
+
+    /* =========================================================
+       视图 B：点进某个相册内部 (PhotoTimelineContent 时光流)
+       ========================================================= */
+    .cur-album-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.25);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: #93c5fd;
+    }
+    .cur-album-bar span strong {
+      color: #fff;
+    }
+
+    /* 当天时间轴 */
+    .day-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      position: relative;
+    }
+    .day-line {
+      position: absolute;
+      top: 26px;
+      bottom: 6px;
+      left: 6px;
+      width: 2px;
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .day-header-line {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .day-h-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .day-h-stat {
+      font-size: 11px;
+      color: var(--text-3);
+    }
+
+    /* 多时间点时刻块 */
+    .moment-row {
+      display: flex;
+      gap: 10px;
+      position: relative;
+      z-index: 2;
+    }
+    .moment-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--phone-shell);
+      border: 3px solid var(--primary);
+      margin-top: 4px;
+      flex-shrink: 0;
+    }
+    .moment-body {
+      flex: 1;
+    }
+    .moment-head {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      margin-bottom: 5px;
+    }
+    .moment-time {
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+    .moment-loc {
+      color: var(--text-3);
+    }
+
+    .photos-grid-row {
+      display: grid;
+      gap: 4px;
+    }
+    .photos-grid-row.two { grid-template-columns: 1fr 1fr; }
+    .photos-grid-row.three { grid-template-columns: repeat(3, 1fr); }
+
+    .photo-tile {
+      aspect-ratio: 1;
+      border-radius: 6px;
+      background-size: cover;
+      background-position: center;
+      position: relative;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .photo-mini-tag {
+      position: absolute;
+      bottom: 3px;
+      left: 3px;
+      font-size: 8px;
+      background: rgba(0, 0, 0, 0.65);
+      color: #fff;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+
+    /* 语音伴随胶囊 */
+    .audio-pill {
+      margin-top: 5px;
+      background: rgba(59, 130, 246, 0.12);
+      border: 1px solid rgba(59, 130, 246, 0.25);
+      border-radius: 6px;
+      padding: 4px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #93c5fd;
+    }
+
+    /* =========================================================
+       底栏：正宗悬浮 CommercialNavigationBar
+       ========================================================= */
+    .commercial-nav {
+      position: absolute;
+      bottom: 12px;
+      left: 18px;
+      right: 18px;
+      height: 56px;
+      background: rgba(22, 28, 40, 0.75);
+      backdrop-filter: blur(20px);
+      border-radius: 28px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      padding: 0 10px;
+      z-index: 25;
+    }
+    .nav-pill {
+      flex: 1;
+      height: 42px;
+      border-radius: 21px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #94a3b8;
+    }
+    .nav-pill.active {
+      background: rgba(59, 130, 246, 0.22);
+      color: #60a5fa;
+      font-weight: 700;
+      border: 1px solid rgba(59, 130, 246, 0.35);
+    }
+
+    /* 说明底卡 */
+    .explain-card {
+      background: #141a27;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 22px;
+    }
+    .explain-card h3 {
+      font-size: 15px;
+      color: #fff;
+      margin-bottom: 10px;
+    }
+    .explain-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      font-size: 12px;
+    }
+    @media (max-width: 768px) { .explain-grid { grid-template-columns: 1fr; } }
+    .exp-box {
+      background: rgba(255, 255, 255, 0.02);
+      padding: 10px 12px;
+      border-radius: 8px;
+      border-left: 2px solid var(--primary);
+    }
+    .exp-box strong { color: #f1f5f9; display: block; margin-bottom: 3px; }
+    .exp-box span { color: var(--text-2); line-height: 1.4; }
+  </style>
+</head>
+<body>
+
+  <div class="wrap">
+    <!-- 顶栏标题 -->
+    <div class="header-box">
+      <div class="badge">📖 原生交互全景拆解</div>
+      <h1>NasDrop 怎么看海量相册？—— 完整交互流转全貌</h1>
+      <p>点击「全部相册」展开海报海量书架 · 点击具体相册下潜看「多时刻时光流」</p>
+    </div>
+
+    <!-- 双机交互对比流转 -->
+    <div class="showcase-grid">
+
+      <!-- 左机：点击「全部相册」胶囊后的视图 (海量相册书架网格) -->
+      <div>
+        <div class="col-title-wrap">
+          <div class="col-title">
+            <span>📚 视图 A：怎么看那么多相册？</span>
+          </div>
+          <span class="col-badge">点选「全部相册」胶囊</span>
+        </div>
+
+        <div class="phone-mock">
+          <!-- 状态栏 -->
+          <div class="status-bar">
+            <span>14:30</span>
+            <div class="island"></div>
+            <span>5G 📶 92%</span>
+          </div>
+
+          <!-- 顶栏 -->
+          <div class="top-bar">
+            <span class="top-title">相册</span>
+            <div class="top-actions">
+              <span>🔍</span>
+              <span>➕ 新建</span>
+              <span>⋮</span>
+            </div>
+          </div>
+
+          <!-- 视口 -->
+          <div class="scroll-body">
+            <!-- 顶部胶囊横滑栏：当前选中第一个「全部相册」 -->
+            <div class="capsule-row">
+              <div class="capsule-item active">
+                <span>📁 全部相册 (8)</span>
+              </div>
+              <div class="capsule-item">
+                <span>🖼️ 全部照片</span>
+              </div>
+              <div class="capsule-item">
+                <span>宝宝成长</span>
+              </div>
+              <div class="capsule-item">
+                <span>青岛海边</span>
+              </div>
+            </div>
+
+            <!-- 主内容：完整的海量相册海报网格 (AlbumFoldersGrid) -->
+            <div class="grid-info-bar">
+              <span>所有文件夹相册 (共 8 个)</span>
+              <span style="font-size: 11px; color: #64748b;">按更新时间排序 ▾</span>
+            </div>
+
+            <div class="album-grid-2col">
+              <!-- 相册 1：那年今天 (智能相册) -->
+              <div class="album-box-card">
+                <div class="album-box-cover" style="background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);">
+                  <span style="font-size: 28px;">✨</span>
+                  <span class="album-box-badge">3年前的今天</span>
+                </div>
+                <div class="album-box-title">那年今天</div>
+                <div class="album-box-meta">
+                  <span>18 项照片视频</span>
+                  <span>今日回忆</span>
+                </div>
+              </div>
+
+              <!-- 相册 2：家庭证照 (加密相册) -->
+              <div class="album-box-card">
+                <div class="album-box-cover" style="background: linear-gradient(135deg, #0e7490 0%, #1e293b 100%);">
+                  <span style="font-size: 28px;">🔒</span>
+                  <span class="album-box-badge">重要资料</span>
+                  <span class="album-box-lock">已加锁</span>
+                </div>
+                <div class="album-box-title">家庭证照百宝箱</div>
+                <div class="album-box-meta">
+                  <span>12 份原件扫描</span>
+                  <span>指纹保护</span>
+                </div>
+              </div>
+
+              <!-- 相册 3：宝宝日常 (高频影集) -->
+              <div class="album-box-card">
+                <div class="album-box-cover" style="background: linear-gradient(135deg, #f43f5e, #fb7185);">
+                  <span style="font-size: 28px;">👶</span>
+                  <span class="album-box-badge">1岁4个月</span>
+                </div>
+                <div class="album-box-title">小宝成长时光</div>
+                <div class="album-box-meta">
+                  <span>320 张</span>
+                  <span>今天更新</span>
+                </div>
+              </div>
+
+              <!-- 相册 4：默认相册 (系统相册) -->
+              <div class="album-box-card">
+                <div class="album-box-cover" style="background: linear-gradient(135deg, #334155, #1e293b);">
+                  <span style="font-size: 28px;">📱</span>
+                  <span class="album-box-badge">手机备份</span>
+                </div>
+                <div class="album-box-title">默认相册</div>
+                <div class="album-box-meta">
+                  <span>1,420 张</span>
+                  <span>自动同步</span>
+                </div>
+              </div>
+
+              <!-- 相册 5：国庆旅行相册 -->
+              <div class="album-box-card">
+                <div class="album-box-cover" style="background: linear-gradient(135deg, #0284c7, #38bdf8);">
+                  <span style="font-size: 28px;">🏖️</span>
+                  <span class="album-box-badge">旅行精选</span>
+                </div>
+                <div class="album-box-title">青岛海边度假</div>
+                <div class="album-box-meta">
+                  <span>186 张</span>
+                  <span>2024.10</span>
+                </div>
+              </div>
+
+              <!-- 相册 6：新建相册入口 -->
+              <div class="create-card">
+                <span style="font-size: 28px; color: #38bdf8;">➕</span>
+                <span style="font-size: 12px; font-weight: 600; color: #e2e8f0;">新建相册</span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 原生胶囊底栏 -->
+          <div class="commercial-nav">
+            <div class="nav-pill"><span>📁</span><span>文件</span></div>
+            <div class="nav-pill active"><span>🖼️</span><span>相册</span></div>
+            <div class="nav-pill"><span>🎬</span><span>影音</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右机：点进具体相册「小宝成长时光」后的视图 (多时刻照片流) -->
+      <div>
+        <div class="col-title-wrap">
+          <div class="col-title">
+            <span>⏱️ 视图 B：点进具体相册后怎么看？</span>
+          </div>
+          <span class="col-badge" style="background: rgba(236,72,153,0.12); color: #f472b6;">点进「小宝成长时光」相册</span>
+        </div>
+
+        <div class="phone-mock">
+          <!-- 状态栏 -->
+          <div class="status-bar">
+            <span>14:30</span>
+            <div class="island"></div>
+            <span>5G 📶 92%</span>
+          </div>
+
+          <!-- 顶栏：显示当前相册，带返回与操作 -->
+          <div class="top-bar">
+            <span class="top-title">小宝成长时光</span>
+            <div class="top-actions">
+              <span>🔍</span>
+              <span>➕ 上传</span>
+              <span>⋮</span>
+            </div>
+          </div>
+
+          <!-- 视口 -->
+          <div class="scroll-body">
+            <!-- 顶部胶囊横滑栏：自动高亮选中的相册胶囊（末尾三点可直接管理） -->
+            <div class="capsule-row">
+              <div class="capsule-item">
+                <span>📁 全部相册</span>
+              </div>
+              <div class="capsule-item">
+                <span>🖼️ 全部照片</span>
+              </div>
+              <div class="capsule-item active">
+                <span>👶 小宝成长时光</span>
+                <span class="capsule-dots">⋮</span>
+              </div>
+              <div class="capsule-item">
+                <span>青岛海边</span>
+              </div>
+            </div>
+
+            <!-- 当前相册信息提示条 -->
+            <div class="cur-album-bar">
+              <span>当前相册: <strong>小宝成长时光</strong> (320项)</span>
+              <span style="color: #60a5fa; cursor: pointer;">长按照片多选 ➔</span>
+            </div>
+
+            <!-- 相册内部的照片流：按具体时刻排布！ -->
+            <div class="day-group">
+              <div class="day-line"></div>
+
+              <div class="day-header-line">
+                <span class="day-h-title">11月23日 · 今天</span>
+                <span class="day-h-stat">8 张照片 · 1段语音</span>
+              </div>
+
+              <!-- 时刻 1：09:20 晨起 -->
+              <div class="moment-row">
+                <div class="moment-dot"></div>
+                <div class="moment-body">
+                  <div class="moment-head">
+                    <span class="moment-time">☀️ 09:20 · 早餐自己拿木勺</span>
+                    <span class="moment-loc">客厅</span>
+                  </div>
+                  <div class="photos-grid-row two">
+                    <div class="photo-tile" style="background: linear-gradient(135deg, #f43f5e, #fb7185);">
+                      <span class="photo-mini-tag">自己拿木勺吃</span>
+                    </div>
+                    <div class="photo-tile" style="background: linear-gradient(135deg, #fb7185, #fda4af);">
+                      <span class="photo-mini-tag">满脸酸奶</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 时刻 2：14:15 公园踩落叶 -->
+              <div class="moment-row">
+                <div class="moment-dot" style="border-color: #ec4899;"></div>
+                <div class="moment-body">
+                  <div class="moment-head">
+                    <span class="moment-time">🍂 14:15 · 奥森公园踩落叶</span>
+                    <span class="moment-loc">奥森公园 · 3张</span>
+                  </div>
+                  <div class="photos-grid-row three">
+                    <div class="photo-tile" style="background: linear-gradient(135deg, #d97706, #f59e0b);">
+                      <span class="photo-mini-tag">红马甲小跑</span>
+                    </div>
+                    <div class="photo-tile" style="background: linear-gradient(135deg, #f59e0b, #fbbf24);"></div>
+                    <div class="photo-tile" style="background: linear-gradient(135deg, #fbbf24, #fde68a);"></div>
+                  </div>
+                  <!-- 伴随录音小条 -->
+                  <div class="audio-pill">
+                    <span>▶️ 踩碎银杏叶的咯咯笑声</span>
+                    <span style="font-family: monospace;">00:24</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 时刻 3：18:40 晚饭合照 -->
+              <div class="moment-row">
+                <div class="moment-dot"></div>
+                <div class="moment-body">
+                  <div class="moment-head">
+                    <span class="moment-time">🍲 18:40 · 爷爷家吃长寿面</span>
+                    <span class="moment-loc">餐厅</span>
+                  </div>
+                  <div class="photos-grid-row two">
+                    <div class="photo-tile" style="background: linear-gradient(135deg, #1d4ed8, #3b82f6);">
+                      <span class="photo-mini-tag">全家合照 ▶ 01:15</span>
+                    </div>
+                    <div class="photo-tile" style="background: linear-gradient(135deg, #3b82f6, #60a5fa);"></div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+
+          <!-- 原生胶囊底栏 -->
+          <div class="commercial-nav">
+            <div class="nav-pill"><span>📁</span><span>文件</span></div>
+            <div class="nav-pill active"><span>🖼️</span><span>相册</span></div>
+            <div class="nav-pill"><span>🎬</span><span>影音</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 交互说明总结 -->
+    <div class="explain-card">
+      <h3>💡 核心交互流转逻辑（完全基于当前源码现实）</h3>
+      <div class="explain-grid">
+        <div class="exp-box">
+          <strong>1. 怎么浏览这几十个、上百个相册？</strong>
+          <span>点顶部第 1 个胶囊「全部相册」，整屏直接切换为【海报卡片大网格】（左机）。几十个相册像书架一样上下滑，每个相册都有大封面、标题和数量。</span>
+        </div>
+        <div class="exp-box">
+          <strong>2. 怎么点进具体的相册看细节？</strong>
+          <span>在相册墙上点击任何一个相册（例如点「小宝成长时光」），立刻切入该相册内部（右机），顶部胶囊自动同步定位，主区域展示该相册内的多时刻时光流。</span>
+        </div>
+        <div class="exp-box">
+          <strong>3. 高频相册如何秒切？</strong>
+          <span>顶部胶囊条只保留最常用的几个置顶相册，支持长按拖拽排序。手指左右滑一下胶囊就能秒切，不用每次都退回全部相册。</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NasDrop 界面统一与体验升级设计图</title>
+<style>
+  :root {
+    --bg-page: #0f172a;
+    --card-bg: #1e293b;
+    --border: #334155;
+    --primary: #3b82f6;
+    --primary-light: #60a5fa;
+    --primary-container: rgba(59, 130, 246, 0.15);
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --success: #10b981;
+    --accent: #f59e0b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg-page);
+    color: var(--text-primary);
+    padding: 24px;
+    line-height: 1.5;
+  }
+  .header-banner {
+    max-width: 1080px;
+    margin: 0 auto 32px;
+    padding: 24px;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.16), rgba(16, 185, 129, 0.08));
+    border: 1px solid var(--border);
+    border-radius: 16px;
+  }
+  .header-banner h1 {
+    font-size: 24px;
+    font-weight: 800;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .header-banner p {
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+  .section-title {
+    max-width: 1080px;
+    margin: 36px auto 16px;
+    font-size: 18px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-title span.badge {
+    font-size: 11px;
+    background: var(--primary-container);
+    color: var(--primary-light);
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-weight: 600;
+  }
+  .grid-2 {
+    max-width: 1080px;
+    margin: 0 auto 32px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+    gap: 20px;
+  }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .card-header-tag {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--primary-light);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .phone-screen {
+    background: #090d16;
+    border: 1px solid #1e293b;
+    border-radius: 14px;
+    padding: 0;
+    overflow: hidden;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+  }
+  .phone-top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 54px;
+    padding: 0 12px;
+    background: #0f172a;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .title-area {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .title-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .title-text {
+    font-size: 16px;
+    font-weight: 800;
+    color: #f8fafc;
+    letter-spacing: -0.3px;
+  }
+  .network-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    padding: 1px 7px;
+    border-radius: 12px;
+    font-size: 10px;
+    color: #34d399;
+    font-weight: 600;
+  }
+  .network-badge .dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #10b981;
+  }
+  .sub-text {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    margin-top: 1px;
+  }
+  .action-icons {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .icon-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #94a3b8;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    position: relative;
+  }
+  .icon-btn.has-badge::after {
+    content: '';
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    width: 6px;
+    height: 6px;
+    background: #ef4444;
+    border-radius: 50%;
+  }
+  .content-placeholder {
+    padding: 16px;
+    color: #94a3b8;
+    font-size: 12px;
+    background: #090d16;
+    line-height: 1.6;
+  }
+  .bottom-nav-box {
+    padding: 12px 16px 16px;
+    background: #090d16;
+  }
+  .nav-capsule {
+    height: 58px;
+    background: rgba(30, 41, 59, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 29px;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    justify-content: space-between;
+    backdrop-filter: blur(12px);
+  }
+  .nav-tab {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 42px;
+    padding: 0 12px;
+    border-radius: 21px;
+    color: #94a3b8;
+    cursor: pointer;
+    transition: all 0.25s ease;
+  }
+  .nav-tab.active {
+    background: rgba(59, 130, 246, 0.18);
+    color: #60a5fa;
+    padding: 0 16px;
+    gap: 8px;
+  }
+  .nav-tab.active .tab-label {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .nav-tab .tab-label {
+    display: none;
+  }
+  .nav-tab svg {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+  }
+  .viewer-bottom-bar {
+    background: rgba(15, 23, 42, 0.85);
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .viewer-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    color: #e2e8f0;
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .viewer-btn.highlight {
+    color: #60a5fa;
+  }
+  .viewer-btn svg {
+    width: 22px;
+    height: 22px;
+    fill: currentColor;
+  }
+  .sheet-mockup {
+    background: #1e293b;
+    border-top: 1px solid #334155;
+    border-radius: 20px 20px 0 0;
+    padding: 16px 20px 24px;
+  }
+  .sheet-drag {
+    width: 36px;
+    height: 4px;
+    background: #475569;
+    border-radius: 2px;
+    margin: 0 auto 16px;
+  }
+  .sheet-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .sheet-desc {
+    font-size: 12px;
+    color: #94a3b8;
+    margin-bottom: 16px;
+  }
+  .sheet-option {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    margin-bottom: 10px;
+    cursor: pointer;
+  }
+  .sheet-option:hover {
+    background: rgba(59, 130, 246, 0.1);
+    border-color: rgba(59, 130, 246, 0.3);
+  }
+  .sheet-option-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .spec-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-top: 12px;
+  }
+  .spec-table th, .spec-table td {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    text-align: left;
+  }
+  .spec-table th {
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-secondary);
+  }
+</style>
+</head>
+<body>
+
+<div class="header-banner">
+  <h1>🎨 NasDrop 全界面风格统一与交互重构设计图</h1>
+  <p>依据需求 6 “参照文件菜单顶栏进行全局统一”及全部 8 项优化要求，制定端到端设计规范与交互原型。</p>
+</div>
+
+<!-- ========================= SECTION 1: 头部规范对齐 ========================= -->
+<div class="section-title">
+  <span>1. 四大菜单头部统一设计规范</span>
+  <span class="badge">参照文件菜单规范 100% 像素级对齐</span>
+</div>
+
+<div class="grid-2">
+  <!-- 首页 -->
+  <div class="card">
+    <div class="card-header-tag">Tab 1: 首页 (Home)</div>
+    <div class="phone-screen">
+      <div class="phone-top-bar">
+        <div class="title-area">
+          <div class="title-row">
+            <span class="title-text">NasDrop</span>
+            <span class="network-badge"><span class="dot"></span>直连 · 58ms</span>
+          </div>
+          <span class="sub-text">私有云存储 · 294 项媒体资产</span>
+        </div>
+        <div class="action-icons">
+          <div class="icon-btn" title="传输中心">
+            <svg viewBox="0 0 24 24"><path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3L5 6.99h3V14h2V6.99h3L9 3z"/></svg>
+          </div>
+          <div class="icon-btn has-badge" title="版本更新">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z"/></svg>
+          </div>
+        </div>
+      </div>
+      <div class="content-placeholder">
+        • 去除原有左侧突兀的 36dp 圆圈图标，字号统一为 16px ExtraBold<br>
+        • 网络状态微胶囊紧跟标题右侧，高度统一 54px<br>
+        • “那年今日”无历史数据时完全隐藏，不占位；移除“浏览相册/文件存储”重复卡片
+      </div>
+    </div>
+  </div>
+
+  <!-- 相册 -->
+  <div class="card">
+    <div class="card-header-tag">Tab 2: 相册 (Photos)</div>
+    <div class="phone-screen">
+      <div class="phone-top-bar">
+        <div class="title-area">
+          <div class="title-row">
+            <span class="title-text">云端相册</span>
+            <span class="network-badge"><span class="dot"></span>直连 · 58ms</span>
+          </div>
+          <span class="sub-text">270 张照片与视频 · 6 个相册</span>
+        </div>
+        <div class="action-icons">
+          <div class="icon-btn" title="搜索相册">
+            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          </div>
+          <div class="icon-btn" title="传输中心">
+            <svg viewBox="0 0 24 24"><path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3L5 6.99h3V14h2V6.99h3L9 3z"/></svg>
+          </div>
+        </div>
+      </div>
+      <div class="content-placeholder">
+        • 标题、高度、边距与文件顶栏完全一致<br>
+        • 点击搜索按钮支持向下平滑展开搜索栏
+      </div>
+    </div>
+  </div>
+
+  <!-- 文件 (标准参考) -->
+  <div class="card">
+    <div class="card-header-tag">Tab 3: 文件 (Files) - 标准参考基准</div>
+    <div class="phone-screen">
+      <div class="phone-top-bar">
+        <div class="title-area">
+          <div class="title-row">
+            <span class="title-text">全部文件</span>
+            <span class="network-badge"><span class="dot"></span>直连 · 58ms</span>
+          </div>
+          <span class="sub-text">私有云极速直连 · 共 128 项内容</span>
+        </div>
+        <div class="action-icons">
+          <div class="icon-btn" title="搜索文件">
+            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          </div>
+          <div class="icon-btn" title="传输中心">
+            <svg viewBox="0 0 24 24"><path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3L5 6.99h3V14h2V6.99h3L9 3z"/></svg>
+          </div>
+        </div>
+      </div>
+      <div class="content-placeholder">
+        【规范基准】高度 54px，左内边距 10px，主标题 16px / ExtraBold，网络微胶囊位于右侧，副标题 11px / Medium
+      </div>
+    </div>
+  </div>
+
+  <!-- 配置 -->
+  <div class="card">
+    <div class="card-header-tag">Tab 4: 配置 (Settings)</div>
+    <div class="phone-screen">
+      <div class="phone-top-bar">
+        <div class="title-area">
+          <div class="title-row">
+            <span class="title-text">系统配置</span>
+            <span class="network-badge"><span class="dot"></span>直连 · 58ms</span>
+          </div>
+          <span class="sub-text">v1.0.194 · 系统状态与偏好设置</span>
+        </div>
+        <div class="action-icons">
+          <div class="icon-btn" title="传输中心">
+            <svg viewBox="0 0 24 24"><path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3L5 6.99h3V14h2V6.99h3L9 3z"/></svg>
+          </div>
+        </div>
+      </div>
+      <div class="content-placeholder">
+        • 移除巨大圆标，字号与行高与文件顶栏完全统一<br>
+        • 副标题展示当前版本号与状态，整齐大方
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========================= SECTION 2: 底部导航栏横向选中 ========================= -->
+<div class="section-title">
+  <span>2. 底部悬浮胶囊导航栏（选中横向胶囊动画）</span>
+  <span class="badge">需求 7 对应</span>
+</div>
+
+<div class="card" style="max-width: 1080px; margin: 0 auto 32px;">
+  <div class="bottom-nav-box">
+    <div class="nav-capsule">
+      <!-- 首页 (选中状态) -->
+      <div class="nav-tab active">
+        <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+        <span class="tab-label">首页</span>
+      </div>
+      <!-- 相册 -->
+      <div class="nav-tab">
+        <svg viewBox="0 0 24 24"><path d="M22 16V4c0-1.1-.9-2-2-2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2zm-11-4l2.03 2.71L16 11l4 5H8l3-4zM2 6v14c0 1.1.9 2 2 2h14v-2H4V6H2z"/></svg>
+        <span class="tab-label">相册</span>
+      </div>
+      <!-- 文件 -->
+      <div class="nav-tab">
+        <svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+        <span class="tab-label">文件</span>
+      </div>
+      <!-- 配置 -->
+      <div class="nav-tab">
+        <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+        <span class="tab-label">配置</span>
+      </div>
+    </div>
+  </div>
+  <div style="font-size: 13px; color: var(--text-secondary); margin-top: 8px;">
+    ✨ <b>横向胶囊交互动效</b>：选中项分配动态权重（1.4f），药丸背景轻柔舒展，图标与文字横向齐平并排；未选中项为 1.0f 纯图标，杜绝挤压换行。
+  </div>
+</div>
+
+<!-- ========================= SECTION 3: 记忆操作折叠与视频底栏 ========================= -->
+<div class="section-title">
+  <span>3. 照片/视频“伴生记忆”一体化操作栏与弹窗设计</span>
+  <span class="badge">需求 3、4 对应</span>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header-tag">图片与视频统一底栏（记忆收纳于底部操作栏）</div>
+    <div class="phone-screen" style="height: 220px; display: flex; flex-direction: column; justify-content: flex-end;">
+      <div style="flex: 1; display: flex; align-items: center; justify-content: center; color: #475569; font-size: 12px;">
+        [ 照片 / 视频 沉浸式全屏展示区 ]
+      </div>
+      <div class="viewer-bottom-bar">
+        <!-- 伴生记忆入口 -->
+        <div class="viewer-btn highlight">
+          <svg viewBox="0 0 24 24"><path d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5z"/></svg>
+          <span>伴生记忆</span>
+        </div>
+        <div class="viewer-btn">
+          <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+          <span>存相册</span>
+        </div>
+        <div class="viewer-btn">
+          <svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92c0-1.61-1.31-2.92-2.92-2.92z"/></svg>
+          <span>分享</span>
+        </div>
+        <div class="viewer-btn">
+          <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+          <span>详情</span>
+        </div>
+        <div class="viewer-btn">
+          <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+          <span>删除</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header-tag">点击“伴生记忆”弹出的快捷操作面板</div>
+    <div class="sheet-mockup">
+      <div class="sheet-drag"></div>
+      <div class="sheet-title">伴生记忆</div>
+      <div class="sheet-desc">记录这段画面的原声讲述与故事备忘，永存云端 NAS</div>
+
+      <div class="sheet-option">
+        <div class="sheet-option-icon" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8;">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+        </div>
+        <div style="flex: 1;">
+          <div style="font-size: 14px; font-weight: 600;">伴生语音解说</div>
+          <div style="font-size: 11px; color: #94a3b8;">录制专属原声讲述，播放大图时同步聆听</div>
+        </div>
+      </div>
+
+      <div class="sheet-option">
+        <div class="sheet-option-icon" style="background: rgba(52, 211, 153, 0.15); color: #34d399;">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+        </div>
+        <div style="flex: 1;">
+          <div style="font-size: 14px; font-weight: 600;">故事与文字备忘</div>
+          <div style="font-size: 11px; color: #94a3b8;">随手写下拍摄背后的精彩细节与心情</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========================= SECTION 4: 视频黑屏与时长Bug排查修复方案 ========================= -->
+<div class="section-title">
+  <span>4. 核心 Bug 专项排查与技术方案</span>
+  <span class="badge">需求 5、8 对应</span>
+</div>
+
+<div class="card" style="max-width: 1080px; margin: 0 auto 32px;">
+  <table class="spec-table">
+    <thead>
+      <tr>
+        <th style="width: 140px;">问题项</th>
+        <th style="width: 280px;">根因诊断</th>
+        <th>解决与实施方案</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><b>5. 视频播放完锁屏黑屏</b></td>
+        <td>播放器到达 <code>STATE_ENDED</code> 后，锁屏导致底层 <code>SurfaceView</code> 销毁。开屏时虽然创建了新 Surface，但 ExoPlayer 处于播毕闲置态，不会向新 Surface 投送画面帧。</td>
+        <td>在 <code>Lifecycle.Event.ON_RESUME</code> 与 <code>AndroidView</code> 的 <code>update</code> 回调中增加检查：若播放状态为 <code>STATE_ENDED</code>，自动执行 <code>player.seekTo(player.currentPosition)</code> 触发强制解码与首帧重绘，保持画面停留在最后一帧，彻底消除黑屏。</td>
+      </tr>
+      <tr>
+        <td><b>8. 折叠时语音时长不对</b></td>
+        <td>远端扫描嗅探到伴生音频时默认赋予 <code>1000L</code> 占位，而折叠微胶囊 UI 优先使用了未纠偏的 <code>entry.audioDurationText</code>（导致始终显示 <code>0:01</code>），忽略了 <code>audioPlayer.durationMs</code> 实际真实时长。</td>
+        <td>
+          1) 折叠微胶囊取值调整为：优先读取 <code>audioPlayer.durationMs</code>，次选数据库有效时长，剔除 <code>0:01</code> 占位硬编码。<br>
+          2) 音频在 <code>prepare</code> / 播放时通过真实 <code>MediaPlayer.duration</code> 实时反哺纠正 <code>PhotoMetadataStore</code>，确保微胶囊与列表角标完全一致。
+        </td>
+      </tr>
+      <tr>
+        <td><b>4. 视频全屏与画幅</b></td>
+        <td>画幅 FIT/ZOOM/FILL 切换存在黑边缩放冗余，横屏全屏按钮置于顶部容易被视频画面遮挡误触。</td>
+        <td>彻底移除画幅切换功能；将“全屏/退出全屏”按钮移至底部控制条右侧（倍速药丸旁），直观便捷。</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ========================= SECTION 5: 视频全屏高级手势调优 ========================= -->
+<div class="section-title">
+  <span>5. 视频播放手势操控全面升级（灵敏、顺滑、零误触）</span>
+  <span class="badge">新增专项 Review</span>
+</div>
+
+<div class="card" style="max-width: 1080px; margin: 0 auto 32px;">
+  <div class="grid-2" style="margin-bottom: 0;">
+    <div style="background: rgba(255, 255, 255, 0.02); padding: 16px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.05);">
+      <h3 style="font-size: 14px; font-weight: 700; color: #60a5fa; margin-bottom: 8px;">🎮 手势类型与交互响应</h3>
+      <ul style="font-size: 12px; color: #cbd5e1; list-style: none; padding-left: 0; line-height: 2;">
+        <li><b>• 水平左右滑动</b>：屏幕左右无极快进/快退，HUD 实时呈现 <code>⏩ +15s (01:25 / 04:30)</code>，松手瞬时精确定位；</li>
+        <li><b>• 垂直左侧滑动</b>：调节屏幕亮度（1%~100% 线性无卡顿渐变，记录手势起点零超调）；</li>
+        <li><b>• 垂直右侧滑动</b>：调节媒体音量（0%~100% 系统音量精准对齐，记录手势起点零超调）；</li>
+        <li><b>• 双击操作</b>：左侧 35% 双击快退 10s；右侧 35% 双击快进 10s；中间 30% 双击切换播放/暂停（不触发单击闪烁）；</li>
+        <li><b>• 长按操作</b>：右侧/中间长按触发 <b>2.0X 极速播放</b>；左侧长按触发 <b>快退回溯</b>；松手立即平滑还原。</li>
+      </ul>
+    </div>
+    <div style="background: rgba(255, 255, 255, 0.02); padding: 16px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.05);">
+      <h3 style="font-size: 14px; font-weight: 700; color: #34d399; margin-bottom: 8px;">🛡️ 防误触与顺滑机制</h3>
+      <ul style="font-size: 12px; color: #cbd5e1; list-style: none; padding-left: 0; line-height: 2;">
+        <li><b>• 20px 启动死区</b>：滑动位移达到 20px 才确认进入手势，消除误碰抖动；</li>
+        <li><b>• 轴向单向锁定</b>：一旦判定为水平快进或垂直亮度/音量，整个手势过程严格锁定该轴向，斜向滑动绝对不窜动；</li>
+        <li><b>• 线性基准记忆</b>：开始滑动时锁定初始亮度与音量值，绝对位移映射，杜绝此前累加造成的“一滑到底”数值暴增；</li>
+        <li><b>• 单双击消抖分流</b>：单击控制栏切换与双击快进快退严格分离，彻底杜绝双击时控制栏疯狂闪烁的问题。</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

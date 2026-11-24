@@ -243,12 +243,20 @@ enum class BrowserMode {
 
 /**
  * 全功能系统文件选择器：
- * 唤起系统 Storage Access Framework (SAF) 完整文档管理器，
- * 默认直接直达「最近」视图（展示近期所有文件），顶部带图片/音频/视频/文档快捷分类筛选，
- * 侧边支持「显示根目录」自由切换手机内部存储各文件夹，支持多选。
+ * 采用通用 ACTION_GET_CONTENT（或回退 ACTION_OPEN_DOCUMENT），
+ * 默认直接直达系统聚合的「最近 / 近期文件」视图（Recents），支持多选。
+ * 避免因历史记忆或图库契约直接陷入特定目录（如 Camera 目录）。
  */
 class SystemFilePickerContract : ActivityResultContract<Unit, List<Uri>>() {
 	override fun createIntent(context: android.content.Context, input: Unit): android.content.Intent {
+		val getContentIntent = android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply {
+			addCategory(android.content.Intent.CATEGORY_OPENABLE)
+			type = "*/*"
+			putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
+		}
+		if (getContentIntent.resolveActivity(context.packageManager) != null) {
+			return getContentIntent
+		}
 		return android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
 			addCategory(android.content.Intent.CATEGORY_OPENABLE)
 			type = "*/*"

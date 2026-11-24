@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NasDrop 现代电影画册级相册交互设计</title>
+  <style>
+    :root {
+      --bg: #07090e;
+      --phone-body: #0d111a;
+      --surface-glass: rgba(22, 28, 42, 0.7);
+      --surface-card: #151b28;
+      --accent-blue: #3b82f6;
+      --accent-glow: rgba(59, 130, 246, 0.35);
+      --text-pri: #ffffff;
+      --text-sec: #94a3b8;
+      --text-ter: #64748b;
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-glow: rgba(255, 255, 255, 0.16);
+      --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text-pri);
+      font-family: var(--font-family);
+      padding: 36px 20px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    /* 顶栏标题 */
+    .header-box {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    .pill-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #93c5fd;
+      font-size: 12px;
+      padding: 3px 14px;
+      border-radius: 999px;
+      font-weight: 500;
+      letter-spacing: 0.3px;
+      margin-bottom: 10px;
+      backdrop-filter: blur(8px);
+    }
+    .header-box h1 {
+      font-size: 26px;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 6px;
+      letter-spacing: -0.3px;
+    }
+    .header-box p {
+      font-size: 14px;
+      color: var(--text-sec);
+    }
+
+    /* 展示双机网格 */
+    .viewport-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 36px;
+      margin-bottom: 40px;
+    }
+    @media (max-width: 900px) {
+      .viewport-grid { grid-template-columns: 1fr; }
+    }
+
+    .device-column {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .view-label {
+      width: 100%;
+      max-width: 412px;
+      margin-bottom: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .view-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #ffffff;
+    }
+    .view-desc {
+      font-size: 12px;
+      color: #60a5fa;
+    }
+
+    /* 高保真旗舰手机框架 */
+    .phone-frame {
+      width: 100%;
+      max-width: 412px;
+      height: 850px;
+      background: var(--phone-body);
+      border-radius: 46px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: 0 30px 70px -15px rgba(0, 0, 0, 0.85), 0 0 0 6px #191f2e;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* 状态栏 */
+    .status-bar {
+      height: 36px;
+      padding: 8px 22px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: #94a3b8;
+      font-weight: 600;
+      z-index: 30;
+    }
+    .dynamic-island {
+      width: 82px;
+      height: 18px;
+      background: #000;
+      border-radius: 12px;
+    }
+
+    /* 顶栏 */
+    .nav-topbar {
+      padding: 10px 18px 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 20;
+    }
+    .nav-brand {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .brand-sub {
+      font-size: 11px;
+      color: #10b981;
+      font-weight: 500;
+      background: rgba(16, 185, 129, 0.12);
+      padding: 1px 6px;
+      border-radius: 10px;
+    }
+    .topbar-icons {
+      display: flex;
+      gap: 14px;
+      color: #cbd5e1;
+      font-size: 15px;
+    }
+
+    /* 滚动主体内容 */
+    .screen-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 16px 88px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .screen-scroll::-webkit-scrollbar { display: none; }
+
+    /* ========================================================
+       画册级交互 1：顶部那年今天全景记忆卡片 (Memory Hero)
+       ======================================================== */
+    .memory-hero-card {
+      width: 100%;
+      height: 120px;
+      border-radius: 18px;
+      position: relative;
+      overflow: hidden;
+      cursor: pointer;
+      box-shadow: 0 10px 24px -6px rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: 
+        linear-gradient(to right, rgba(13, 17, 26, 0.92) 0%, rgba(13, 17, 26, 0.45) 50%, rgba(13, 17, 26, 0.8) 100%),
+        radial-gradient(circle at 80% 30%, #3b82f6 0%, transparent 60%),
+        url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="120" viewBox="0 0 400 120"><rect width="400" height="120" fill="%231e293b"/><circle cx="310" cy="50" r="70" fill="%23fbbf24" opacity="0.35"/><circle cx="120" cy="80" r="90" fill="%23ec4899" opacity="0.25"/></svg>');
+      background-size: cover;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 14px 16px;
+    }
+    .memory-top-line {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .memory-tag {
+      font-size: 11px;
+      font-weight: 600;
+      color: #fbbf24;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(0,0,0,0.45);
+      padding: 2px 8px;
+      border-radius: 12px;
+      backdrop-filter: blur(4px);
+    }
+    .memory-count {
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.7);
+    }
+    .memory-body h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 2px;
+    }
+    .memory-body p {
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    /* 标题微横条 */
+    .section-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 2px 2px;
+    }
+    .section-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #f8fafc;
+      letter-spacing: -0.2px;
+    }
+    .section-more {
+      font-size: 11px;
+      color: #60a5fa;
+      cursor: pointer;
+    }
+
+    /* ========================================================
+       画册级交互 2：海量相册画廊大网格 (Gallery Cards Grid)
+       每个相册采用真实质感封面与叠相纸微效果
+       ======================================================== */
+    .albums-gallery-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .gallery-album-card {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      cursor: pointer;
+    }
+    .album-art-wrap {
+      width: 100%;
+      aspect-ratio: 1;
+      border-radius: 16px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.45);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      transition: transform 0.2s;
+    }
+    .album-art-image {
+      width: 100%;
+      height: 100%;
+      background-size: cover;
+      background-position: center;
+      transition: transform 0.3s;
+    }
+    /* 电影感暗角渐变遮罩 */
+    .album-art-wrap::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0) 50%, rgba(0,0,0,0.2) 100%);
+    }
+
+    .album-tag-top {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      font-size: 10px;
+      font-weight: 600;
+      color: #ffffff;
+      background: rgba(0, 0, 0, 0.55);
+      padding: 2px 7px;
+      border-radius: 6px;
+      backdrop-filter: blur(8px);
+      z-index: 2;
+    }
+    .album-tag-lock {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      font-size: 10px;
+      color: #34d399;
+      background: rgba(6, 78, 59, 0.85);
+      padding: 2px 6px;
+      border-radius: 6px;
+      backdrop-filter: blur(8px);
+      z-index: 2;
+    }
+
+    .album-title-text {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f1f5f9;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .album-subtitle-text {
+      font-size: 11px;
+      color: #64748b;
+    }
+
+    /* 新建相册质感卡片 */
+    .create-album-card {
+      width: 100%;
+      aspect-ratio: 1;
+      border-radius: 16px;
+      border: 1.5px dashed rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.02);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      color: var(--text-sec);
+      cursor: pointer;
+    }
+
+    /* ========================================================
+       画册级交互 3：点进相册内部 · 杂志感多时刻时光流
+       ======================================================== */
+    .album-header-banner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 8px 12px;
+      margin-bottom: 4px;
+    }
+    .banner-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .back-btn-pill {
+      font-size: 12px;
+      color: #60a5fa;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+    .banner-album-name {
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    /* 日期组 */
+    .timeline-date-group {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .date-main-line {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      padding-bottom: 4px;
+    }
+    .date-heading {
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .age-pill {
+      font-size: 11px;
+      font-weight: 500;
+      color: #f472b6;
+      background: rgba(244, 114, 182, 0.12);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    .date-stats {
+      font-size: 11px;
+      color: var(--text-ter);
+    }
+
+    /* 多时刻分段 (Moments) */
+    .moment-section {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .moment-caption-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+    }
+    .moment-time-title {
+      font-weight: 600;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .moment-location {
+      font-size: 11px;
+      color: var(--text-ter);
+    }
+
+    /* 真实感杂志级照片拼图 (去除生硬死板的灰色色块) */
+    .magazine-grid {
+      display: grid;
+      gap: 5px;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .magazine-grid.hero-split {
+      grid-template-columns: 1.6fr 1fr;
+    }
+    .magazine-grid.equal-two {
+      grid-template-columns: 1fr 1fr;
+    }
+    .magazine-grid.triplet {
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    .photo-frame {
+      aspect-ratio: 1;
+      background-size: cover;
+      background-position: center;
+      position: relative;
+      overflow: hidden;
+      background-color: #1e2638;
+      border-radius: 6px;
+    }
+    .photo-frame.hero {
+      aspect-ratio: 4/3;
+    }
+    .photo-label {
+      position: absolute;
+      bottom: 4px;
+      left: 4px;
+      font-size: 9px;
+      color: #ffffff;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 1px 6px;
+      border-radius: 4px;
+      backdrop-filter: blur(4px);
+    }
+
+    /* 伴随声音胶囊 (轻盈、优雅融入，不占大空间) */
+    .voice-capsule-glass {
+      background: rgba(59, 130, 246, 0.12);
+      border: 1px solid rgba(59, 130, 246, 0.25);
+      border-radius: 8px;
+      padding: 6px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #93c5fd;
+    }
+    .voice-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .voice-waveform {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      height: 10px;
+    }
+    .voice-waveform span {
+      width: 2px;
+      background: #60a5fa;
+      border-radius: 1px;
+    }
+
+    /* ========================================================
+       悬浮商业级 CommercialNavigationBar 胶囊底栏
+       ======================================================== */
+    .floating-nav-bar {
+      position: absolute;
+      bottom: 12px;
+      left: 20px;
+      right: 20px;
+      height: 56px;
+      background: rgba(18, 24, 36, 0.82);
+      backdrop-filter: blur(24px);
+      border-radius: 28px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      padding: 0 10px;
+      z-index: 30;
+    }
+    .tab-capsule {
+      flex: 1;
+      height: 42px;
+      border-radius: 21px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #94a3b8;
+    }
+    .tab-capsule.active {
+      background: rgba(59, 130, 246, 0.22);
+      color: #60a5fa;
+      font-weight: 700;
+      border: 1px solid rgba(59, 130, 246, 0.35);
+    }
+
+    /* 说明底卡 */
+    .insight-card {
+      background: var(--surface-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 16px;
+      padding: 20px 24px;
+    }
+    .insight-card h3 {
+      font-size: 16px;
+      color: #fff;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .insight-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      font-size: 12px;
+    }
+    @media (max-width: 768px) { .insight-grid { grid-template-columns: 1fr; } }
+    .in-box {
+      background: rgba(255, 255, 255, 0.02);
+      padding: 12px 14px;
+      border-radius: 10px;
+      border-left: 2px solid var(--accent-blue);
+    }
+    .in-box strong { color: #f1f5f9; display: block; margin-bottom: 4px; }
+    .in-box span { color: var(--text-sec); line-height: 1.45; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- 顶栏标题 -->
+    <div class="header-box">
+      <div class="pill-tag">✨ 现代画册级质感重构</div>
+      <h1>NasDrop 海量相册画廊与多时刻时光流视觉设计</h1>
+      <p>拒绝生硬色块与大表情 · 采用真实电影画册氛围 · 优雅自洽的海量相册流转</p>
+    </div>
+
+    <!-- 双机视觉展示 -->
+    <div class="viewport-grid">
+
+      <!-- 左机：【视图 A】海量相册画廊 (怎样纵览上百个相册) -->
+      <div class="device-column">
+        <div class="view-label">
+          <span class="view-title">📚 视图 A：海量相册画廊</span>
+          <span class="view-desc">像艺术画册一样翻看所有相册</span>
+        </div>
+
+        <div class="phone-frame">
+          <!-- 状态栏 -->
+          <div class="status-bar">
+            <span>14:30</span>
+            <div class="dynamic-island"></div>
+            <span>5G 📶 92%</span>
+          </div>
+
+          <!-- 顶栏 -->
+          <div class="nav-topbar">
+            <div class="nav-brand">
+              <span>相册</span>
+              <span class="brand-sub">● 家中直连</span>
+            </div>
+            <div class="topbar-icons">
+              <span>🔍</span>
+              <span>➕</span>
+              <span>⋮</span>
+            </div>
+          </div>
+
+          <!-- 滚动主体 -->
+          <div class="screen-scroll">
+            <!-- 模块 1：首焦沉浸式「那年今天」全景卡片 -->
+            <div class="memory-hero-card">
+              <div class="memory-top-line">
+                <span class="memory-tag">✨ 那年今天 · 回忆</span>
+                <span class="memory-count">18 项回顾 ➔</span>
+              </div>
+              <div class="memory-body">
+                <h3>3 年前的深秋午后</h3>
+                <p>2023年11月23日 · 宝宝在公园捡起第一片金黄银杏</p>
+              </div>
+            </div>
+
+            <!-- 模块 2：海量相册分类画廊标题行 -->
+            <div class="section-bar">
+              <span class="section-title">所有相册 (12)</span>
+              <span class="section-more">按最新更新 ▾</span>
+            </div>
+
+            <!-- 相册双列画廊大网格 (Albums Gallery) -->
+            <div class="albums-gallery-grid">
+              <!-- 相册 1：小宝成长 -->
+              <div class="gallery-album-card">
+                <div class="album-art-wrap">
+                  <div class="album-art-image" style="background-image: linear-gradient(135deg, #1e3a5f 0%, #0d1e33 100%), radial-gradient(circle at 50% 50%, #f472b6 0%, #fb7185 80%);"></div>
+                  <span class="album-tag-top">👶 1岁4月</span>
+                </div>
+                <div class="album-title-text">小宝的成长日常</div>
+                <div class="album-subtitle-text">320 项 · 今天更新</div>
+              </div>
+
+              <!-- 相册 2：家庭证照 (安全加密相册) -->
+              <div class="gallery-album-card">
+                <div class="album-art-wrap">
+                  <div class="album-art-image" style="background-image: linear-gradient(135deg, #064e3b 0%, #022c22 100%), radial-gradient(circle at 70% 30%, #10b981 0%, #047857 70%);"></div>
+                  <span class="album-tag-top">🗄️ 重要资料</span>
+                  <span class="album-tag-lock">🔒 指纹保护</span>
+                </div>
+                <div class="album-title-text">家庭重要证件</div>
+                <div class="album-subtitle-text">12 份高清原件</div>
+              </div>
+
+              <!-- 相册 3：青岛度假 -->
+              <div class="gallery-album-card">
+                <div class="album-art-wrap">
+                  <div class="album-art-image" style="background-image: linear-gradient(135deg, #0369a1 0%, #082f49 100%), radial-gradient(circle at 40% 60%, #38bdf8 0%, #0284c7 70%);"></div>
+                  <span class="album-tag-top">🏖️ 旅行</span>
+                </div>
+                <div class="album-title-text">吹过夏天的海风 · 青岛</div>
+                <div class="album-subtitle-text">186 项 · 2024.10</div>
+              </div>
+
+              <!-- 相册 4：森林露营 -->
+              <div class="gallery-album-card">
+                <div class="album-art-wrap">
+                  <div class="album-art-image" style="background-image: linear-gradient(135deg, #78350f 0%, #451a03 100%), radial-gradient(circle at 60% 40%, #f59e0b 0%, #d97706 70%);"></div>
+                  <span class="album-tag-top">🏕️ 露营</span>
+                </div>
+                <div class="album-title-text">周末森林与篝火</div>
+                <div class="album-subtitle-text">94 项 · 2024.09</div>
+              </div>
+
+              <!-- 相册 5：新家装修 -->
+              <div class="gallery-album-card">
+                <div class="album-art-wrap">
+                  <div class="album-art-image" style="background-image: linear-gradient(135deg, #334155 0%, #0f172a 100%), radial-gradient(circle at 50% 50%, #94a3b8 0%, #475569 70%);"></div>
+                  <span class="album-tag-top">🏠 居家</span>
+                </div>
+                <div class="album-title-text">新家点滴与软装记录</div>
+                <div class="album-subtitle-text">142 项 · 2024.08</div>
+              </div>
+
+              <!-- 相册 6：新建相册 -->
+              <div class="create-album-card">
+                <span style="font-size: 24px; color: #60a5fa;">+</span>
+                <span style="font-size: 12px; font-weight: 500; color: #cbd5e1;">新建相册</span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 原生商业级悬浮胶囊底栏 -->
+          <div class="floating-nav-bar">
+            <div class="tab-capsule"><span>📁</span><span>文件</span></div>
+            <div class="tab-capsule active"><span>🖼️</span><span>相册</span></div>
+            <div class="tab-capsule"><span>🎬</span><span>影音</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右机：【视图 B】点进「小宝的成长日常」相册后的多时刻时光流 -->
+      <div class="device-column">
+        <div class="view-label">
+          <span class="view-title">⏱️ 视图 B：下潜到具体相册内部</span>
+          <span class="view-desc" style="color: #f472b6;">同一天内的具体时刻故事脉络</span>
+        </div>
+
+        <div class="phone-frame">
+          <!-- 状态栏 -->
+          <div class="status-bar">
+            <span>14:30</span>
+            <div class="dynamic-island"></div>
+            <span>5G 📶 92%</span>
+          </div>
+
+          <!-- 顶栏：点进相册内部 -->
+          <div class="nav-topbar">
+            <div class="nav-brand">
+              <span style="font-size: 15px; color: #60a5fa; cursor: pointer;">❮</span>
+              <span>小宝的成长日常</span>
+            </div>
+            <div class="topbar-icons">
+              <span>🔍</span>
+              <span>➕ 上传</span>
+              <span>⋮</span>
+            </div>
+          </div>
+
+          <!-- 滚动主体：相册内部多时刻时光流 -->
+          <div class="screen-scroll">
+            <!-- 相册状态副标题 -->
+            <div class="album-header-banner">
+              <div class="banner-left">
+                <span style="font-size: 14px;">👶</span>
+                <span class="banner-album-name">320 项照片与视频</span>
+              </div>
+              <span style="font-size: 11px; color: #94a3b8;">长按照片可多选</span>
+            </div>
+
+            <!-- 当天多时刻时光流 -->
+            <div class="timeline-date-group">
+              <div class="date-main-line">
+                <div class="date-heading">
+                  11月23日 · 今天 <span class="age-pill">1岁4个月</span>
+                </div>
+                <span class="date-stats">共 7 项 · 1段语音</span>
+              </div>
+
+              <!-- 时刻 1：09:20 晨起早餐 -->
+              <div class="moment-section">
+                <div class="moment-caption-row">
+                  <span class="moment-time-title">☀️ 09:20 · 晨光早餐</span>
+                  <span class="moment-location">客厅</span>
+                </div>
+                <div class="magazine-grid equal-two">
+                  <div class="photo-frame" style="background-image: linear-gradient(135deg, #f43f5e, #fb7185);">
+                    <span class="photo-label">自己拿着木勺大口吃</span>
+                  </div>
+                  <div class="photo-frame" style="background-image: linear-gradient(135deg, #fb7185, #fda4af);">
+                    <span class="photo-label">酸奶胡子笑眯眯</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 时刻 2：14:15 公园踩落叶 (焦点时刻) -->
+              <div class="moment-section">
+                <div class="moment-caption-row">
+                  <span class="moment-time-title">🍂 14:15 · 奥森公园踩落叶</span>
+                  <span class="moment-location">奥森公园南门</span>
+                </div>
+                <div class="magazine-grid hero-split">
+                  <div class="photo-frame hero" style="background-image: linear-gradient(135deg, #d97706, #f59e0b);">
+                    <span class="photo-label">红马甲跑得稳稳的</span>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 5px;">
+                    <div class="photo-frame" style="aspect-ratio: auto; flex: 1; background-image: linear-gradient(135deg, #f59e0b, #fbbf24);"></div>
+                    <div class="photo-frame" style="aspect-ratio: auto; flex: 1; background-image: linear-gradient(135deg, #fbbf24, #fde68a);">
+                      <span class="photo-label">抓起大银杏叶</span>
+                    </div>
+                  </div>
+                </div>
+                <!-- 伴随录音小胶囊 -->
+                <div class="voice-capsule-glass">
+                  <div class="voice-left">
+                    <span>▶️ 踩碎落叶的咯咯笑声</span>
+                    <div class="voice-waveform">
+                      <span style="height: 4px;"></span>
+                      <span style="height: 10px;"></span>
+                      <span style="height: 6px;"></span>
+                      <span style="height: 9px;"></span>
+                      <span style="height: 5px;"></span>
+                    </div>
+                  </div>
+                  <span style="font-family: monospace; font-weight: 600;">00:24</span>
+                </div>
+              </div>
+
+              <!-- 时刻 3：18:40 晚饭长寿面 -->
+              <div class="moment-section">
+                <div class="moment-caption-row">
+                  <span class="moment-time-title">🍲 18:40 · 爷爷家的手擀面</span>
+                  <span class="moment-location">爷爷家餐厅</span>
+                </div>
+                <div class="magazine-grid equal-two">
+                  <div class="photo-frame" style="background-image: linear-gradient(135deg, #1d4ed8, #3b82f6);">
+                    <span class="photo-label">全家人围着切蛋糕 ▶ 01:15</span>
+                  </div>
+                  <div class="photo-frame" style="background-image: linear-gradient(135deg, #3b82f6, #60a5fa);">
+                    <span class="photo-label">小手抓面条</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+
+          <!-- 原生商业级悬浮胶囊底栏 -->
+          <div class="floating-nav-bar">
+            <div class="tab-capsule"><span>📁</span><span>文件</span></div>
+            <div class="tab-capsule active"><span>🖼️</span><span>相册</span></div>
+            <div class="tab-capsule"><span>🎬</span><span>影音</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 视觉升级与交互总结 -->
+    <div class="insight-card">
+      <h3>🎨 为什么这套设计真正有高级美感与合理交互？</h3>
+      <div class="insight-grid">
+        <div class="in-box">
+          <strong>1. 电影画册质感，彻底告别玩具感</strong>
+          <span>摒弃了纯亮色死板色块与巨大 Emoji，相册封面采用深邃暗角光影与真实相纸叠层，整体沉浸内敛，极具现代旗舰 App 美感。</span>
+        </div>
+        <div class="in-box">
+          <strong>2. 层次分明：海量相册与下潜时光</strong>
+          <span>在【视图 A】中，几十个相册像艺术画册一样大图纵览；点击任何一个相册下潜到【视图 B】，主界面专注呈现该相册的多时刻生活故事。</span>
+        </div>
+        <div class="in-box">
+          <strong>3. 拒绝“物流进度条”，采用杂志感拼图</strong>
+          <span>同一天内的时间点不再画僵硬的物流竖线，而是优雅的文字微标配以 1大2小、2列画册拼图，排版有节奏感，像翻阅一本精美的家庭年鉴。</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</body>
+</html>

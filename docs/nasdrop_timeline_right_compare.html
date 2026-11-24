@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NasDrop 时间轴放右侧 vs 放左侧对比分析</title>
+  <style>
+    :root {
+      --bg: #06080c;
+      --phone-shell: #090c12;
+      --primary: #3b82f6;
+      --text-1: #ffffff;
+      --text-2: #94a3b8;
+      --text-3: #64748b;
+      --border: rgba(255, 255, 255, 0.08);
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Segoe UI", Roboto, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body {
+      background: var(--bg);
+      color: var(--text-1);
+      font-family: var(--font);
+      padding: 30px 20px;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    .header-box {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(59, 130, 246, 0.12);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: #60a5fa;
+      font-size: 12px;
+      padding: 3px 12px;
+      border-radius: 999px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+    .header-box h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 6px;
+    }
+    .header-box p {
+      font-size: 13px;
+      color: var(--text-2);
+    }
+
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+      margin-bottom: 32px;
+    }
+    @media (max-width: 800px) {
+      .compare-grid { grid-template-columns: 1fr; }
+    }
+
+    .col-header {
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .col-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .col-tag {
+      font-size: 11px;
+      color: #38bdf8;
+    }
+
+    .phone {
+      width: 100%;
+      max-width: 380px;
+      margin: 0 auto;
+      height: 760px;
+      background: var(--phone-shell);
+      border-radius: 42px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.8), 0 0 0 6px #131722;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .status-bar {
+      height: 34px;
+      padding: 6px 20px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #94a3b8;
+      font-weight: 600;
+    }
+    .island {
+      width: 70px;
+      height: 15px;
+      background: #000;
+      border-radius: 10px;
+    }
+
+    .top-bar {
+      padding: 6px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .top-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .top-actions {
+      display: flex;
+      gap: 14px;
+      color: #cbd5e1;
+      font-size: 15px;
+    }
+
+    .viewport {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 14px 76px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .viewport::-webkit-scrollbar { display: none; }
+
+    /* 胶囊横滑 */
+    .capsule-row {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+      flex-shrink: 0;
+    }
+    .cap-item {
+      height: 28px;
+      border-radius: 14px;
+      padding: 0 11px;
+      display: flex;
+      align-items: center;
+      font-size: 11px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #94a3b8;
+      white-space: nowrap;
+    }
+    .cap-item.active {
+      background: var(--primary);
+      color: #ffffff;
+      font-weight: 600;
+      border-color: transparent;
+    }
+
+    /* 左右通用时间轴基础 */
+    .timeline-block {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      position: relative;
+    }
+    .day-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #f1f5f9;
+      padding-bottom: 2px;
+    }
+
+    .photos-grid {
+      display: grid;
+      gap: 4px;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .photos-grid.two { grid-template-columns: 1fr 1fr; }
+    .photos-grid.three { grid-template-columns: repeat(3, 1fr); }
+
+    .photo-cell {
+      aspect-ratio: 1;
+      background-size: cover;
+      background-position: center;
+      position: relative;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .audio-tag {
+      position: absolute;
+      bottom: 3px;
+      right: 3px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #60a5fa;
+      padding: 1px 4px;
+      border-radius: 8px;
+      font-size: 8px;
+      font-weight: 600;
+    }
+    .text-tag {
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      background: rgba(16, 185, 129, 0.85);
+      color: #fff;
+      font-size: 7px;
+      padding: 1px 3px;
+      border-radius: 3px;
+    }
+    .video-tag {
+      position: absolute;
+      bottom: 3px;
+      left: 3px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 1px 3px;
+      border-radius: 2px;
+      font-size: 7px;
+    }
+
+    /* =================== A：时间轴在左侧 (原有) =================== */
+    .left-rail {
+      position: absolute;
+      top: 26px;
+      bottom: 6px;
+      left: 5px;
+      width: 1.5px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .left-moment {
+      display: flex;
+      gap: 8px;
+      position: relative;
+      z-index: 2;
+    }
+    .left-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--phone-shell);
+      border: 2.5px solid var(--primary);
+      margin-top: 3px;
+      flex-shrink: 0;
+    }
+    .left-body {
+      flex: 1;
+    }
+    .left-clock {
+      font-size: 11px;
+      font-weight: 600;
+      color: #64748b;
+      margin-bottom: 4px;
+    }
+
+    /* =================== B：时间轴在右侧 (全新优化) =================== */
+    .right-rail {
+      position: absolute;
+      top: 26px;
+      bottom: 6px;
+      right: 5px;
+      width: 1.5px;
+      background: rgba(255, 255, 255, 0.12);
+    }
+    .right-moment {
+      display: flex;
+      gap: 8px;
+      position: relative;
+      z-index: 2;
+    }
+    .right-body {
+      flex: 1;
+    }
+    .right-node-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 36px;
+      flex-shrink: 0;
+    }
+    .right-clock {
+      font-size: 10px;
+      font-family: monospace;
+      font-weight: 600;
+      color: #94a3b8;
+      margin-bottom: 4px;
+      text-align: right;
+    }
+    .right-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--phone-shell);
+      border: 2px solid var(--primary);
+      flex-shrink: 0;
+    }
+
+    /* 悬浮底栏 */
+    .bottom-dock {
+      position: absolute;
+      bottom: 10px;
+      left: 36px;
+      right: 36px;
+      height: 48px;
+      background: rgba(18, 24, 36, 0.85);
+      backdrop-filter: blur(20px);
+      border-radius: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      padding: 0 4px;
+      z-index: 35;
+    }
+    .dock-pill {
+      flex: 1;
+      height: 36px;
+      border-radius: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: #94a3b8;
+    }
+    .dock-pill.active {
+      background: rgba(59, 130, 246, 0.22);
+      color: #60a5fa;
+      font-weight: 600;
+    }
+
+    /* 对比说明卡 */
+    .compare-card {
+      background: #10141d;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 22px;
+    }
+    .compare-card h3 {
+      font-size: 15px;
+      color: #fff;
+      margin-bottom: 10px;
+    }
+    .compare-notes {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      font-size: 12px;
+    }
+    @media (max-width: 700px) { .compare-notes { grid-template-columns: 1fr; } }
+    .note-box {
+      background: rgba(255, 255, 255, 0.02);
+      padding: 10px 12px;
+      border-radius: 8px;
+      border-left: 2px solid var(--primary);
+    }
+    .note-box strong { color: #f1f5f9; display: block; margin-bottom: 3px; }
+    .note-box span { color: var(--text-2); line-height: 1.45; }
+  </style>
+</head>
+<body>
+
+  <div class="wrap">
+    <div class="header-box">
+      <div class="badge">💡 交互人机工程学推敲</div>
+      <h1>时间轴放右侧 vs 放左侧对比展示</h1>
+      <p>右手大拇指滑动黄金区 · 照片左对齐视觉冲击力 · 刻度感与沉浸感</p>
+    </div>
+
+    <!-- 左右对比两台机 -->
+    <div class="compare-grid">
+
+      <!-- 左机：时间轴在左侧 (原方案) -->
+      <div>
+        <div class="col-header">
+          <span class="col-title">方案 A：时间轴在左侧</span>
+          <span class="col-tag">备忘录感较强</span>
+        </div>
+
+        <div class="phone">
+          <div class="status-bar"><span>14:30</span><div class="island"></div><span>5G 92%</span></div>
+          <div class="top-bar">
+            <span class="top-title">小宝</span>
+            <div class="top-actions"><span>🔍</span><span>➕</span><span>⋮</span></div>
+          </div>
+
+          <div class="viewport">
+            <div class="capsule-row">
+              <div class="cap-item">相册</div>
+              <div class="cap-item active">小宝</div>
+              <div class="cap-item">全部</div>
+              <div class="cap-item">视频</div>
+            </div>
+
+            <div class="timeline-block">
+              <div class="left-rail"></div>
+              <div class="day-title">11月23日</div>
+
+              <!-- 09:20 -->
+              <div class="left-moment">
+                <div class="left-dot"></div>
+                <div class="left-body">
+                  <div class="left-clock">09:20</div>
+                  <div class="photos-grid two">
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #f43f5e, #fb7185);"></div>
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #fb7185, #fda4af);"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 14:15 -->
+              <div class="left-moment">
+                <div class="left-dot" style="border-color:#ec4899;"></div>
+                <div class="left-body">
+                  <div class="left-clock">14:15</div>
+                  <div class="photos-grid three">
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #d97706, #f59e0b);">
+                      <span class="text-tag">记</span>
+                      <span class="audio-tag">🎙️ 0:24</span>
+                    </div>
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #f59e0b, #fbbf24);"></div>
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #fbbf24, #fde68a);"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 18:40 -->
+              <div class="left-moment">
+                <div class="left-dot"></div>
+                <div class="left-body">
+                  <div class="left-clock">18:40</div>
+                  <div class="photos-grid three">
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #1d4ed8, #3b82f6);">
+                      <span class="video-tag">▶ 01:15</span>
+                    </div>
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #3b82f6, #60a5fa);"></div>
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #60a5fa, #93c5fd);"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bottom-dock">
+            <div class="dock-pill"><span>📁 文件</span></div>
+            <div class="dock-pill active"><span>🖼️ 相册</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右机：时间轴在右侧 (您的全新构想！) -->
+      <div>
+        <div class="col-header">
+          <span class="col-title" style="color:#60a5fa;">方案 B：时间轴在右侧 (推荐)</span>
+          <span class="col-tag" style="color:#34d399;font-weight:bold;">右手大拇指黄金区</span>
+        </div>
+
+        <div class="phone">
+          <div class="status-bar"><span>14:30</span><div class="island"></div><span>5G 92%</span></div>
+          <div class="top-bar">
+            <span class="top-title">小宝</span>
+            <div class="top-actions"><span>🔍</span><span>➕</span><span>⋮</span></div>
+          </div>
+
+          <div class="viewport">
+            <div class="capsule-row">
+              <div class="cap-item">相册</div>
+              <div class="cap-item active">小宝</div>
+              <div class="cap-item">全部</div>
+              <div class="cap-item">视频</div>
+            </div>
+
+            <div class="timeline-block">
+              <!-- 右侧时间轴贯穿线 -->
+              <div class="right-rail"></div>
+              <div class="day-title" style="display:flex;justify-content:space-between;align-items:center;">
+                <span>11月23日</span>
+                <span style="font-size:10px;color:#64748b;">时刻 ➔</span>
+              </div>
+
+              <!-- 09:20 (照片左对齐大面积展现，时间轴与时刻在右侧挂靠) -->
+              <div class="right-moment">
+                <div class="right-body">
+                  <div class="photos-grid two">
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #f43f5e, #fb7185);"></div>
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #fb7185, #fda4af);"></div>
+                  </div>
+                </div>
+                <div class="right-node-col">
+                  <div class="right-clock">09:20</div>
+                  <div class="right-dot"></div>
+                </div>
+              </div>
+
+              <!-- 14:15 -->
+              <div class="right-moment">
+                <div class="right-body">
+                  <div class="photos-grid three">
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #d97706, #f59e0b);">
+                      <span class="text-tag">记</span>
+                      <span class="audio-tag">🎙️ 0:24</span>
+                    </div>
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #f59e0b, #fbbf24);"></div>
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #fbbf24, #fde68a);"></div>
+                  </div>
+                </div>
+                <div class="right-node-col">
+                  <div class="right-clock">14:15</div>
+                  <div class="right-dot" style="border-color:#ec4899;"></div>
+                </div>
+              </div>
+
+              <!-- 18:40 -->
+              <div class="right-moment">
+                <div class="right-body">
+                  <div class="photos-grid three">
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #1d4ed8, #3b82f6);">
+                      <span class="video-tag">▶ 01:15</span>
+                    </div>
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #3b82f6, #60a5fa);"></div>
+                    <div class="photo-cell" style="background: linear-gradient(135deg, #60a5fa, #93c5fd);"></div>
+                  </div>
+                </div>
+                <div class="right-node-col">
+                  <div class="right-clock">18:40</div>
+                  <div class="right-dot"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bottom-dock">
+            <div class="dock-pill"><span>📁 文件</span></div>
+            <div class="dock-pill active"><span>🖼️ 相册</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 深度解析 -->
+    <div class="compare-card">
+      <h3>🎯 为什么“时间轴放右侧”在相册 App 里体验好得多？</h3>
+      <div class="compare-notes">
+        <div class="note-box">
+          <strong>1. 照片左边大面积铺满，视觉更沉浸</strong>
+          <span>人的视线习惯从左往右扫。左侧直接展示照片大图，没有细线阻挡，第一眼直奔珍贵回忆，画面冲击力更强。</span>
+        </div>
+        <div class="note-box">
+          <strong>2. 符合右手单手滑动的人机工程学</strong>
+          <span>绝大多数人用右手大拇指在屏幕右边缘上下滑动。时间轴放右侧，手指贴着右侧滑动时，刻度与钟点自然就在指尖下方，操作感极佳。</span>
+        </div>
+        <div class="note-box">
+          <strong>3. 与系统快速滚动条（FastScroller）天然合一</strong>
+          <span>右侧轨道未来可自然无缝兼任快速拖拽刻度条，长距离翻看几十天、几个月前照片时，顺着右侧一拉即可穿梭！</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</body>
+</html>

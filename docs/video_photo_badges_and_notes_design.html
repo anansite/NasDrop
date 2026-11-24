@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NasDrop 缩略图全场景角标与视频记忆体系设计提案</title>
+<style>
+  :root {
+    --bg-page: #0f172a;
+    --card-bg: #1e293b;
+    --primary: #38bdf8;
+    --primary-glow: rgba(56, 189, 248, 0.25);
+    --accent-green: #34d399;
+    --accent-orange: #fb923c;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --badge-bg: rgba(15, 23, 42, 0.65);
+    --badge-border: rgba(255, 255, 255, 0.18);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg-page);
+    color: var(--text-main);
+    padding: 30px 20px;
+    line-height: 1.6;
+  }
+  .container { max-width: 1080px; margin: 0 auto; }
+  .header { text-align: center; margin-bottom: 40px; }
+  .header h1 { font-size: 28px; font-weight: 800; color: #fff; margin-bottom: 8px; letter-spacing: -0.5px; }
+  .header p { color: var(--text-muted); font-size: 15px; }
+
+  .section {
+    background: var(--card-bg);
+    border-radius: 20px;
+    padding: 28px;
+    margin-bottom: 32px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .section-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--primary);
+  }
+  .section-desc {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin-bottom: 24px;
+  }
+
+  /* 宫格展示 */
+  .grid-showcase {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 20px;
+  }
+  .thumb-card {
+    background: #090d16;
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    display: flex;
+    flex-direction: column;
+  }
+  .thumb-preview {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1;
+    overflow: hidden;
+    background-size: cover;
+    background-position: center;
+  }
+  .thumb-info {
+    padding: 12px 14px;
+    background: #131b2e;
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+  .thumb-title { font-size: 13px; font-weight: 700; color: #e2e8f0; margin-bottom: 4px; }
+  .thumb-meta { font-size: 11px; color: var(--text-muted); display: flex; gap: 6px; }
+
+  /* 核心一体化徽标规范 */
+  .badge-container {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    border-radius: 10px;
+    background: var(--badge-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 0.6px solid var(--badge-border);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+    padding: 0 6px;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #fff;
+    user-select: none;
+  }
+  .badge-bottom-right { bottom: 6px; right: 6px; }
+  .badge-bottom-left  { bottom: 6px; left: 6px; }
+
+  /* 图标 */
+  .badge-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .badge-icon svg { width: 12px; height: 12px; }
+  .badge-icon.mic { color: var(--primary); }
+  .badge-icon.memo { color: var(--accent-green); }
+  .badge-icon.play { color: #fff; }
+  .badge-divider {
+    width: 1px;
+    height: 10px;
+    background: rgba(255,255,255,0.25);
+    margin: 0 1px;
+  }
+
+  /* 模拟图片背景 */
+  .bg-pic1 { background: linear-gradient(135deg, #f59e0b, #d97706), url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=400'); background-size: cover; }
+  .bg-pic2 { background: linear-gradient(135deg, #10b981, #059669), url('https://images.unsplash.com/photo-1511497584788-87676104235f?w=400'); background-size: cover; }
+  .bg-pic3 { background: linear-gradient(135deg, #ec4899, #8b5cf6), url('https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=400'); background-size: cover; }
+  .bg-vid1 { background: linear-gradient(135deg, #3b82f6, #1d4ed8), url('https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400'); background-size: cover; }
+  .bg-vid2 { background: linear-gradient(135deg, #6366f1, #4338ca), url('https://images.unsplash.com/photo-1534447677768-be436bb09401?w=400'); background-size: cover; }
+  .bg-vid3 { background: linear-gradient(135deg, #ef4444, #b91c1c), url('https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=400'); background-size: cover; }
+
+  /* 视频播放器设计展示 */
+  .player-mockup {
+    background: #000;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.12);
+    position: relative;
+    height: 480px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 20px;
+    background: radial-gradient(circle at center, #1e293b 0%, #000 100%);
+  }
+  .player-topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .player-center-play {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 64px;
+    height: 64px;
+    border-radius: 32px;
+    background: rgba(15,23,42,0.65);
+    backdrop-filter: blur(16px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255,255,255,0.25);
+    color: #fff;
+  }
+  .player-center-play svg { width: 30px; height: 30px; margin-left: 4px; }
+
+  /* 视频底部的录音与备注记忆托盘 */
+  .player-bottom-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .player-memory-card {
+    background: rgba(15, 23, 42, 0.72);
+    backdrop-filter: blur(16px);
+    border: 0.8px solid rgba(255, 255, 255, 0.15);
+    border-radius: 14px;
+    padding: 12px 16px;
+  }
+  .memory-card-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .memory-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #e2e8f0;
+  }
+  .memory-tag {
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: rgba(52, 211, 153, 0.15);
+    color: var(--accent-green);
+    font-weight: 600;
+  }
+  .audio-scrubber-bar {
+    margin-top: 10px;
+    height: 32px;
+    border-radius: 16px;
+    background: rgba(255,255,255,0.06);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    gap: 10px;
+  }
+  .progress-line {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.15);
+    position: relative;
+  }
+  .progress-fill {
+    width: 45%;
+    height: 100%;
+    background: var(--primary);
+    border-radius: 2px;
+    position: relative;
+  }
+  .progress-thumb {
+    position: absolute;
+    right: -4px;
+    top: -4px;
+    width: 12px;
+    height: 12px;
+    border-radius: 6px;
+    background: #fff;
+    box-shadow: 0 0 8px var(--primary);
+  }
+
+  /* 参数规格对比表 */
+  .spec-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 16px;
+    font-size: 13px;
+  }
+  .spec-table th, .spec-table td {
+    padding: 10px 14px;
+    border: 1px solid rgba(255,255,255,0.08);
+    text-align: left;
+  }
+  .spec-table th { background: rgba(255,255,255,0.04); color: var(--primary); }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <h1>NasDrop 统一多媒体记忆角标体系设计</h1>
+    <p>深度融合「视频类型/时长」、「文字备注」与「伴随录音」的一体化视觉规范</p>
+  </div>
+
+  <!-- 第一部分：缩略图全场景规范 -->
+  <div class="section">
+    <div class="section-title">
+      <span>🎨</span> 一、 缩略图宫格：左右双区对齐与一体化微胶囊
+    </div>
+    <div class="section-desc">
+      彻底根治之前“右上角小方块、右下角大长条、一大一小对角撕裂”的问题。
+      <br><strong>核心规则</strong>：
+      <strong>左下角</strong>固定放置媒体原生属性（视频标志+时长），<strong>右下角</strong>固定收敛附加记忆资产（文字备注与语音解说）。
+      两者<strong>高度严格统一为 20dp，圆角统一为 10dp 全胶囊，底色材质完全同源</strong>，左右呼应，极致平衡。
+    </div>
+
+    <div class="grid-showcase">
+      <!-- 1. 普通照片 + 仅备注 -->
+      <div class="thumb-card">
+        <div class="thumb-preview bg-pic1">
+          <!-- 右下角：单备注微标 -->
+          <div class="badge-container badge-bottom-right" style="padding: 0 7px;">
+            <span class="badge-icon memo">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 10h11v2H3zm0-4h11v2H3zm0 8h7v2H3zm17.59-2.07l-1.66-1.66a1.49 1.49 0 0 0-2.12 0l-.88.88 3.77 3.77.88-.88c.59-.58.59-1.53.01-2.11zM11 19.94V22h2.06l6.01-6.01-2.06-2.06L11 19.94z"/></svg>
+            </span>
+          </div>
+        </div>
+        <div class="thumb-info">
+          <div class="thumb-title">照片 · 仅文字备注</div>
+          <div class="thumb-meta">右下角精纯笔记微标</div>
+        </div>
+      </div>
+
+      <!-- 2. 普通照片 + 仅录音 -->
+      <div class="thumb-card">
+        <div class="thumb-preview bg-pic2">
+          <!-- 右下角：单伴随录音胶囊 -->
+          <div class="badge-container badge-bottom-right">
+            <span class="badge-icon mic">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
+            </span>
+            <span>0:03</span>
+          </div>
+        </div>
+        <div class="thumb-info">
+          <div class="thumb-title">照片 · 仅伴随录音</div>
+          <div class="thumb-meta">微麦克风 + 精确秒数</div>
+        </div>
+      </div>
+
+      <!-- 3. 普通照片 + 备注 + 录音 (双核合体) -->
+      <div class="thumb-card">
+        <div class="thumb-preview bg-pic3">
+          <!-- 右下角：备注 + 录音合体微胶囊 -->
+          <div class="badge-container badge-bottom-right">
+            <span class="badge-icon memo">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 10h11v2H3zm0-4h11v2H3zm0 8h7v2H3zm17.59-2.07l-1.66-1.66a1.49 1.49 0 0 0-2.12 0l-.88.88 3.77 3.77.88-.88c.59-.58.59-1.53.01-2.11zM11 19.94V22h2.06l6.01-6.01-2.06-2.06L11 19.94z"/></svg>
+            </span>
+            <div class="badge-divider"></div>
+            <span class="badge-icon mic">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
+            </span>
+            <span>0:03</span>
+          </div>
+        </div>
+        <div class="thumb-info">
+          <div class="thumb-title">照片 · 备注+录音合体</div>
+          <div class="thumb-meta" style="color:var(--accent-green);">★ 告别对角撕裂，优雅融合</div>
+        </div>
+      </div>
+
+      <!-- 4. 普通视频 (基础状态) -->
+      <div class="thumb-card">
+        <div class="thumb-preview bg-vid1">
+          <!-- 左下角：视频原生时长 -->
+          <div class="badge-container badge-bottom-left">
+            <span class="badge-icon play">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 6.82v10.36c0 .79.87 1.27 1.54.84l8.14-5.18c.62-.39.62-1.29 0-1.69L9.54 5.98C8.87 5.55 8 6.03 8 6.82z"/></svg>
+            </span>
+            <span>01:24</span>
+          </div>
+        </div>
+        <div class="thumb-info">
+          <div class="thumb-title">基础视频 · 仅原片时长</div>
+          <div class="thumb-meta">左下角恒定标识媒体属性</div>
+        </div>
+      </div>
+
+      <!-- 5. 视频 + 文字备注 -->
+      <div class="thumb-card">
+        <div class="thumb-preview bg-vid2">
+          <!-- 左下角：视频时长 -->
+          <div class="badge-container badge-bottom-left">
+            <span class="badge-icon play">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 6.82v10.36c0 .79.87 1.27 1.54.84l8.14-5.18c.62-.39.62-1.29 0-1.69L9.54 5.98C8.87 5.55 8 6.03 8 6.82z"/></svg>
+            </span>
+            <span>00:45</span>
+          </div>
+          <!-- 右下角：备注徽章 (与左侧高度完全一致) -->
+          <div class="badge-container badge-bottom-right" style="padding: 0 7px;">
+            <span class="badge-icon memo">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 10h11v2H3zm0-4h11v2H3zm0 8h7v2H3zm17.59-2.07l-1.66-1.66a1.49 1.49 0 0 0-2.12 0l-.88.88 3.77 3.77.88-.88c.59-.58.59-1.53.01-2.11zM11 19.94V22h2.06l6.01-6.01-2.06-2.06L11 19.94z"/></svg>
+            </span>
+          </div>
+        </div>
+        <div class="thumb-info">
+          <div class="thumb-title">视频 · 拥有文字备注</div>
+          <div class="thumb-meta">左时长，右备注，左右平衡</div>
+        </div>
+      </div>
+
+      <!-- 6. 视频 + 伴随录音 + 文字备注 (全配满血视频) -->
+      <div class="thumb-card">
+        <div class="thumb-preview bg-vid3">
+          <!-- 左下角：视频时长 -->
+          <div class="badge-container badge-bottom-left">
+            <span class="badge-icon play">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 6.82v10.36c0 .79.87 1.27 1.54.84l8.14-5.18c.62-.39.62-1.29 0-1.69L9.54 5.98C8.87 5.55 8 6.03 8 6.82z"/></svg>
+            </span>
+            <span>02:10</span>
+          </div>
+          <!-- 右下角：双核合体胶囊 (同样高20dp，圆角10dp) -->
+          <div class="badge-container badge-bottom-right">
+            <span class="badge-icon memo">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 10h11v2H3zm0-4h11v2H3zm0 8h7v2H3zm17.59-2.07l-1.66-1.66a1.49 1.49 0 0 0-2.12 0l-.88.88 3.77 3.77.88-.88c.59-.58.59-1.53.01-2.11zM11 19.94V22h2.06l6.01-6.01-2.06-2.06L11 19.94z"/></svg>
+            </span>
+            <div class="badge-divider"></div>
+            <span class="badge-icon mic">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
+            </span>
+            <span>0:15</span>
+          </div>
+        </div>
+        <div class="thumb-info">
+          <div class="thumb-title">视频 · 满配记忆资产</div>
+          <div class="thumb-meta" style="color:var(--primary);">左右对称双胶囊，极致规整</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 第二部分：视频播放器界面的录音与备注支持 -->
+  <div class="section">
+    <div class="section-title">
+      <span>🎬</span> 二、 视频播放器界面的记忆沉淀体验设计
+    </div>
+    <div class="section-desc">
+      视频和照片一样，是珍贵家庭回忆的核心载体。视频播放器同样全面支持：
+      <strong>① 查看/编辑视频文字备忘录</strong>、
+      <strong>② 录制视频伴随解说录音 / 回忆旁白</strong>、
+      <strong>③ 精准拖动条波形播放伴随语音</strong>。
+    </div>
+
+    <div class="player-mockup">
+      <!-- 顶部栏 -->
+      <div class="player-topbar">
+        <span style="font-size:14px; font-weight:700;">VID_20251123_161020.mp4</span>
+        <span style="font-size:12px; color:var(--text-muted);">2025年11月23日 · 最美班级</span>
+      </div>
+
+      <!-- 中央播放按钮 -->
+      <div class="player-center-play">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+      </div>
+
+      <!-- 底部视频记忆卡片群 -->
+      <div class="player-bottom-panel">
+        <!-- 视频专属文字备注卡片 -->
+        <div class="player-memory-card">
+          <div class="memory-card-row">
+            <div class="memory-left">
+              <span class="memory-tag">文字备注</span>
+              <span>“班级科技节机器人小车测试冲线瞬间，全场欢呼！”</span>
+            </div>
+            <span style="font-size:11px; color:var(--primary); cursor:pointer;">编辑 ✎</span>
+          </div>
+        </div>
+
+        <!-- 视频伴随录音解说卡片（带拖拽进度点） -->
+        <div class="player-memory-card">
+          <div class="memory-card-row">
+            <div class="memory-left">
+              <span class="memory-tag" style="background:rgba(56,189,248,0.15); color:var(--primary);">语音解说</span>
+              <span>🎙️ 妈妈的现场回忆解说</span>
+            </div>
+            <span style="font-size:11px; color:var(--text-muted);">0:08 / 0:18</span>
+          </div>
+          <!-- 优雅音频控制条 -->
+          <div class="audio-scrubber-bar">
+            <span style="font-size:14px; cursor:pointer;">▶</span>
+            <div class="progress-line">
+              <div class="progress-fill">
+                <div class="progress-thumb"></div>
+              </div>
+            </div>
+            <span style="font-size:11px; color:var(--text-muted);">0:18</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 第三部分：具体参数规格对照表 -->
+  <div class="section">
+    <div class="section-title">
+      <span>📐</span> 三、 核心参数规格对照表（确保全端一致）
+    </div>
+    <table class="spec-table">
+      <thead>
+        <tr>
+          <th>元素</th>
+          <th>尺寸规格</th>
+          <th>圆角与边框</th>
+          <th>背景底色</th>
+          <th>图标与文字配色</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>单备注微标</strong></td>
+          <td>宽约 20dp，高 20dp</td>
+          <td>全圆角 10dp，0.5dp 微白框</td>
+          <td>rgba(15, 23, 42, 0.65) 毛玻璃</td>
+          <td>翡翠绿 #34D399（12dp 矢量微标）</td>
+        </tr>
+        <tr>
+          <td><strong>单录音微胶囊</strong></td>
+          <td>高 20dp，宽度自适应（约36dp）</td>
+          <td>全圆角 10dp，0.5dp 微白框</td>
+          <td>rgba(15, 23, 42, 0.65) 毛玻璃</td>
+          <td>天蓝 #38BDF8（麦克风）+ 白色 #FFF 时长（9.5sp）</td>
+        </tr>
+        <tr>
+          <td><strong>备注+录音合体胶囊</strong></td>
+          <td>高 20dp，宽度约 52dp</td>
+          <td>全圆角 10dp，0.5dp 微白框</td>
+          <td>rgba(15, 23, 42, 0.65) 毛玻璃</td>
+          <td>翡翠绿微标 + 0.5dp 分隔线 + 天蓝麦克风 + 白色时长</td>
+        </tr>
+        <tr>
+          <td><strong>视频原生时长胶囊</strong></td>
+          <td>高 20dp，位于左下角</td>
+          <td>全圆角 10dp，0.5dp 微白框</td>
+          <td>rgba(15, 23, 42, 0.65) 毛玻璃</td>
+          <td>白色播放三角 #FFF（11dp）+ 白色时长（9.5sp）</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+</body>
+</html>
