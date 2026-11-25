@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CancellationException
 import java.io.File
 import java.text.SimpleDateFormat
@@ -910,6 +911,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** 惰性按需媒体扫描：用户切换到相册或影音页面时才触发，首屏启动完全零负载 */
 	fun ensureMediaScanned(force: Boolean = false) {
+		if (currentTab == MainTab.Photos) {
+			refreshPhotoGroups()
+		}
 		if (mediaScanning && !force) return
 		if (hasScannedMedia && !force && !mediaDirty) return
 		mediaScanJob?.cancel()
@@ -1750,6 +1754,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			try {
 					if (currentTab == MainTab.Photos || currentTab == MainTab.Media) {
 						val selected = if (currentTab == MainTab.Photos) selectedAlbumPath else selectedMediaPath
+						if (currentTab == MainTab.Photos) {
+							refreshPhotoGroups()
+						}
 						if (selected.isNotBlank()) {
 							try { loadDirectory(selected); mediaError = null }
 							catch (e: Exception) {
@@ -1759,7 +1766,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 							}
 						} else {
 							ensureMediaScanned(force = true)
-							mediaScanJob?.join()
+							withTimeoutOrNull(20_000L) {
+								mediaScanJob?.join()
+							}
 						}
 					} else {
 						if (currentTab == MainTab.Home) {
@@ -2580,8 +2589,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** 媒体扫描仅在用户进入对应页面时执行，逐目录呈现；失败保留现有内容并明确提示。 */
 	private suspend fun scanGlobalMedia() {
-		// 1. 同步远端元数据（图标与排序）
-		val remoteMeta = runCatching { client?.loadRemoteMetadata() }.getOrNull()
+		// 1. 同步远端元数据（图标与排序）与服务端集锦（必须在 Dispatchers.IO 中执行网络请求）
+		val cfg = app.prefs.current()
+		val (remoteMeta, remoteGroups) = withContext(Dispatchers.IO) {
+			val c = clientOf(cfg)
+			val meta = runCatching { c.loadRemoteMetadata() }.getOrNull()
+			val groups = runCatching { c.fetchPhotoGroups() }.getOrNull()
+			meta to groups
+		}
 		if (remoteMeta != null) {
 			val db = NasDb.getInstance(app)
 			remoteMeta.folderIcons.forEach { (p, k) -> db.setFolderIcon(p, k) }
@@ -2598,8 +2613,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 		}
 
-		// 同步服务端数据库中的照片串联组
-		val remoteGroups = runCatching { client?.fetchPhotoGroups() }.getOrNull()
+		// 同步服务端数据库中的照片集锦
 		if (remoteGroups != null) {
 			withContext(Dispatchers.Main) {
 				photoGroups = remoteGroups
