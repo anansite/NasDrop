@@ -183,6 +183,8 @@ import com.nasdrop.MediaFilterType
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.ArrowForward
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.FilledTonalButton
 import com.nasdrop.PhotoGroup
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.AutoAwesome
