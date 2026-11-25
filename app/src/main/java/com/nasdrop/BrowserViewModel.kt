@@ -848,6 +848,18 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		withContext(Dispatchers.Main) {
 			if (directoryRequests[dir] == request && (observedConfiguration == null || observedConfiguration == configuration)) applyDirectoryListing(dir, fresh)
 		}
+		if (dir.isEmpty()) {
+			val moviesRoot = fresh.firstOrNull { it.isDir && it.name.equals("movies", ignoreCase = true) }
+			if (moviesRoot != null && moviesMigrationInFlight.compareAndSet(false, true)) {
+				viewModelScope.launch {
+					migrateMoviesToPhotos(moviesRoot.path)
+					dirCache.remove("")
+					if (path.isEmpty()) {
+						entries = entries.filterNot { it.isDir && it.name.equals("movies", ignoreCase = true) }
+					}
+				}
+			}
+		}
 		val currentUrl = configuration.baseUrl.toHttpUrlOrNull()
 		if (dir.isEmpty() && currentUrl != null && currentUrl.encodedPath != effectivePath) {
 			val corrected = currentUrl.newBuilder().encodedPath(effectivePath).build().toString()
@@ -2482,6 +2494,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
+	private val moviesMigrationInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+
 	/** 将旧版 movies 目录平滑迁移至 Photos 下并清理空的 movies 根目录 */
 	private suspend fun migrateMoviesToPhotos(moviesPath: String) {
 		withContext(Dispatchers.IO) {
@@ -2489,18 +2503,18 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				val c = clientOf(app.prefs.current())
 				runCatching { c.mkcol("Photos") }
 				val items = runCatching { c.list(moviesPath) }.getOrNull() ?: return@withContext
-				var allMigrated = true
 				for (item in items) {
-					if (item.name == ".thumbnails") {
-						runCatching { c.delete(item.path, true) }
+					if (item.name.startsWith(".")) {
+						runCatching { c.delete(item.path, item.isDir) }
 						continue
 					}
 					if (item.isDir && (item.name == "默认影集" || item.name == "默认影音")) {
 						runCatching { c.mkcol("Photos/默认相册") }
 						val subItems = runCatching { c.list(item.path) }.getOrNull().orEmpty()
+						var subAllDone = true
 						for (sub in subItems) {
-							if (sub.name == ".thumbnails") {
-								runCatching { c.delete(sub.path, true) }
+							if (sub.name.startsWith(".")) {
+								runCatching { c.delete(sub.path, sub.isDir) }
 								continue
 							}
 							val dest = "Photos/默认相册/${sub.name}"
@@ -2509,10 +2523,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 								if (sub.isDir) PhotoMetadataStore.moveDir(sub.path, dest)
 								else PhotoMetadataStore.move(sub.path, dest)
 							} else {
-								allMigrated = false
+								subAllDone = false
 							}
 						}
-						if (allMigrated) {
+						if (subAllDone) {
 							runCatching { c.delete(item.path, true) }
 						}
 					} else {
@@ -2521,17 +2535,13 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						if (ok) {
 							if (item.isDir) PhotoMetadataStore.moveDir(item.path, dest)
 							else PhotoMetadataStore.move(item.path, dest)
-						} else {
-							allMigrated = false
 						}
 					}
 				}
-				if (allMigrated) {
-					val remaining = runCatching { c.list(moviesPath) }.getOrNull().orEmpty()
-						.filterNot { it.name.startsWith(".") }
-					if (remaining.isEmpty()) {
-						runCatching { c.delete(moviesPath, true) }
-					}
+				val remaining = runCatching { c.list(moviesPath) }.getOrNull().orEmpty()
+					.filterNot { it.name.startsWith(".") }
+				if (remaining.isEmpty()) {
+					runCatching { c.delete(moviesPath, true) }
 				}
 			} catch (e: Exception) {
 				if (e is CancellationException) throw e

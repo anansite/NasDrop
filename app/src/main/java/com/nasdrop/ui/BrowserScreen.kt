@@ -279,7 +279,6 @@ fun BrowserScreen(
 	var showNetSheet by remember { mutableStateOf(false) }
 
 	var activeCreateType by remember { mutableStateOf<CreateDialogType?>(null) }
-	var showUploadTargetConfirm by remember { mutableStateOf(false) }
 	var activeFolderForDelete by remember { mutableStateOf<Pair<DavEntry, Boolean>?>(null) }
 	var showBatchDeleteConfirm by remember { mutableStateOf(false) }
 	var showBatchMoveSheet by remember { mutableStateOf(false) }
@@ -654,9 +653,26 @@ fun BrowserScreen(
 
 				// 可自由拖拽吸附的悬浮上传球（按住任意拖动，松手平滑贴边，绝不挡列表底部；首页不展示上传悬浮球）
 				if (!vm.isMultiSelectMode && mode == BrowserMode.Browse && vm.currentTab != MainTab.Home) {
+					val (uploadTargetPath, uploadTargetLabel) = when (vm.currentTab) {
+						MainTab.Photos, MainTab.Home -> {
+							if (vm.selectedAlbumPath.isNotBlank() && vm.selectedAlbumPath != "__ALL_FOLDERS__") {
+								val albumName = vm.allAlbumFolders.firstOrNull { it.path == vm.selectedAlbumPath }?.displayName
+									?: vm.selectedAlbumPath.substringAfterLast('/')
+								vm.selectedAlbumPath to albumName
+							} else {
+								"Photos/默认相册" to "默认相册"
+							}
+						}
+						MainTab.Files -> {
+							if (vm.path.isBlank()) "" to "根目录"
+							else vm.path to vm.path.trim('/').substringAfterLast('/')
+						}
+						else -> "Photos/默认相册" to "默认相册"
+					}
 					DraggableUploadFab(
 						currentTab = vm.currentTab,
-						onClickUpload = { showUploadTargetConfirm = true },
+						targetLabel = uploadTargetLabel,
+						onConfirmUpload = { launchSystemUpload(uploadTargetPath) },
 					)
 				}
 
@@ -866,55 +882,6 @@ fun BrowserScreen(
 					activeEntryForIconPicker = target
 				}
 			} else null,
-		)
-	}
-
-	// 上传目标文件夹确认提示弹窗（点击吸附在边框的上传按钮后弹出，友好展示将要上传的目录）
-	if (showUploadTargetConfirm) {
-		val (targetPath, targetDisplayName, targetHint) = when (vm.currentTab) {
-			MainTab.Photos, MainTab.Home -> {
-				if (vm.selectedAlbumPath.isNotBlank() && vm.selectedAlbumPath != "__ALL_FOLDERS__") {
-					val albumName = vm.allAlbumFolders.firstOrNull { it.path == vm.selectedAlbumPath }?.displayName
-						?: vm.selectedAlbumPath.substringAfterLast('/')
-					Triple(vm.selectedAlbumPath, albumName, "当前位于「$albumName」相册，文件将存入此相册")
-				} else {
-					Triple("Photos/默认相册", "默认相册 (Photos/默认相册)", "当前位于相册根目录，文件将统一存入「默认相册」")
-				}
-			}
-			MainTab.Files -> {
-				if (vm.path.isBlank()) {
-					Triple("", "NAS 根目录 (/)", "当前位于全部文件根目录，文件将直接存入根目录")
-				} else {
-					val folderName = vm.path.trim('/').substringAfterLast('/')
-					Triple(vm.path, "$folderName (/${vm.path.trim('/')})", "当前位于「$folderName」文件夹，文件将存入此目录")
-				}
-			}
-			else -> Triple("Photos/默认相册", "默认相册", "文件将存入「默认相册」")
-		}
-		AlertDialog(
-			onDismissRequest = { showUploadTargetConfirm = false },
-			icon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-			title = { Text("上传到「$targetDisplayName」", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
-			text = {
-				Text(
-					targetHint,
-					style = MaterialTheme.typography.bodyMedium,
-					color = MaterialTheme.colorScheme.onSurfaceVariant,
-				)
-			},
-			confirmButton = {
-				Button(onClick = {
-					showUploadTargetConfirm = false
-					launchSystemUpload(targetPath)
-				}) {
-					Text("选择文件上传")
-				}
-			},
-			dismissButton = {
-				TextButton(onClick = { showUploadTargetConfirm = false }) {
-					Text("取消")
-				}
-			},
 		)
 	}
 
@@ -3255,13 +3222,8 @@ private fun HomeScreenContent(
 					modifier = Modifier.fillMaxWidth(),
 				) {
 					Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-						val headerTimeText by androidx.compose.runtime.produceState(
-							initialValue = SimpleDateFormat("MM月dd日 HH:mm", Locale.CHINA).format(Date())
-						) {
-							while (true) {
-								value = SimpleDateFormat("MM月dd日 HH:mm", Locale.CHINA).format(Date())
-								delay(30_000L)
-							}
+						val headerTimeText = remember {
+							SimpleDateFormat("yyyy年MM月dd日", Locale.CHINA).format(Date())
 						}
 						Row(
 							modifier = Modifier.fillMaxWidth(),
@@ -6777,7 +6739,8 @@ internal fun formatDate(millis: Long): String {
 @Composable
 private fun DraggableUploadFab(
 	currentTab: MainTab,
-	onClickUpload: () -> Unit,
+	targetLabel: String,
+	onConfirmUpload: () -> Unit,
 ) {
 	if (currentTab == MainTab.Home || currentTab == MainTab.Me || currentTab == MainTab.Settings) return
 
@@ -6785,24 +6748,38 @@ private fun DraggableUploadFab(
 		val density = LocalDensity.current
 		val boxWidthPx = constraints.maxWidth.toFloat()
 		val boxHeightPx = constraints.maxHeight.toFloat()
+		val boxWidthDp = with(density) { boxWidthPx.toDp() }
 
-		val tabWidthDp = 46.dp
-		val tabHeightDp = 48.dp
-		val tabWidthPx = with(density) { tabWidthDp.toPx() }
+		val peekWidthDp = 12.dp
+		val tabHeightDp = 42.dp
+		val peekWidthPx = with(density) { peekWidthDp.toPx() }
 		val tabHeightPx = with(density) { tabHeightDp.toPx() }
 		val topMarginPx = with(density) { 16.dp.toPx() }
 		val bottomMarginPx = with(density) { 96.dp.toPx() }
 
-		// 默认贴紧右边框（吸附在屏幕边缘，不遮挡中间内容）
+		// 默认贴紧右边框（只露出一小条 12dp 的极简把手）；点击后就地展开为严格在屏幕内的小胶囊
 		var dockedRight by remember { mutableStateOf(true) }
-		var dragOffsetX by remember(boxWidthPx) { mutableFloatStateOf((boxWidthPx - tabWidthPx).coerceAtLeast(0f)) }
+		var isExpanded by remember(currentTab, targetLabel) { mutableStateOf(false) }
+		var capsuleWidthPx by remember { mutableFloatStateOf(peekWidthPx) }
+		var dragOffsetX by remember(boxWidthPx) { mutableFloatStateOf((boxWidthPx - peekWidthPx).coerceAtLeast(0f)) }
 		var offsetY by remember(boxHeightPx) { mutableFloatStateOf((boxHeightPx - tabHeightPx - bottomMarginPx).coerceAtLeast(topMarginPx)) }
 		var isDragging by remember { mutableStateOf(false) }
 
+		// 展开后 3.5 秒未点击自动缩回贴边小把手
+		LaunchedEffect(isExpanded) {
+			if (isExpanded) {
+				delay(3500L)
+				isExpanded = false
+			}
+		}
+
+		val effectiveWidthPx = if (isExpanded) capsuleWidthPx.coerceIn(peekWidthPx, boxWidthPx) else peekWidthPx
 		val targetX = if (isDragging) {
-			dragOffsetX.coerceIn(0f, (boxWidthPx - tabWidthPx).coerceAtLeast(0f))
+			dragOffsetX.coerceIn(0f, (boxWidthPx - effectiveWidthPx).coerceAtLeast(0f))
+		} else if (dockedRight) {
+			(boxWidthPx - effectiveWidthPx).coerceAtLeast(0f)
 		} else {
-			if (dockedRight) (boxWidthPx - tabWidthPx).coerceAtLeast(0f) else 0f
+			0f
 		}
 		val animatedX by animateFloatAsState(
 			targetValue = targetX,
@@ -6810,57 +6787,96 @@ private fun DraggableUploadFab(
 			label = "upload_edge_dock_x",
 		)
 
-		val label = when (currentTab) {
-			MainTab.Files -> "上传文件"
-			MainTab.Photos -> "上传照片"
-			else -> "上传"
-		}
-		val dockShape = if (dockedRight && !isDragging) {
-			RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)
-		} else if (!dockedRight && !isDragging) {
-			RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp)
-		} else {
+		val dockShape = if (isDragging) {
 			CircleShape
+		} else if (dockedRight) {
+			RoundedCornerShape(topStart = 21.dp, bottomStart = 21.dp)
+		} else {
+			RoundedCornerShape(topEnd = 21.dp, bottomEnd = 21.dp)
 		}
 
 		Surface(
 			shape = dockShape,
-			color = MaterialTheme.colorScheme.primary,
-			shadowElevation = if (isDragging) 12.dp else 6.dp,
+			color = MaterialTheme.colorScheme.primary.copy(alpha = if (isExpanded || isDragging) 0.96f else 0.85f),
+			shadowElevation = if (isDragging || isExpanded) 8.dp else 4.dp,
 			modifier = Modifier
 				.offset {
 					val curY = offsetY.coerceIn(topMarginPx, (boxHeightPx - tabHeightPx - bottomMarginPx).coerceAtLeast(topMarginPx))
-					IntOffset(animatedX.roundToInt(), curY.roundToInt())
+					val curX = animatedX.coerceIn(0f, (boxWidthPx - effectiveWidthPx).coerceAtLeast(0f))
+					IntOffset(curX.roundToInt(), curY.roundToInt())
 				}
-				.size(width = tabWidthDp, height = tabHeightDp)
+				.height(tabHeightDp)
+				.widthIn(min = peekWidthDp, max = (boxWidthDp - 16.dp).coerceAtLeast(peekWidthDp))
+				.onSizeChanged { size ->
+					if (isExpanded && size.width > 0) {
+						capsuleWidthPx = size.width.toFloat()
+					}
+				}
 				.pointerInput(currentTab, boxWidthPx, boxHeightPx) {
 					detectDragGestures(
 						onDragStart = {
 							isDragging = true
+							isExpanded = false
 							dragOffsetX = animatedX
 						},
 						onDragEnd = {
 							isDragging = false
-							val centerX = dragOffsetX + tabWidthPx / 2f
+							val centerX = dragOffsetX + peekWidthPx / 2f
 							dockedRight = centerX >= boxWidthPx / 2f
 						},
 						onDragCancel = { isDragging = false },
 						onDrag = { change, dragAmount ->
 							change.consume()
-							dragOffsetX = (dragOffsetX + dragAmount.x).coerceIn(0f, (boxWidthPx - tabWidthPx).coerceAtLeast(0f))
+							dragOffsetX = (dragOffsetX + dragAmount.x).coerceIn(0f, (boxWidthPx - peekWidthPx).coerceAtLeast(0f))
 							offsetY = (offsetY + dragAmount.y).coerceIn(topMarginPx, (boxHeightPx - tabHeightPx - bottomMarginPx).coerceAtLeast(topMarginPx))
 						}
 					)
 				}
-				.clickable { onClickUpload() },
+				.clickable {
+					if (!isExpanded) {
+						isExpanded = true
+					} else {
+						isExpanded = false
+						onConfirmUpload()
+					}
+				},
 		) {
-			Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-				Icon(
-					imageVector = Icons.Rounded.FileUpload,
-					contentDescription = label,
-					tint = MaterialTheme.colorScheme.onPrimary,
-					modifier = Modifier.size(22.dp),
-				)
+			if (!isExpanded) {
+				Box(
+					modifier = Modifier.width(peekWidthDp).fillMaxHeight(),
+					contentAlignment = Alignment.Center,
+				) {
+					Box(
+						modifier = Modifier
+							.width(3.dp)
+							.height(18.dp)
+							.clip(RoundedCornerShape(1.5.dp))
+							.background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f))
+					)
+				}
+			} else {
+				Row(
+					modifier = Modifier
+						.fillMaxHeight()
+						.padding(horizontal = 14.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
+				) {
+					Icon(
+						imageVector = Icons.Rounded.FileUpload,
+						contentDescription = "上传",
+						tint = MaterialTheme.colorScheme.onPrimary,
+						modifier = Modifier.size(16.dp),
+					)
+					Text(
+						text = "上传到 · $targetLabel",
+						fontSize = 12.5.sp,
+						fontWeight = FontWeight.SemiBold,
+						color = MaterialTheme.colorScheme.onPrimary,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
+				}
 			}
 		}
 	}
