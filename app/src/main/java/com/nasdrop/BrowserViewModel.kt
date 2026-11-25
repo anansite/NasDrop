@@ -2015,7 +2015,26 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
-	// ==================== 相册照片串联组（直连服务端数据库） ====================
+	// ==================== 相册集锦（直连服务端数据库） ====================
+
+	/** 若服务端同步回来的集锦中包含本地 allPhotos 尚未收录的新照片，按其父目录定向补拉一次 */
+	private fun backfillMissingGroupDirs(groups: List<PhotoGroup>) {
+		val known = allPhotos.mapTo(HashSet()) { it.path.trim('/') }
+		val missingDirs = groups.asSequence()
+			.flatMap { it.items.asSequence() }
+			.map { it.trim('/') }
+			.filter { it.isNotEmpty() && !known.contains(it) }
+			.map { parentOf(it) }
+			.distinct()
+			.take(6)
+			.toList()
+		if (missingDirs.isEmpty()) return
+		viewModelScope.launch {
+			missingDirs.forEach { dir ->
+				runCatching { loadDirectory(dir) }
+			}
+		}
+	}
 
 	fun refreshPhotoGroups(albumDir: String = "") {
 		viewModelScope.launch(Dispatchers.IO) {
@@ -2025,6 +2044,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					val clean = albumDir.trim('/')
 					photoGroups.filterNot { it.albumDir == clean } + list
 				}
+				backfillMissingGroupDirs(list)
 			}
 		}
 	}
@@ -2047,7 +2067,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				runCatching {
 					clientOf(app.prefs.current()).createPhotoGroup(
 						albumDir = cleanAlbum,
-						title = title.ifBlank { "照片串联组" },
+						title = title.ifBlank { "照片集锦" },
 						memo = memo.trim(),
 						items = orderedPaths,
 					)
@@ -2056,9 +2076,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			if (created != null) {
 				photoGroups = listOf(created) + photoGroups.filterNot { it.id == created.id }
 				exitMultiSelect()
-				uiMessage = "已串联 ${created.items.size} 张照片"
+				uiMessage = "已创建集锦（${created.items.size} 张）"
 			} else {
-				uiMessage = "创建串联组失败，请检查服务端是否已升级"
+				uiMessage = "创建集锦失败，请检查网络或服务端状态"
 			}
 			onDone(created)
 		}
@@ -2072,6 +2092,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		replaceItems: Boolean = false,
 		onDone: (PhotoGroup?) -> Unit = {},
 	) {
+		val prevGroup = photoGroups.firstOrNull { it.id == id }
 		// 乐观更新本地状态，保证拖拽调序/改备注零延迟
 		photoGroups = photoGroups.map { g ->
 			if (g.id == id) {
@@ -2091,6 +2112,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 			if (updated != null) {
 				photoGroups = photoGroups.map { if (it.id == updated.id) updated else it }
+			} else {
+				if (prevGroup != null) {
+					photoGroups = photoGroups.map { if (it.id == id) prevGroup else it }
+				}
+				uiMessage = "保存集锦修改失败，已恢复原状态"
 			}
 			onDone(updated)
 		}
@@ -2102,6 +2128,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			onDone(false)
 			return
 		}
+		val prevGroup = photoGroups.firstOrNull { it.id == groupId }
 		photoGroups = photoGroups.map { g ->
 			if (g.id == groupId) g.copy(items = (g.items + clean).distinct(), updatedAt = System.currentTimeMillis())
 			else g
@@ -2115,6 +2142,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				uiMessage = "已追加 ${clean.size} 张照片到「${updated.title}」"
 				onDone(true)
 			} else {
+				if (prevGroup != null) {
+					photoGroups = photoGroups.map { if (it.id == groupId) prevGroup else it }
+				}
+				uiMessage = "追加到集锦失败，请稍后重试"
 				onDone(false)
 			}
 		}
@@ -2122,6 +2153,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	fun removeFromPhotoGroup(groupId: String, photoPath: String) {
 		val clean = photoPath.trim('/')
+		val prevGroup = photoGroups.firstOrNull { it.id == groupId }
 		photoGroups = photoGroups.map { g ->
 			if (g.id == groupId) g.copy(items = g.items.filterNot { it == clean }, updatedAt = System.currentTimeMillis())
 			else g
@@ -2132,6 +2164,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 			if (updated != null) {
 				photoGroups = photoGroups.map { if (it.id == updated.id) updated else it }
+				uiMessage = "已移出集锦（原照片已保留）"
+			} else {
+				if (prevGroup != null) {
+					photoGroups = photoGroups.map { if (it.id == groupId) prevGroup else it }
+				}
+				uiMessage = "移出集锦失败，已恢复原状态"
 			}
 		}
 	}
@@ -2144,10 +2182,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				runCatching { clientOf(app.prefs.current()).deletePhotoGroup(groupId) }.getOrDefault(false)
 			}
 			if (ok) {
-				uiMessage = "已解散串联组（原照片已保留）"
+				uiMessage = "已解散集锦（原照片已保留）"
 			} else {
 				photoGroups = prev
-				uiMessage = "解散串联组失败"
+				uiMessage = "解散集锦失败"
 			}
 			onDone(ok)
 		}
