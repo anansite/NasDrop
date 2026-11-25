@@ -8,8 +8,11 @@ import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -6797,90 +6800,121 @@ private fun DraggableUploadFab(
 
 		val capsuleBgColor by animateColorAsState(
 			targetValue = MaterialTheme.colorScheme.primary.copy(alpha = if (isExpanded || isDragging) 0.96f else 0.36f),
+			animationSpec = tween(durationMillis = 220),
 			label = "upload_edge_dock_color",
 		)
 
-		Surface(
-			shape = dockShape,
-			color = capsuleBgColor,
-			shadowElevation = if (isDragging || isExpanded) 8.dp else 1.dp,
+		// 展开状态下点击屏幕其他任意位置立即收起
+		if (isExpanded) {
+			Box(
+				modifier = Modifier
+					.fillMaxSize()
+					.clickable(
+						interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+						indication = null,
+					) {
+						isExpanded = false
+					}
+			)
+		}
+
+		// 用整行容器做左右边框对齐，配合 animateContentSize 实现零抖动、严丝合缝的丝滑展开/收起动画
+		Box(
 			modifier = Modifier
+				.fillMaxWidth()
 				.offset {
 					val curY = offsetY.coerceIn(topMarginPx, (boxHeightPx - tabHeightPx - bottomMarginPx).coerceAtLeast(topMarginPx))
-					val curX = animatedX.coerceIn(0f, (boxWidthPx - effectiveWidthPx).coerceAtLeast(0f))
-					IntOffset(curX.roundToInt(), curY.roundToInt())
-				}
-				.height(tabHeightDp)
-				.widthIn(min = peekWidthDp, max = (boxWidthDp - 16.dp).coerceAtLeast(peekWidthDp))
-				.onSizeChanged { size ->
-					if (isExpanded && size.width > 0) {
-						capsuleWidthPx = size.width.toFloat()
-					}
-				}
-				.pointerInput(currentTab, boxWidthPx, boxHeightPx) {
-					detectDragGestures(
-						onDragStart = {
-							isDragging = true
-							isExpanded = false
-							dragOffsetX = animatedX
-						},
-						onDragEnd = {
-							isDragging = false
-							val centerX = dragOffsetX + peekWidthPx / 2f
-							dockedRight = centerX >= boxWidthPx / 2f
-						},
-						onDragCancel = { isDragging = false },
-						onDrag = { change, dragAmount ->
-							change.consume()
-							dragOffsetX = (dragOffsetX + dragAmount.x).coerceIn(0f, (boxWidthPx - peekWidthPx).coerceAtLeast(0f))
-							offsetY = (offsetY + dragAmount.y).coerceIn(topMarginPx, (boxHeightPx - tabHeightPx - bottomMarginPx).coerceAtLeast(topMarginPx))
-						}
-					)
-				}
-				.clickable {
-					if (!isExpanded) {
-						isExpanded = true
-					} else {
-						isExpanded = false
-						onConfirmUpload()
-					}
+					val curX = if (isDragging) dragOffsetX.coerceIn(0f, (boxWidthPx - peekWidthPx).coerceAtLeast(0f)) else 0f
+					IntOffset(if (isDragging) curX.roundToInt() else 0, curY.roundToInt())
 				},
+			contentAlignment = if (isDragging) Alignment.CenterStart else if (dockedRight) Alignment.CenterEnd else Alignment.CenterStart,
 		) {
-			if (!isExpanded) {
-				Box(
-					modifier = Modifier.width(peekWidthDp).fillMaxHeight(),
-					contentAlignment = Alignment.Center,
-				) {
-					Box(
-						modifier = Modifier
-							.width(3.dp)
-							.height(18.dp)
-							.clip(RoundedCornerShape(1.5.dp))
-							.background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f))
+			Surface(
+				shape = dockShape,
+				color = capsuleBgColor,
+				shadowElevation = if (isDragging || isExpanded) 8.dp else 1.dp,
+				modifier = Modifier
+					.height(tabHeightDp)
+					.widthIn(min = peekWidthDp, max = (boxWidthDp - 16.dp).coerceAtLeast(peekWidthDp))
+					.animateContentSize(
+						animationSpec = spring(
+							dampingRatio = Spring.DampingRatioNoBouncy,
+							stiffness = Spring.StiffnessMediumLow,
+						)
 					)
-				}
-			} else {
-				Row(
-					modifier = Modifier
-						.fillMaxHeight()
-						.padding(horizontal = 14.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(6.dp),
-				) {
-					Icon(
-						imageVector = Icons.Rounded.FileUpload,
-						contentDescription = "上传",
-						tint = MaterialTheme.colorScheme.onPrimary,
-						modifier = Modifier.size(16.dp),
-					)
-					Text(
-						text = "上传到 · $targetLabel",
-						fontSize = 12.5.sp,
-						fontWeight = FontWeight.SemiBold,
-						color = MaterialTheme.colorScheme.onPrimary,
-						maxLines = 1,
-						overflow = TextOverflow.Ellipsis,
-					)
+					.pointerInput(currentTab, boxWidthPx, boxHeightPx) {
+						detectDragGestures(
+							onDragStart = {
+								isDragging = true
+								isExpanded = false
+								dragOffsetX = if (dockedRight) (boxWidthPx - peekWidthPx).coerceAtLeast(0f) else 0f
+							},
+							onDragEnd = {
+								isDragging = false
+								val centerX = dragOffsetX + peekWidthPx / 2f
+								dockedRight = centerX >= boxWidthPx / 2f
+							},
+							onDragCancel = { isDragging = false },
+							onDrag = { change, dragAmount ->
+								change.consume()
+								dragOffsetX = (dragOffsetX + dragAmount.x).coerceIn(0f, (boxWidthPx - peekWidthPx).coerceAtLeast(0f))
+								offsetY = (offsetY + dragAmount.y).coerceIn(topMarginPx, (boxHeightPx - tabHeightPx - bottomMarginPx).coerceAtLeast(topMarginPx))
+							}
+						)
+					}
+					.clickable {
+						if (!isExpanded) {
+							isExpanded = true
+						} else {
+							isExpanded = false
+							onConfirmUpload()
+						}
+					},
+			) {
+				AnimatedContent(
+					targetState = isExpanded,
+					transitionSpec = {
+						fadeIn(tween(180, delayMillis = 40)) togetherWith fadeOut(tween(120))
+					},
+					label = "upload_capsule_content",
+				) { expanded ->
+					if (!expanded) {
+						Box(
+							modifier = Modifier.width(peekWidthDp).fillMaxHeight(),
+							contentAlignment = Alignment.Center,
+						) {
+							Box(
+								modifier = Modifier
+									.width(3.dp)
+									.height(18.dp)
+									.clip(RoundedCornerShape(1.5.dp))
+									.background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f))
+							)
+						}
+					} else {
+						Row(
+							modifier = Modifier
+								.fillMaxHeight()
+								.padding(horizontal = 14.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(6.dp),
+						) {
+							Icon(
+								imageVector = Icons.Rounded.FileUpload,
+								contentDescription = "上传",
+								tint = MaterialTheme.colorScheme.onPrimary,
+								modifier = Modifier.size(16.dp),
+							)
+							Text(
+								text = "上传到 · $targetLabel",
+								fontSize = 12.5.sp,
+								fontWeight = FontWeight.SemiBold,
+								color = MaterialTheme.colorScheme.onPrimary,
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
+							)
+						}
+					}
 				}
 			}
 		}
