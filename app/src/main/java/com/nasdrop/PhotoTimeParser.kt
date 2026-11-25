@@ -132,9 +132,10 @@ object PhotoTimeParser {
 				val width = exif.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0)
 				val height = exif.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0)
 				val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
-				val latLng = exif.latLong
-				val lat = latLng?.getOrNull(0) ?: 0.0
-				val lng = latLng?.getOrNull(1) ?: 0.0
+				val latLng = FloatArray(2)
+				val hasLatLong = exif.getLatLong(latLng)
+				val lat = if (hasLatLong) latLng[0].toDouble() else 0.0
+				val lng = if (hasLatLong) latLng[1].toDouble() else 0.0
 				ExifInfo(takenAt = takenAt, width = width, height = height, orientation = orientation, latitude = lat, longitude = lng)
 			} ?: ExifInfo()
 		} catch (e: Exception) {

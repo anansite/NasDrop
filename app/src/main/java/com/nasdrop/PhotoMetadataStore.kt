@@ -589,7 +589,10 @@ object PhotoMetadataStore {
 		val cur = cache[key] ?: PhotoMetadata(
 			path = key,
 			name = key.substringAfterLast('/'),
-			dir = if (key.contains('/')) key.substringBeforeLast('/') else ""
+			dir = if (key.contains('/')) key.substringBeforeLast('/') else "",
+			size = 0L,
+			modified = 0L,
+			takenAt = 0L,
 		)
 		val updated = cur.copy(
 			voiceId = voiceId,

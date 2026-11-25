@@ -452,46 +452,6 @@ class WebDavClient(
 		}
 	}
 
-	private fun syncServerMetaIntoStore(item: org.json.JSONObject) {
-		val p = item.optString("path", "").trim('/')
-		if (p.isEmpty()) return
-		val cur = PhotoMetadataStore.get(p)
-		val thumbId = item.optString("thumb_id", "").ifBlank { cur?.thumbId ?: "" }
-		val voiceId = item.optString("voice_id", "").ifBlank { cur?.voiceId ?: "" }
-		val voiceDur = item.optLong("voice_duration_ms", 0L).takeIf { it > 0L } ?: (cur?.audioDurationMs ?: 0L)
-		val memo = item.optString("memo", "").ifBlank { null } ?: cur?.memo
-		val lat = item.optDouble("lat", 0.0).takeIf { it != 0.0 } ?: (cur?.lat ?: 0.0)
-		val lng = item.optDouble("lng", 0.0).takeIf { it != 0.0 } ?: (cur?.lng ?: 0.0)
-		val locName = item.optString("location_name", "").ifBlank { cur?.locationName ?: "" }
-		val audioPath = voiceId.takeIf { it.isNotBlank() }?.let { ".nasdrop_voices/$it.m4a" } ?: cur?.audioPath
-		val hasThumb = item.optBoolean("has_thumb", cur?.hasThumbnail == true) || thumbId.isNotBlank()
-		val dir = item.optString("dir", "").ifBlank { if (p.contains('/')) p.substringBeforeLast('/') else "" }
-		PhotoMetadataStore.putMemoryOnly(
-			PhotoMetadata(
-				path = p,
-				name = item.optString("name", p.substringAfterLast('/')),
-				dir = dir,
-				size = item.optLong("size", cur?.size ?: 0L),
-				modified = item.optLong("modified", cur?.modified ?: 0L),
-				takenAt = item.optLong("taken_at", cur?.takenAt ?: 0L),
-				width = item.optInt("width", cur?.width ?: 0),
-				height = item.optInt("height", cur?.height ?: 0),
-				hasThumbnail = hasThumb,
-				thumbId = thumbId,
-				voiceId = voiceId,
-				audioPath = audioPath,
-				audioDurationMs = voiceDur,
-				memo = memo,
-				memoUpdatedAt = cur?.memoUpdatedAt ?: 0L,
-				lat = lat,
-				lng = lng,
-				locationName = locName,
-				mediaType = cur?.mediaType ?: 0,
-				videoDurationMs = cur?.videoDurationMs ?: 0L,
-			)
-		)
-	}
-
 	// ==================== 相册串联组 (Photo Groups) 服务端数据库接口 ====================
 
 	private fun parsePhotoGroup(obj: org.json.JSONObject): PhotoGroup {

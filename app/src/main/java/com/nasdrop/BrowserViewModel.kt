@@ -3029,6 +3029,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					path = photoPath.trim('/'),
 					name = photoPath.trim('/').substringAfterLast('/'),
 					dir = photoPath.trim('/').let { if (it.contains('/')) it.substringBeforeLast('/') else "" },
+					size = 0L,
+					modified = 0L,
+					takenAt = 0L,
 				)
 				clientOf(s).reportMetadata(
 					listOf(meta.copy(memo = if (cleanMemo.isEmpty()) "__CLEAR__" else cleanMemo))
