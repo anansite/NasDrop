@@ -4832,6 +4832,36 @@ private fun TimelineDateScrubber(
 	var activeGroupIdx by remember { mutableIntStateOf(0) }
 	var trackHeightPx by remember { mutableFloatStateOf(1f) }
 
+	// 按轨道实际高度自动做最小间距抽稀（相邻刻度至少间隔 24.dp），彻底避免年份/月份标签随时间推移挤压重叠
+	val density = LocalDensity.current
+	val visibleMilestones = remember(milestones, trackHeightPx) {
+		if (milestones.size <= 2) return@remember milestones
+		val minGapFrac = with(density) {
+			val h = (trackHeightPx - 20.dp.toPx()).coerceAtLeast(1f)
+			(24.dp.toPx() / h).coerceIn(0.06f, 0.25f)
+		}
+		val placed = mutableListOf<ScrubberMilestone>()
+		// 1. 优先固定首尾刻度
+		placed.add(milestones.first())
+		val lastM = milestones.last()
+		if (kotlin.math.abs(lastM.fraction - milestones.first().fraction) >= minGapFrac) {
+			placed.add(lastM)
+		}
+		// 2. 优先放置年份刻度（确保不与已放刻度重叠）
+		for (m in milestones) {
+			if (m.label.endsWith("年") && placed.none { kotlin.math.abs(it.fraction - m.fraction) < minGapFrac }) {
+				placed.add(m)
+			}
+		}
+		// 3. 空隙足够时再补充月份或其他刻度
+		for (m in milestones) {
+			if (placed.none { kotlin.math.abs(it.fraction - m.fraction) < minGapFrac }) {
+				placed.add(m)
+			}
+		}
+		placed.sortedBy { it.groupIndex }
+	}
+
 	// 联动计算：未拖动时跟随列表当前首个可见 item 对应的 group
 	val visibleGroupIdx by remember(groups, state.firstVisibleItemIndex) {
 		derivedStateOf {
@@ -4915,8 +4945,8 @@ private fun TimelineDateScrubber(
 					)
 			)
 
-			// 时间刻度里程碑（文字标签 + 刻度圆点，清晰展示时间轴上的时间分布）
-			milestones.forEach { m ->
+			// 时间刻度里程碑（按轨道高度自动间距过滤，清晰不重叠）
+			visibleMilestones.forEach { m ->
 				Row(
 					modifier = Modifier
 						.align(Alignment.TopEnd)
