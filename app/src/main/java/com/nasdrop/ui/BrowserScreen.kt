@@ -4715,6 +4715,8 @@ private data class ScrubberMilestone(
 	val groupIndex: Int,
 	val label: String,
 	val fraction: Float,
+	val year: String = "",
+	val isYear: Boolean = false,
 )
 
 /**
@@ -4747,120 +4749,66 @@ private fun TimelineDateScrubber(
 		list
 	}
 
-	// 智能提取时间轴刻度（月份在上面，所属年份在底部收尾；按倒序时间流分布）
+	// 提取全部年份与月份刻度，再根据当前焦点年份/月份做动态邻近展开
 	val milestones = remember(groups) {
 		val result = mutableListOf<ScrubberMilestone>()
 		val total = groups.size
 
-		// 预先定位每个年份在倒序列表中的最底端组（即该年最早的一组）
 		val yearBottomIndices = mutableMapOf<String, Int>()
 		for (i in groups.indices) {
 			val title = groups[i].dateTitle
 			if (title.contains("-")) {
 				val y = title.split("-").getOrNull(0) ?: ""
-				if (y.isNotEmpty()) {
-					yearBottomIndices[y] = i
-				}
+				if (y.isNotEmpty()) yearBottomIndices[y] = i
 			}
 		}
 
-		var lastMonth = ""
+		var lastMonthKey = ""
 		var hasRecent = false
 
 		for (i in groups.indices) {
 			val title = groups[i].dateTitle
-			val tag: String? = when {
+			val frac = if (total > 1) i.toFloat() / (total - 1) else 0f
+			when {
 				title == "今天" || title == "昨天" -> {
 					if (!hasRecent) {
 						hasRecent = true
-						"近期"
-					} else null
+						result.add(ScrubberMilestone(i, "近期", frac))
+					}
 				}
 				title == "更早之前" -> {
-					if (result.none { it.label == "更早" }) "更早" else null
+					if (result.none { it.label == "更早" }) {
+						result.add(ScrubberMilestone(i, "更早", frac))
+					}
 				}
 				title.contains("-") -> {
 					val parts = title.split("-")
 					val y = parts.getOrNull(0) ?: ""
 					val m = parts.getOrNull(1)?.toIntOrNull()?.toString() ?: parts.getOrNull(1) ?: ""
 					if (y.isNotEmpty()) {
-						// 倒序时间轴：各月份在上方，而所属年份标在该年最底部的收尾组上
 						if (i == yearBottomIndices[y]) {
-							"${y.takeLast(2)}年"
-						} else if (m.isNotEmpty() && m != lastMonth) {
-							lastMonth = m
-							"${m}月"
-						} else {
-							null
+							result.add(ScrubberMilestone(i, "${y.takeLast(2)}年", frac, year = y, isYear = true))
+						} else if (m.isNotEmpty() && "$y-$m" != lastMonthKey) {
+							lastMonthKey = "$y-$m"
+							result.add(ScrubberMilestone(i, "${m}月", frac, year = y, isYear = false))
 						}
-					} else null
+					}
 				}
 				else -> {
 					val short = title.take(4)
-					if (result.none { it.label == short }) short else null
+					if (result.none { it.label == short }) {
+						result.add(ScrubberMilestone(i, short, frac))
+					}
 				}
 			}
-
-			if (tag != null) {
-				val frac = if (total > 1) i.toFloat() / (total - 1) else 0f
-				result.add(ScrubberMilestone(i, tag, frac))
-			}
 		}
-
-		if (result.size > 6) {
-			val sampled = mutableSetOf<ScrubberMilestone>()
-			// 1. 首尾里程碑保留
-			sampled.add(result.first())
-			sampled.add(result.last())
-			// 2. 所有年份锚点（如 "26年"、"25年"）必须强制保留，绝不能因下采样漏掉
-			sampled.addAll(result.filter { it.label.endsWith("年") })
-
-			// 3. 按均匀步长补充中间月份刻度
-			val step = (result.size - 1) / 5.0
-			for (k in 1..4) {
-				val idx = (k * step).roundToInt().coerceIn(0, result.size - 1)
-				sampled.add(result[idx])
-			}
-			sampled.sortedBy { it.groupIndex }
-		} else {
-			result
-		}
+		result
 	}
 
 	var isDragging by remember { mutableStateOf(false) }
 	var dragFraction by remember { mutableFloatStateOf(0f) }
 	var activeGroupIdx by remember { mutableIntStateOf(0) }
 	var trackHeightPx by remember { mutableFloatStateOf(1f) }
-
-	// 按轨道实际高度自动做最小间距抽稀（相邻刻度至少间隔 24.dp），彻底避免年份/月份标签随时间推移挤压重叠
-	val density = LocalDensity.current
-	val visibleMilestones = remember(milestones, trackHeightPx) {
-		if (milestones.size <= 2) return@remember milestones
-		val minGapFrac = with(density) {
-			val h = (trackHeightPx - 20.dp.toPx()).coerceAtLeast(1f)
-			(24.dp.toPx() / h).coerceIn(0.06f, 0.25f)
-		}
-		val placed = mutableListOf<ScrubberMilestone>()
-		// 1. 优先固定首尾刻度
-		placed.add(milestones.first())
-		val lastM = milestones.last()
-		if (kotlin.math.abs(lastM.fraction - milestones.first().fraction) >= minGapFrac) {
-			placed.add(lastM)
-		}
-		// 2. 优先放置年份刻度（确保不与已放刻度重叠）
-		for (m in milestones) {
-			if (m.label.endsWith("年") && placed.none { kotlin.math.abs(it.fraction - m.fraction) < minGapFrac }) {
-				placed.add(m)
-			}
-		}
-		// 3. 空隙足够时再补充月份或其他刻度
-		for (m in milestones) {
-			if (placed.none { kotlin.math.abs(it.fraction - m.fraction) < minGapFrac }) {
-				placed.add(m)
-			}
-		}
-		placed.sortedBy { it.groupIndex }
-	}
 
 	// 联动计算：未拖动时跟随列表当前首个可见 item 对应的 group
 	val visibleGroupIdx by remember(groups, state.firstVisibleItemIndex) {
@@ -4876,6 +4824,61 @@ private fun TimelineDateScrubber(
 			}
 			matched
 		}
+	}
+
+	val currentGroupIdx = if (isDragging) activeGroupIdx else visibleGroupIdx
+	val activeYear = remember(groups, currentGroupIdx, milestones) {
+		val title = groups.getOrNull(currentGroupIdx)?.dateTitle ?: ""
+		when {
+			title.contains("-") -> title.substringBefore("-")
+			title == "今天" || title == "昨天" -> milestones.firstOrNull { it.year.isNotEmpty() }?.year ?: ""
+			else -> ""
+		}
+	}
+
+	// 动态焦点展开：仅展示主干年份 + 当前所在年份及邻近月份（距离越近越优先），其余收起，彻底告别堆叠拥挤
+	val density = LocalDensity.current
+	val visibleMilestones = remember(milestones, activeYear, currentGroupIdx, isDragging, trackHeightPx) {
+		if (milestones.size <= 2) return@remember milestones
+		val minGapFrac = with(density) {
+			val h = (trackHeightPx - 20.dp.toPx()).coerceAtLeast(1f)
+			(24.dp.toPx() / h).coerceIn(0.06f, 0.25f)
+		}
+		val placed = mutableListOf<ScrubberMilestone>()
+		fun tryAdd(m: ScrubberMilestone): Boolean {
+			if (placed.none { kotlin.math.abs(it.fraction - m.fraction) < minGapFrac }) {
+				placed.add(m)
+				return true
+			}
+			return false
+		}
+
+		// 1. 首尾锚点（近期 & 最早）
+		placed.add(milestones.first())
+		tryAdd(milestones.last())
+
+		// 2. 自动展开当前滑动/浏览所在年份的邻近月份（离当前焦点越近优先级越高）
+		if (activeYear.isNotEmpty()) {
+			val activeYearItems = milestones
+				.filter { it.year == activeYear }
+				.sortedBy { kotlin.math.abs(it.groupIndex - currentGroupIdx) }
+			val maxExpand = if (isDragging) 4 else 2
+			var expandedCount = 0
+			for (m in activeYearItems) {
+				if (m.isYear || expandedCount < maxExpand) {
+					if (tryAdd(m) && !m.isYear) expandedCount++
+				}
+			}
+		}
+
+		// 3. 其他年份仅保留年份主干（若间隔足够则显示，否则自动收起）
+		for (m in milestones) {
+			if (m.isYear && m.year != activeYear) {
+				tryAdd(m)
+			}
+		}
+
+		placed.sortedBy { it.groupIndex }
 	}
 
 	val currentSelectedIdx = if (isDragging) activeGroupIdx else visibleGroupIdx
