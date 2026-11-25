@@ -1,29 +1,39 @@
 package com.nasdrop
 
 import android.content.Context
-import android.media.AudioAttributes
-import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.annotation.OptIn
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import java.io.File
 
 /**
- * 伴随录音真实录制与播放控制器。
+ * 伴随录音真实录制与播放控制器（基于 Media3 ExoPlayer + 业务 OkHttpClient）。
  * 1. 真实 MediaRecorder 录制高清 AAC/M4A 伴随原声；
- * 2. 真实 MediaPlayer 流式/本地音频播放与进度同步；
- * 3. 伴随音频文件以 "." 开头就地缓存与存储，绝不将音频二进制存入数据库。
+ * 2. ExoPlayer 复用业务 OkHttpClient（含认证头/bridge/直连），杜绝原生 MediaPlayer -38 错误；
+ * 3. 切换照片时彻底重置时长与播放进度，绝不串用上一张的时长或语音。
  */
+@OptIn(UnstableApi::class)
 class CompanionAudioPlayer(private val context: Context) {
-	private var mediaPlayer: MediaPlayer? = null
+	private var exoPlayer: ExoPlayer? = null
 	private val handler = Handler(Looper.getMainLooper())
 	private var progressRunnable: Runnable? = null
 
@@ -50,9 +60,10 @@ class CompanionAudioPlayer(private val context: Context) {
 	}
 
 	fun togglePlayPause(fallbackDurationMs: Long = 0L) {
+		val player = exoPlayer
 		if (isPlaying) {
 			pause()
-		} else if (mediaPlayer != null) {
+		} else if (player != null) {
 			if (currentPositionMs >= (durationMs - 300).coerceAtLeast(0) || progress >= 0.98f) {
 				seekTo(0f)
 			}
@@ -69,96 +80,67 @@ class CompanionAudioPlayer(private val context: Context) {
 			return
 		}
 		currentUrl = audioUrlOrPath
-		if (audioUrlOrPath.startsWith("http://") || audioUrlOrPath.startsWith("https://")) {
-			Thread {
-				try {
-					val cacheDir = File(context.cacheDir, "audio_cache")
-					if (!cacheDir.exists()) cacheDir.mkdirs()
-					val cacheKey = audioUrlOrPath.hashCode().toUInt().toString(16)
-					val cachedFile = File(cacheDir, "dl_$cacheKey.m4a")
-					if (!cachedFile.exists() || cachedFile.length() == 0L) {
-						val client = okhttp3.OkHttpClient.Builder()
-							.followRedirects(true)
-							.followSslRedirects(true)
-							.build()
-						val reqBuilder = okhttp3.Request.Builder().url(audioUrlOrPath)
-						runCatching {
-							val conf = kotlinx.coroutines.runBlocking { context.app.prefs.current() }
-							if (conf.user.isNotBlank() && conf.password.isNotBlank()) {
-								reqBuilder.header("Authorization", okhttp3.Credentials.basic(conf.user, conf.password))
-							}
-						}
-						client.newCall(reqBuilder.build()).execute().use { resp ->
-							if (!resp.isSuccessful) {
-								Log.w("AudioPlayer", "HTTP download failed: ${resp.code} for $audioUrlOrPath")
-								return@Thread
-							}
-							val bytes = resp.body?.bytes()
-							if (bytes == null || bytes.isEmpty()) {
-								Log.w("AudioPlayer", "Empty audio response for $audioUrlOrPath")
-								return@Thread
-							}
-							cachedFile.writeBytes(bytes)
-						}
-					}
-					handler.post {
-						if (currentUrl == audioUrlOrPath) {
-							startLocalMediaPlayer(cachedFile.absolutePath, fallbackDurationMs)
-						}
-					}
-				} catch (e: Exception) {
-					Log.e("AudioPlayer", "Failed to download audio: $audioUrlOrPath", e)
-				}
-			}.start()
-		} else {
-			startLocalMediaPlayer(audioUrlOrPath, fallbackDurationMs)
-		}
-	}
-
-	private fun startLocalMediaPlayer(localPath: String, fallbackDurationMs: Long = 0L) {
 		try {
-			val player = MediaPlayer().apply {
-				setAudioAttributes(
-					AudioAttributes.Builder()
-						.setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-						.setUsage(AudioAttributes.USAGE_MEDIA)
-						.build()
-				)
-				setDataSource(localPath)
-				setOnPreparedListener { mp ->
-					val dur = if (mp.duration > 0) mp.duration else fallbackDurationMs.toInt()
-					this@CompanionAudioPlayer.durationMs = dur
-					if (dur > 0) {
-						onDurationResolved?.invoke(dur.toLong())
+			val httpFactory = OkHttpDataSource.Factory(context.app.repo.http())
+			val dsFactory = DefaultDataSource.Factory(context, httpFactory)
+			val player = ExoPlayer.Builder(context)
+				.setMediaSourceFactory(DefaultMediaSourceFactory(dsFactory))
+				.build()
+				.apply {
+					setAudioAttributes(
+						AudioAttributes.Builder()
+							.setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+							.setUsage(C.USAGE_MEDIA)
+							.build(),
+						true
+					)
+					val uri = if (audioUrlOrPath.startsWith("http://") || audioUrlOrPath.startsWith("https://")) {
+						Uri.parse(audioUrlOrPath)
+					} else {
+						Uri.fromFile(File(audioUrlOrPath))
 					}
-					mp.start()
-					this@CompanionAudioPlayer.isPlaying = true
-					startProgressTracker()
+					setMediaItem(MediaItem.fromUri(uri))
+					addListener(object : Player.Listener {
+						override fun onPlaybackStateChanged(playbackState: Int) {
+							when (playbackState) {
+								Player.STATE_READY -> {
+									val rawDur = duration
+									val dur = if (rawDur > 0 && rawDur != C.TIME_UNSET) rawDur.toInt() else fallbackDurationMs.toInt()
+									this@CompanionAudioPlayer.durationMs = dur
+									if (dur > 0) {
+										onDurationResolved?.invoke(dur.toLong())
+									}
+								}
+								Player.STATE_ENDED -> {
+									stop()
+								}
+								else -> {}
+							}
+						}
+
+						override fun onIsPlayingChanged(playing: Boolean) {
+							this@CompanionAudioPlayer.isPlaying = playing
+							if (playing) startProgressTracker() else stopProgressTracker()
+						}
+
+						override fun onPlayerError(error: PlaybackException) {
+							Log.w("AudioPlayer", "ExoPlayer error for $audioUrlOrPath: ${error.errorCodeName}", error)
+							stop()
+						}
+					})
+					prepare()
+					playWhenReady = true
 				}
-				setOnCompletionListener {
-					stop()
-				}
-				setOnErrorListener { _, what, extra ->
-					Log.w("AudioPlayer", "MediaPlayer error: what=$what extra=$extra")
-					stop()
-					true
-				}
-				prepareAsync()
-			}
-			mediaPlayer = player
+			exoPlayer = player
 		} catch (e: Exception) {
-			Log.e("AudioPlayer", "Failed to start audio playback for $localPath", e)
+			Log.e("AudioPlayer", "Failed to start audio playback for $audioUrlOrPath", e)
 			stop()
 		}
 	}
 
 	fun pause() {
 		try {
-			mediaPlayer?.let {
-				if (it.isPlaying) {
-					it.pause()
-				}
-			}
+			exoPlayer?.pause()
 		} catch (_: Throwable) {}
 		isPlaying = false
 		stopProgressTracker()
@@ -166,44 +148,33 @@ class CompanionAudioPlayer(private val context: Context) {
 
 	fun resume() {
 		try {
-			mediaPlayer?.let {
-				it.start()
-				isPlaying = true
-				startProgressTracker()
-			}
+			exoPlayer?.play()
+			isPlaying = true
+			startProgressTracker()
 		} catch (_: Throwable) {
 			stop()
 		}
 	}
 
 	fun togglePlay(audioUrlOrPath: String, fallbackDurationMs: Long = 0L) {
-		if (isPlaying) {
-			pause()
-		} else if (mediaPlayer != null) {
-			if (currentPositionMs >= (durationMs - 300).coerceAtLeast(0) || progress >= 0.98f) {
-				seekTo(0f)
-			}
-			resume()
-		} else {
-			play(audioUrlOrPath, fallbackDurationMs)
-		}
+		togglePlayPause(fallbackDurationMs)
 	}
 
 	fun seekTo(fraction: Float) {
-		mediaPlayer?.let {
+		exoPlayer?.let {
 			try {
-				val target = (fraction.coerceIn(0f, 1f) * durationMs).toInt()
+				val target = (fraction.coerceIn(0f, 1f) * durationMs).toLong()
 				it.seekTo(target)
-				currentPositionMs = target
-				progress = fraction
+				currentPositionMs = target.toInt()
+				progress = fraction.coerceIn(0f, 1f)
 			} catch (_: Throwable) {}
 		}
 	}
 
 	fun stop() {
 		stopProgressTracker()
-		val player = mediaPlayer
-		mediaPlayer = null
+		val player = exoPlayer
+		exoPlayer = null
 		isPlaying = false
 		progress = 0f
 		currentPositionMs = 0
@@ -211,7 +182,7 @@ class CompanionAudioPlayer(private val context: Context) {
 		currentUrl = ""
 		if (player != null) {
 			try {
-				player.reset()
+				player.stop()
 			} catch (_: Throwable) {}
 			try {
 				player.release()
@@ -223,26 +194,18 @@ class CompanionAudioPlayer(private val context: Context) {
 		stopProgressTracker()
 		val runnable = object : Runnable {
 			override fun run() {
-				val mp = mediaPlayer
-				if (mp != null) {
+				val p = exoPlayer
+				if (p != null && p.isPlaying) {
 					try {
-						val pos = mp.currentPosition
-						val dur = if (durationMs > 0) durationMs else mp.duration
+						val pos = p.currentPosition.toInt().coerceAtLeast(0)
+						val rawDur = p.duration
+						val dur = if (durationMs > 0) durationMs else if (rawDur > 0 && rawDur != C.TIME_UNSET) rawDur.toInt() else 0
 						if (dur > 0) {
 							currentPositionMs = pos
 							durationMs = dur
 							progress = (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
 						}
-						// 只要播放器不在播放状态且接近末尾，或者播放器已经停止，即判定完成
-						if (!mp.isPlaying && (pos >= (dur - 300).coerceAtLeast(0) || dur <= 0)) {
-							stop()
-							return
-						}
-						if (isPlaying && mp.isPlaying) {
-							handler.postDelayed(this, 100)
-						} else if (!mp.isPlaying) {
-							isPlaying = false
-						}
+						handler.postDelayed(this, 100)
 					} catch (_: Throwable) {
 						stop()
 					}
