@@ -1174,8 +1174,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						val retriever = android.media.MediaMetadataRetriever()
 						try {
 							val headers = HashMap<String, String>()
-							if (s.user.isNotBlank() || s.pass.isNotBlank()) {
-								headers["Authorization"] = okhttp3.Credentials.basic(s.user, s.pass)
+							if (s.user.isNotBlank() || s.password.isNotBlank()) {
+								headers["Authorization"] = okhttp3.Credentials.basic(s.user, s.password)
 							}
 							retriever.setDataSource(url, headers)
 							val frame = retriever.getFrameAtTime(1_000_000L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
