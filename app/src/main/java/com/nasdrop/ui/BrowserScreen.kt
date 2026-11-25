@@ -62,6 +62,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -190,6 +191,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.unit.IntSize
 import com.nasdrop.PhotoGroup
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -4265,21 +4268,16 @@ private fun PhotoTimelineContent(
 												compact = false,
 											)
 										} else {
-											// 串联组：保持普通网格尺寸不变，在右上角展示 🔗 N 徽章，底部展示组名与备注预览
-											Box(
-												modifier = Modifier
-													.fillMaxSize()
-													.border(1.5.dp, Color.White.copy(alpha = 0.72f), RoundedCornerShape(6.dp)),
-											)
+											// 集锦：保持普通网格尺寸，使用轻透半透明暗色角标与渐变底栏
 											Surface(
-												shape = RoundedCornerShape(10.dp),
-												color = Color(0xFF00695C).copy(alpha = 0.88f),
+												shape = RoundedCornerShape(8.dp),
+												color = Color.Black.copy(alpha = 0.54f),
 												modifier = Modifier
 													.align(Alignment.TopEnd)
 													.padding(5.dp),
 											) {
 												Row(
-													modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+													modifier = Modifier.padding(horizontal = 5.5.dp, vertical = 2.dp),
 													verticalAlignment = Alignment.CenterVertically,
 													horizontalArrangement = Arrangement.spacedBy(2.dp),
 												) {
@@ -4291,8 +4289,12 @@ private fun PhotoTimelineContent(
 												modifier = Modifier
 													.align(Alignment.BottomCenter)
 													.fillMaxWidth()
-													.background(Color.Black.copy(alpha = 0.64f))
-													.padding(horizontal = 6.dp, vertical = 4.dp),
+													.background(
+														Brush.verticalGradient(
+															listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f))
+														)
+													)
+													.padding(start = 6.dp, end = 6.dp, top = 12.dp, bottom = 5.dp),
 											) {
 												Text(
 													text = photoGroup.title.ifBlank { "集锦" },
@@ -4306,7 +4308,7 @@ private fun PhotoTimelineContent(
 													Text(
 														text = photoGroup.memo,
 														fontSize = 9.sp,
-														color = Color.White.copy(alpha = 0.84f),
+														color = Color.White.copy(alpha = 0.86f),
 														maxLines = 1,
 														overflow = TextOverflow.Ellipsis,
 													)
@@ -7554,14 +7556,17 @@ private fun PhotoGroupDetailSheet(
 	var showAppendOptionsSheet by remember { mutableStateOf(false) }
 	var showPickExistingSheet by remember { mutableStateOf(false) }
 
-	// 拖拽排序状态：直接长按卡片拖动换位，无需多余按钮
+	// 拖拽排序状态：在 LazyVerticalGrid 上统一托管长按拖拽，配合浮层跟随手指 + animateItem 实时补位，确保从第一位到任意位置都丝滑无跳变
 	var localOrder by remember(group.id, group.items) { mutableStateOf(group.items) }
+	val gridState = rememberLazyGridState()
+	val density = LocalDensity.current
 	var draggedPath by remember { mutableStateOf<String?>(null) }
-	var dragOffset by remember { mutableStateOf(Offset.Zero) }
-	var dragStartCenterInRoot by remember { mutableStateOf(Offset.Zero) }
+	var draggedItemSize by remember { mutableStateOf(IntSize.Zero) }
+	var draggedTopLeft by remember { mutableStateOf(Offset.Zero) }
+	var fingerInItem by remember { mutableStateOf(Offset.Zero) }
+	var pointerInGrid by remember { mutableStateOf(Offset.Zero) }
 	var isHoveringRemove by remember { mutableStateOf(false) }
-	val itemBounds = remember { mutableStateMapOf<String, Rect>() }
-	var removeZoneBounds by remember { mutableStateOf<Rect?>(null) }
+	var removeZoneBoundsInBox by remember { mutableStateOf<Rect?>(null) }
 
 	val orderedItems = remember(localOrder, photoMap) {
 		localOrder.map { p -> p to photoMap[p] }
@@ -7574,88 +7579,164 @@ private fun PhotoGroupDetailSheet(
 			.navigationBarsPadding(),
 		color = MaterialTheme.colorScheme.background,
 	) {
-		Box(modifier = Modifier.fillMaxSize()) {
-			Column(modifier = Modifier.fillMaxSize()) {
-				// 顶部栏：返回 + 集锦名称 + 显眼的「解散集锦」按钮（去掉重复的追加按钮）
+		Column(modifier = Modifier.fillMaxSize()) {
+			// 顶部栏：返回 + 集锦名称 + 显眼的「解散集锦」按钮
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 8.dp, vertical = 8.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				IconButton(onClick = onDismiss) {
+					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回")
+				}
+				Column(modifier = Modifier.weight(1f)) {
+					Text(
+						text = group.title.ifBlank { "照片集锦" },
+						fontSize = 18.sp,
+						fontWeight = FontWeight.Bold,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
+					Text(
+						text = "共 ${localOrder.size} 张 · 点击放大，长按拖动排序",
+						fontSize = 11.5.sp,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+					)
+				}
+				OutlinedButton(
+					onClick = { showDeleteConfirm = true },
+					shape = RoundedCornerShape(18.dp),
+					border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
+					colors = ButtonDefaults.outlinedButtonColors(
+						containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.08f),
+						contentColor = MaterialTheme.colorScheme.error,
+					),
+					contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+					modifier = Modifier.padding(end = 6.dp),
+				) {
+					Icon(Icons.Rounded.Delete, contentDescription = null, modifier = Modifier.size(15.dp))
+					Spacer(Modifier.width(4.dp))
+					Text("解散集锦", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+				}
+			}
+
+			// 集锦备注卡片（绿色强调边框 + 点击可改名/编辑备注）
+			Surface(
+				onClick = { showEditMetaDialog = true },
+				shape = RoundedCornerShape(14.dp),
+				color = Color(0xFF00897B).copy(alpha = 0.09f),
+				border = BorderStroke(1.dp, Color(0xFF00897B).copy(alpha = 0.28f)),
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 14.dp, vertical = 4.dp),
+			) {
 				Row(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(horizontal = 8.dp, vertical = 8.dp),
+					modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
 					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(8.dp),
 				) {
-					IconButton(onClick = onDismiss) {
-						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回")
-					}
-					Column(modifier = Modifier.weight(1f)) {
-						Text(
-							text = group.title.ifBlank { "照片集锦" },
-							fontSize = 18.sp,
-							fontWeight = FontWeight.Bold,
-							maxLines = 1,
-							overflow = TextOverflow.Ellipsis,
-						)
-						Text(
-							text = "共 ${localOrder.size} 张 · 点击放大，长按拖动排序",
-							fontSize = 11.5.sp,
-							color = MaterialTheme.colorScheme.onSurfaceVariant,
-						)
-					}
-					OutlinedButton(
-						onClick = { showDeleteConfirm = true },
-						shape = RoundedCornerShape(18.dp),
-						border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
-						colors = ButtonDefaults.outlinedButtonColors(
-							containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.08f),
-							contentColor = MaterialTheme.colorScheme.error,
-						),
-						contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-						modifier = Modifier.padding(end = 6.dp),
-					) {
-						Icon(Icons.Rounded.Delete, contentDescription = null, modifier = Modifier.size(15.dp))
-						Spacer(Modifier.width(4.dp))
-						Text("解散集锦", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
-					}
+					Icon(Icons.Rounded.Edit, contentDescription = null, tint = Color(0xFF00897B), modifier = Modifier.size(16.dp))
+					Text(
+						text = group.memo.ifBlank { "集锦备注（点击可修改名称或添加备注）" },
+						fontSize = 13.sp,
+						color = if (group.memo.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+						maxLines = 3,
+						overflow = TextOverflow.Ellipsis,
+					)
 				}
+			}
 
-				// 集锦备注卡片（绿色强调边框 + 点击可改名/编辑备注）
-				Surface(
-					onClick = { showEditMetaDialog = true },
-					shape = RoundedCornerShape(14.dp),
-					color = Color(0xFF00897B).copy(alpha = 0.09f),
-					border = BorderStroke(1.dp, Color(0xFF00897B).copy(alpha = 0.28f)),
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(horizontal = 14.dp, vertical = 4.dp),
-				) {
-					Row(
-						modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(8.dp),
-					) {
-						Icon(Icons.Rounded.Edit, contentDescription = null, tint = Color(0xFF00897B), modifier = Modifier.size(16.dp))
-						Text(
-							text = group.memo.ifBlank { "集锦备注（点击可修改名称或添加备注）" },
-							fontSize = 13.sp,
-							color = if (group.memo.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-							maxLines = 3,
-							overflow = TextOverflow.Ellipsis,
-						)
-					}
-				}
-
-				// 3列紧凑网格（支持长按直接拖拽排序 + 碎语/语音/视频角标）
+			// 网格容器 + 悬浮拖拽卡片 + 底部移出热区在同一 Box 坐标系下工作
+			Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
 				LazyVerticalGrid(
+					state = gridState,
 					columns = GridCells.Fixed(3),
 					contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 92.dp),
 					horizontalArrangement = Arrangement.spacedBy(8.dp),
 					verticalArrangement = Arrangement.spacedBy(10.dp),
-					modifier = Modifier.weight(1f),
+					modifier = Modifier
+						.fillMaxSize()
+						.pointerInput(Unit) {
+							detectDragGesturesAfterLongPress(
+								onDragStart = { startOffset ->
+									val hit = gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+										val keyStr = info.key as? String ?: return@firstOrNull false
+										keyStr != "append_tile" &&
+											startOffset.x >= info.offset.x &&
+											startOffset.x <= info.offset.x + info.size.width &&
+											startOffset.y >= info.offset.y &&
+											startOffset.y <= info.offset.y + info.size.height
+									}
+									val hitPath = hit?.key as? String
+									if (hit != null && hitPath != null) {
+										draggedPath = hitPath
+										draggedItemSize = hit.size
+										val topLeft = Offset(hit.offset.x.toFloat(), hit.offset.y.toFloat())
+										draggedTopLeft = topLeft
+										fingerInItem = startOffset - topLeft
+										pointerInGrid = startOffset
+										isHoveringRemove = false
+										haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+									}
+								},
+								onDrag = { change, dragAmount ->
+									val curPath = draggedPath ?: return@detectDragGesturesAfterLongPress
+									change.consume()
+									pointerInGrid += dragAmount
+									draggedTopLeft = pointerInGrid - fingerInItem
+									val inRemove = removeZoneBoundsInBox?.contains(pointerInGrid) == true
+									isHoveringRemove = inRemove
+									if (!inRemove) {
+										val target = gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+											val keyStr = info.key as? String ?: return@firstOrNull false
+											keyStr != "append_tile" &&
+												keyStr != curPath &&
+												pointerInGrid.x >= info.offset.x &&
+												pointerInGrid.x <= info.offset.x + info.size.width &&
+												pointerInGrid.y >= info.offset.y &&
+												pointerInGrid.y <= info.offset.y + info.size.height
+										}
+										val targetPath = target?.key as? String
+										if (targetPath != null) {
+											val fromIdx = localOrder.indexOf(curPath)
+											val toIdx = localOrder.indexOf(targetPath)
+											if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
+												val mutable = localOrder.toMutableList()
+												val moved = mutable.removeAt(fromIdx)
+												mutable.add(toIdx, moved)
+												localOrder = mutable
+												haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+											}
+										}
+									}
+								},
+								onDragEnd = {
+									val curPath = draggedPath ?: return@detectDragGesturesAfterLongPress
+									val shouldRemove = isHoveringRemove
+									val finalOrder = localOrder
+									draggedPath = null
+									isHoveringRemove = false
+									if (shouldRemove) {
+										localOrder = finalOrder.filterNot { it == curPath }
+										onRemoveItem(curPath)
+									} else if (finalOrder != group.items) {
+										onReorderItems(finalOrder)
+									}
+								},
+								onDragCancel = {
+									draggedPath = null
+									isHoveringRemove = false
+									localOrder = group.items
+								},
+							)
+						},
 				) {
 					items(orderedItems.size, key = { idx -> orderedItems[idx].first }) { idx ->
 						val (path, entry) = orderedItems[idx]
 						val displayName = entry?.name ?: path.substringAfterLast('/')
 						val thumbUrl = urlOf(path)
-						val isDragging = draggedPath == path
+						val isGhost = draggedPath == path
 						val meta = remember(path) { PhotoMetadataStore.get(path) }
 						val hasMemo = !meta?.memo.isNullOrBlank() || entry?.hasMemo == true
 						val dateText = remember(entry?.effectiveDate) {
@@ -7666,72 +7747,8 @@ private fun PhotoGroupDetailSheet(
 						Column(
 							modifier = Modifier
 								.fillMaxWidth()
-								.zIndex(if (isDragging) 20f else 0f)
-								.onGloballyPositioned { coords ->
-									itemBounds[path] = coords.boundsInRoot()
-								}
-								.graphicsLayer {
-									if (isDragging) {
-										translationX = dragOffset.x
-										translationY = dragOffset.y
-										scaleX = 1.06f
-										scaleY = 1.06f
-										alpha = if (isHoveringRemove) 0.65f else 0.96f
-									}
-								}
-								.pointerInput(path) {
-									detectDragGesturesAfterLongPress(
-										onDragStart = {
-											draggedPath = path
-											dragOffset = Offset.Zero
-											isHoveringRemove = false
-											dragStartCenterInRoot = itemBounds[path]?.center ?: Offset.Zero
-											haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-										},
-										onDrag = { change, dragAmount ->
-											change.consume()
-											dragOffset += dragAmount
-											val curCenter = dragStartCenterInRoot + dragOffset
-											val inRemove = removeZoneBounds?.contains(curCenter) == true
-											isHoveringRemove = inRemove
-											if (!inRemove) {
-												val targetPath = itemBounds.entries.firstOrNull { (k, rect) ->
-													k != path && rect.contains(curCenter)
-												}?.key
-												if (targetPath != null) {
-													val fromIdx = localOrder.indexOf(path)
-													val toIdx = localOrder.indexOf(targetPath)
-													if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
-														val mutable = localOrder.toMutableList()
-														val moved = mutable.removeAt(fromIdx)
-														mutable.add(toIdx, moved)
-														localOrder = mutable
-														haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-													}
-												}
-											}
-										},
-										onDragEnd = {
-											val shouldRemove = isHoveringRemove
-											val finalOrder = localOrder
-											draggedPath = null
-											dragOffset = Offset.Zero
-											isHoveringRemove = false
-											if (shouldRemove) {
-												localOrder = finalOrder.filterNot { it == path }
-												onRemoveItem(path)
-											} else if (finalOrder != group.items) {
-												onReorderItems(finalOrder)
-											}
-										},
-										onDragCancel = {
-											draggedPath = null
-											dragOffset = Offset.Zero
-											isHoveringRemove = false
-											localOrder = group.items
-										},
-									)
-								}
+								.animateItem()
+								.graphicsLayer { alpha = if (isGhost) 0.18f else 1f }
 								.clickable(enabled = draggedPath == null && entry != null) {
 									if (entry != null) {
 										if (entry.isVideo) onOpenVideo(entry) else onOpenImage(entry)
@@ -7743,16 +7760,7 @@ private fun PhotoGroupDetailSheet(
 									.fillMaxWidth()
 									.aspectRatio(1f)
 									.clip(RoundedCornerShape(10.dp))
-									.background(MaterialTheme.colorScheme.surfaceVariant)
-									.then(
-										if (isDragging) {
-											Modifier.border(
-												2.dp,
-												if (isHoveringRemove) MaterialTheme.colorScheme.error else Color(0xFF00897B),
-												RoundedCornerShape(10.dp),
-											)
-										} else Modifier
-									),
+									.background(MaterialTheme.colorScheme.surfaceVariant),
 							) {
 								if (!thumbUrl.isNullOrBlank()) {
 									AsyncImage(
@@ -7767,10 +7775,10 @@ private fun PhotoGroupDetailSheet(
 									}
 								}
 
-								// 左上角序号徽章
+								// 左上角轻量毛玻璃暗色序号徽章
 								Surface(
-									shape = CircleShape,
-									color = Color(0xFF00695C).copy(alpha = 0.90f),
+									shape = RoundedCornerShape(6.dp),
+									color = Color.Black.copy(alpha = 0.48f),
 									modifier = Modifier
 										.align(Alignment.TopStart)
 										.padding(5.dp),
@@ -7780,21 +7788,20 @@ private fun PhotoGroupDetailSheet(
 										fontSize = 10.sp,
 										fontWeight = FontWeight.Bold,
 										color = Color.White,
-										modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+										modifier = Modifier.padding(horizontal = 5.5.dp, vertical = 1.dp),
 									)
 								}
 
-								// 完整复用相册角标（伴生语音时长、碎语、视频标识）
+								// 完整复用相册角标（compact = false 保留清晰语音时长、碎语与视频标识）
 								if (entry != null) {
 									MediaThumbBadges(
 										entry = entry,
 										modifier = Modifier.fillMaxSize().padding(3.dp),
-										compact = true,
+										compact = false,
 									)
 								}
 							}
 
-							// 底部紧凑日期 / 碎语提示
 							val subLabel = when {
 								hasMemo && !meta?.memo.isNullOrBlank() -> meta!!.memo.replace('\n', ' ')
 								dateText.isNotBlank() && hasMemo -> "$dateText · 有碎语"
@@ -7837,46 +7844,88 @@ private fun PhotoGroupDetailSheet(
 						}
 					}
 				}
-			}
 
-			// 仅在长按拖拽期间于底部浮现「拖到此处移出集锦」热区
-			AnimatedVisibility(
-				visible = draggedPath != null,
-				enter = fadeIn() + slideInVertically { it },
-				exit = fadeOut() + slideOutVertically { it },
-				modifier = Modifier
-					.align(Alignment.BottomCenter)
-					.padding(horizontal = 20.dp, vertical = 18.dp),
-			) {
-				Surface(
-					shape = RoundedCornerShape(20.dp),
-					color = if (isHoveringRemove) MaterialTheme.colorScheme.error else Color(0xFFFFEBEE),
-					border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.error),
-					shadowElevation = 8.dp,
-					modifier = Modifier
-						.fillMaxWidth()
-						.onGloballyPositioned { coords ->
-							removeZoneBounds = coords.boundsInRoot()
-						},
-				) {
-					Row(
-						modifier = Modifier.padding(vertical = 14.dp, horizontal = 16.dp),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.Center,
+				// 丝滑跟随手指的悬浮拖拽卡片
+				val activeDragPath = draggedPath
+				if (activeDragPath != null && draggedItemSize.width > 0) {
+					val dragEntry = photoMap[activeDragPath]
+					val dragThumb = urlOf(activeDragPath)
+					val wDp = with(density) { draggedItemSize.width.toDp() }
+					Surface(
+						shape = RoundedCornerShape(12.dp),
+						shadowElevation = 14.dp,
+						border = BorderStroke(
+							2.dp,
+							if (isHoveringRemove) MaterialTheme.colorScheme.error else Color(0xFF00897B),
+						),
+						modifier = Modifier
+							.offset { IntOffset(draggedTopLeft.x.roundToInt(), draggedTopLeft.y.roundToInt()) }
+							.width(wDp)
+							.aspectRatio(1f)
+							.graphicsLayer {
+								scaleX = 1.06f
+								scaleY = 1.06f
+								alpha = if (isHoveringRemove) 0.72f else 0.96f
+							},
 					) {
-						Icon(
-							Icons.Rounded.Delete,
-							contentDescription = null,
-							tint = if (isHoveringRemove) Color.White else MaterialTheme.colorScheme.error,
-							modifier = Modifier.size(18.dp),
-						)
-						Spacer(Modifier.width(8.dp))
-						Text(
-							text = if (isHoveringRemove) "松手即可移出集锦" else "拖到此处移出集锦（不删原图）",
-							fontSize = 13.5.sp,
-							fontWeight = FontWeight.Bold,
-							color = if (isHoveringRemove) Color.White else MaterialTheme.colorScheme.error,
-						)
+						Box(modifier = Modifier.fillMaxSize()) {
+							if (!dragThumb.isNullOrBlank()) {
+								AsyncImage(
+									model = dragThumb,
+									contentDescription = dragEntry?.name,
+									contentScale = ContentScale.Crop,
+									modifier = Modifier.fillMaxSize(),
+								)
+							}
+						}
+					}
+				}
+
+				// 仅在长按拖拽期间于底部浮现「拖到此处移出集锦」热区
+				AnimatedVisibility(
+					visible = draggedPath != null,
+					enter = fadeIn() + slideInVertically { it },
+					exit = fadeOut() + slideOutVertically { it },
+					modifier = Modifier
+						.align(Alignment.BottomCenter)
+						.padding(horizontal = 20.dp, vertical = 18.dp),
+				) {
+					Surface(
+						shape = RoundedCornerShape(20.dp),
+						color = if (isHoveringRemove) MaterialTheme.colorScheme.error else Color(0xFFFFEBEE),
+						border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.error),
+						shadowElevation = 8.dp,
+						modifier = Modifier
+							.fillMaxWidth()
+							.onGloballyPositioned { coords ->
+								val pos = coords.positionInParent()
+								removeZoneBoundsInBox = Rect(
+									pos.x,
+									pos.y,
+									pos.x + coords.size.width,
+									pos.y + coords.size.height,
+								)
+							},
+					) {
+						Row(
+							modifier = Modifier.padding(vertical = 14.dp, horizontal = 16.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.Center,
+						) {
+							Icon(
+								Icons.Rounded.Delete,
+								contentDescription = null,
+								tint = if (isHoveringRemove) Color.White else MaterialTheme.colorScheme.error,
+								modifier = Modifier.size(18.dp),
+							)
+							Spacer(Modifier.width(8.dp))
+							Text(
+								text = if (isHoveringRemove) "松手即可移出集锦" else "拖到此处移出集锦（不删原图）",
+								fontSize = 13.5.sp,
+								fontWeight = FontWeight.Bold,
+								color = if (isHoveringRemove) Color.White else MaterialTheme.colorScheme.error,
+							)
+						}
 					}
 				}
 			}
