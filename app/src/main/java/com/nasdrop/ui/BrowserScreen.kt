@@ -7649,87 +7649,114 @@ private fun PhotoGroupDetailSheet(
 
 			// 网格容器 + 悬浮拖拽卡片 + 底部移出热区在同一 Box 坐标系下工作
 			Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+				val viewConfig = androidx.compose.ui.platform.LocalViewConfiguration.current
 				LazyVerticalGrid(
 					state = gridState,
+					userScrollEnabled = draggedPath == null,
 					columns = GridCells.Fixed(3),
 					contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 92.dp),
 					horizontalArrangement = Arrangement.spacedBy(8.dp),
 					verticalArrangement = Arrangement.spacedBy(10.dp),
 					modifier = Modifier
 						.fillMaxSize()
-						.pointerInput(Unit) {
-							detectDragGesturesAfterLongPress(
-								onDragStart = { startOffset ->
-									val hit = gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-										val keyStr = info.key as? String ?: return@firstOrNull false
-										keyStr != "append_tile" &&
-											startOffset.x >= info.offset.x &&
-											startOffset.x <= info.offset.x + info.size.width &&
-											startOffset.y >= info.offset.y &&
-											startOffset.y <= info.offset.y + info.size.height
-									}
-									val hitPath = hit?.key as? String
-									if (hit != null && hitPath != null) {
-										draggedPath = hitPath
-										draggedItemSize = hit.size
-										val topLeft = Offset(hit.offset.x.toFloat(), hit.offset.y.toFloat())
-										draggedTopLeft = topLeft
-										fingerInItem = startOffset - topLeft
-										pointerInGrid = startOffset
-										isHoveringRemove = false
-										haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-									}
-								},
-								onDrag = { change, dragAmount ->
-									val curPath = draggedPath ?: return@detectDragGesturesAfterLongPress
-									change.consume()
-									pointerInGrid += dragAmount
-									draggedTopLeft = pointerInGrid - fingerInItem
-									val inRemove = removeZoneBoundsInBox?.contains(pointerInGrid) == true
-									isHoveringRemove = inRemove
-									if (!inRemove) {
-										val target = gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-											val keyStr = info.key as? String ?: return@firstOrNull false
-											keyStr != "append_tile" &&
-												keyStr != curPath &&
-												pointerInGrid.x >= info.offset.x &&
-												pointerInGrid.x <= info.offset.x + info.size.width &&
-												pointerInGrid.y >= info.offset.y &&
-												pointerInGrid.y <= info.offset.y + info.size.height
+						.pointerInput(orderedItems.size) {
+							awaitEachGesture {
+								val down = awaitFirstDown(requireUnconsumed = false)
+								val startOffset = down.position
+								val hit = gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+									val keyStr = info.key as? String ?: return@firstOrNull false
+									keyStr != "append_tile" &&
+										startOffset.x >= info.offset.x &&
+										startOffset.x <= info.offset.x + info.size.width &&
+										startOffset.y >= info.offset.y &&
+										startOffset.y <= info.offset.y + info.size.height
+								}
+								val hitPath = hit?.key as? String ?: return@awaitEachGesture
+
+								// 等待长按判定（320ms），若中途抬起或滑动超出 touchSlop 则交给普通点击/滚动
+								var longPressTriggered = false
+								val longPressTimeout = minOf(viewConfig.longPressTimeoutMillis, 340L)
+								val upOrMove = withTimeoutOrNull(longPressTimeout) {
+									while (true) {
+										val event = awaitPointerEvent()
+										val change = event.changes.firstOrNull { it.id == down.id } ?: break
+										if (!change.pressed) {
+											return@withTimeoutOrNull "up"
 										}
-										val targetPath = target?.key as? String
-										if (targetPath != null) {
-											val fromIdx = localOrder.indexOf(curPath)
-											val toIdx = localOrder.indexOf(targetPath)
-											if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
-												val mutable = localOrder.toMutableList()
-												val moved = mutable.removeAt(fromIdx)
-												mutable.add(toIdx, moved)
-												localOrder = mutable
-												haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+										if ((change.position - startOffset).getDistance() > viewConfig.touchSlop) {
+											return@withTimeoutOrNull "moved"
+										}
+									}
+									"up"
+								}
+
+								if (upOrMove == null) {
+									// 长按触发：进入丝滑拖拽排序模式
+									longPressTriggered = true
+									draggedPath = hitPath
+									draggedItemSize = hit.size
+									val topLeft = Offset(hit.offset.x.toFloat(), hit.offset.y.toFloat())
+									draggedTopLeft = topLeft
+									fingerInItem = startOffset - topLeft
+									pointerInGrid = startOffset
+									isHoveringRemove = false
+									haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+									down.consume()
+
+									while (true) {
+										val event = awaitPointerEvent()
+										val change = event.changes.firstOrNull { it.id == down.id } ?: break
+										if (!change.pressed) {
+											// 松手提交排序或移出
+											val shouldRemove = isHoveringRemove
+											val finalOrder = localOrder
+											draggedPath = null
+											isHoveringRemove = false
+											if (shouldRemove) {
+												localOrder = finalOrder.filterNot { it == hitPath }
+												onRemoveItem(hitPath)
+											} else if (finalOrder != group.items) {
+												onReorderItems(finalOrder)
+											}
+											break
+										}
+										change.consume()
+										pointerInGrid = change.position
+										draggedTopLeft = pointerInGrid - fingerInItem
+										val inRemove = removeZoneBoundsInBox?.contains(pointerInGrid) == true
+										isHoveringRemove = inRemove
+										if (!inRemove) {
+											val target = gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+												val keyStr = info.key as? String ?: return@firstOrNull false
+												keyStr != "append_tile" &&
+													keyStr != hitPath &&
+													pointerInGrid.x >= info.offset.x &&
+													pointerInGrid.x <= info.offset.x + info.size.width &&
+													pointerInGrid.y >= info.offset.y &&
+													pointerInGrid.y <= info.offset.y + info.size.height
+											}
+											val targetPath = target?.key as? String
+											if (targetPath != null) {
+												val fromIdx = localOrder.indexOf(hitPath)
+												val toIdx = localOrder.indexOf(targetPath)
+												if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
+													val mutable = localOrder.toMutableList()
+													val moved = mutable.removeAt(fromIdx)
+													mutable.add(toIdx, moved)
+													localOrder = mutable
+													haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+												}
 											}
 										}
 									}
-								},
-								onDragEnd = {
-									val curPath = draggedPath ?: return@detectDragGesturesAfterLongPress
-									val shouldRemove = isHoveringRemove
-									val finalOrder = localOrder
-									draggedPath = null
-									isHoveringRemove = false
-									if (shouldRemove) {
-										localOrder = finalOrder.filterNot { it == curPath }
-										onRemoveItem(curPath)
-									} else if (finalOrder != group.items) {
-										onReorderItems(finalOrder)
+								} else if (upOrMove == "up" && !longPressTriggered) {
+									// 短按：直接放大查看（保留全部正常照片操作）
+									val entry = photoMap[hitPath]
+									if (entry != null) {
+										if (entry.isVideo) onOpenVideo(entry) else onOpenImage(entry)
 									}
-								},
-								onDragCancel = {
-									draggedPath = null
-									isHoveringRemove = false
-									localOrder = group.items
-								},
-							)
+								}
+							}
 						},
 				) {
 					items(orderedItems.size, key = { idx -> orderedItems[idx].first }) { idx ->
@@ -7737,8 +7764,6 @@ private fun PhotoGroupDetailSheet(
 						val displayName = entry?.name ?: path.substringAfterLast('/')
 						val thumbUrl = urlOf(path)
 						val isGhost = draggedPath == path
-						val meta = remember(path) { PhotoMetadataStore.get(path) }
-						val hasMemo = !meta?.memo.isNullOrBlank() || entry?.hasMemo == true
 						val dateText = remember(entry?.effectiveDate) {
 							val ms = entry?.effectiveDate ?: 0L
 							if (ms > 0L) java.text.SimpleDateFormat("MM-dd", java.util.Locale.getDefault()).format(java.util.Date(ms)) else ""
@@ -7748,12 +7773,7 @@ private fun PhotoGroupDetailSheet(
 							modifier = Modifier
 								.fillMaxWidth()
 								.animateItem()
-								.graphicsLayer { alpha = if (isGhost) 0.18f else 1f }
-								.clickable(enabled = draggedPath == null && entry != null) {
-									if (entry != null) {
-										if (entry.isVideo) onOpenVideo(entry) else onOpenImage(entry)
-									}
-								},
+								.graphicsLayer { alpha = if (isGhost) 0.18f else 1f },
 						) {
 							Box(
 								modifier = Modifier
@@ -7775,24 +7795,27 @@ private fun PhotoGroupDetailSheet(
 									}
 								}
 
-								// 左上角轻量毛玻璃暗色序号徽章
-								Surface(
-									shape = RoundedCornerShape(6.dp),
-									color = Color.Black.copy(alpha = 0.48f),
+								// 左上角精致小圆点序号徽章
+								Box(
+									contentAlignment = Alignment.Center,
 									modifier = Modifier
 										.align(Alignment.TopStart)
-										.padding(5.dp),
+										.padding(5.dp)
+										.size(20.dp)
+										.clip(CircleShape)
+										.background(Color.Black.copy(alpha = 0.45f))
+										.border(0.6.dp, Color.White.copy(alpha = 0.35f), CircleShape),
 								) {
 									Text(
 										text = "${idx + 1}",
 										fontSize = 10.sp,
 										fontWeight = FontWeight.Bold,
 										color = Color.White,
-										modifier = Modifier.padding(horizontal = 5.5.dp, vertical = 1.dp),
+										lineHeight = 10.sp,
 									)
 								}
 
-								// 完整复用相册角标（compact = false 保留清晰语音时长、碎语与视频标识）
+								// 完整复用相册角标（语音时长、碎语、视频标识）
 								if (entry != null) {
 									MediaThumbBadges(
 										entry = entry,
@@ -7802,20 +7825,16 @@ private fun PhotoGroupDetailSheet(
 								}
 							}
 
-							val subLabel = when {
-								hasMemo && !meta?.memo.isNullOrBlank() -> meta!!.memo.replace('\n', ' ')
-								dateText.isNotBlank() && hasMemo -> "$dateText · 有碎语"
-								dateText.isNotBlank() -> dateText
-								else -> displayName
+							if (dateText.isNotBlank()) {
+								Text(
+									text = dateText,
+									fontSize = 11.sp,
+									color = MaterialTheme.colorScheme.onSurfaceVariant,
+									maxLines = 1,
+									overflow = TextOverflow.Ellipsis,
+									modifier = Modifier.padding(top = 4.dp, start = 2.dp, end = 2.dp),
+								)
 							}
-							Text(
-								text = subLabel,
-								fontSize = 11.sp,
-								color = if (hasMemo) Color(0xFF00695C) else MaterialTheme.colorScheme.onSurfaceVariant,
-								maxLines = 1,
-								overflow = TextOverflow.Ellipsis,
-								modifier = Modifier.padding(top = 4.dp, start = 2.dp, end = 2.dp),
-							)
 						}
 					}
 
