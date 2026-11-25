@@ -135,8 +135,10 @@ class MainActivity : ComponentActivity() {
 
 			when (val r = route) {
 				Route.Browser -> {
-					BackHandler(enabled = vm.isMultiSelectMode || vm.currentTab != MainTab.Home || (!vm.isRoot && vm.currentTab == MainTab.Files)) {
-						if (vm.isMultiSelectMode) {
+					BackHandler(enabled = vm.activePhotoGroupId != null || vm.isMultiSelectMode || vm.currentTab != MainTab.Home || (!vm.isRoot && vm.currentTab == MainTab.Files)) {
+						if (vm.activePhotoGroupId != null) {
+							vm.activePhotoGroupId = null
+						} else if (vm.isMultiSelectMode) {
 							vm.exitMultiSelect()
 						} else if (vm.currentTab == MainTab.Photos && vm.selectedAlbumPath.isNotBlank()) {
 							vm.upAlbum()

@@ -7620,6 +7620,11 @@ private fun PhotoGroupDetailSheet(
 		localOrder.map { p -> p to photoMap[p] }
 	}
 
+	// 支持系统侧滑返回直接关闭集锦详情页
+	androidx.activity.compose.BackHandler {
+		onDismiss()
+	}
+
 	Surface(
 		modifier = Modifier
 			.fillMaxSize()
