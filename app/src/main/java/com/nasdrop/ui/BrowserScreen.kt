@@ -4892,19 +4892,29 @@ private fun TimelineDateScrubber(
 		if (milestones.size <= 2) return@remember milestones
 		val trackH = with(density) { (trackHeightPx - 20.dp.toPx()).coerceAtLeast(1f) }
 		val minMonthGapFrac = with(density) { (22.dp.toPx() / trackH).coerceIn(0.05f, 0.25f) }
-		val minYearGapFrac = with(density) { (13.dp.toPx() / trackH).coerceIn(0.02f, 0.12f) }
+		val minYearGapFrac = with(density) { (18.dp.toPx() / trackH).coerceIn(0.03f, 0.14f) }
 		val placed = mutableListOf<ScrubberMilestone>()
 
-		// 1. 强制放入全部年份（绝不省略任何年份），若相邻年份过于密集则微调位置防重叠
+		// 1. 强制放入全部年份（绝不省略任何年份），若相邻年份过于密集则双向微调位置防重叠
 		val allYears = milestones.filter { it.isYear }.sortedBy { it.fraction }
-		for (yItem in allYears) {
-			val prevYear = placed.lastOrNull()
-			val adjustedFrac = if (prevYear != null && yItem.fraction - prevYear.fraction < minYearGapFrac) {
-				(prevYear.fraction + minYearGapFrac).coerceAtMost(0.98f)
-			} else {
-				yItem.fraction
+		val yearFracs = allYears.map { it.fraction }.toMutableList()
+		for (i in 1 until yearFracs.size) {
+			if (yearFracs[i] - yearFracs[i - 1] < minYearGapFrac) {
+				yearFracs[i] = yearFracs[i - 1] + minYearGapFrac
 			}
-			placed.add(if (adjustedFrac != yItem.fraction) yItem.copy(fraction = adjustedFrac) else yItem)
+		}
+		if (yearFracs.isNotEmpty() && yearFracs.last() > 0.98f) {
+			yearFracs[yearFracs.lastIndex] = 0.98f
+			for (i in yearFracs.lastIndex - 1 downTo 0) {
+				if (yearFracs[i + 1] - yearFracs[i] < minYearGapFrac) {
+					yearFracs[i] = (yearFracs[i + 1] - minYearGapFrac).coerceAtLeast(0.02f)
+				}
+			}
+		}
+		for (i in allYears.indices) {
+			val yItem = allYears[i]
+			val f = yearFracs[i]
+			placed.add(if (f != yItem.fraction) yItem.copy(fraction = f) else yItem)
 		}
 
 		fun tryAddMonthOrAnchor(m: ScrubberMilestone): Boolean {
