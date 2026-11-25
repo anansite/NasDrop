@@ -186,6 +186,7 @@ import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.ArrowForward
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Checkbox
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
