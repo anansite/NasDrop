@@ -7556,11 +7556,21 @@ private fun PhotoGroupDetailSheet(
 	var showAppendOptionsSheet by remember { mutableStateOf(false) }
 	var showPickExistingSheet by remember { mutableStateOf(false) }
 
-	// 拖拽排序状态：在 LazyVerticalGrid 上统一托管长按拖拽，配合浮层跟随手指 + animateItem 实时补位，确保从第一位到任意位置都丝滑无跳变
-	var localOrder by remember(group.id, group.items) { mutableStateOf(group.items) }
+	// 拖拽排序状态：在 LazyVerticalGrid 上统一托管长按拖拽，配合浮层跟随手指 + animateItem 实时补位
+	// 使用 rememberUpdatedState + 换位冷却，彻底避免闭包陈旧或 animateItem 动画期间来回回弹
+	var draggedPath by remember { mutableStateOf<String?>(null) }
+	var localOrder by remember(group.id) { mutableStateOf(group.items) }
+	LaunchedEffect(group.items) {
+		if (draggedPath == null) localOrder = group.items
+	}
+	val currentGroup by rememberUpdatedState(group)
+	val currentPhotoMap by rememberUpdatedState(photoMap)
+	val currentOnReorderItems by rememberUpdatedState(onReorderItems)
+	val currentOnRemoveItem by rememberUpdatedState(onRemoveItem)
+	val currentOnOpenImage by rememberUpdatedState(onOpenImage)
+	val currentOnOpenVideo by rememberUpdatedState(onOpenVideo)
 	val gridState = rememberLazyGridState()
 	val density = LocalDensity.current
-	var draggedPath by remember { mutableStateOf<String?>(null) }
 	var draggedItemSize by remember { mutableStateOf(IntSize.Zero) }
 	var draggedTopLeft by remember { mutableStateOf(Offset.Zero) }
 	var fingerInItem by remember { mutableStateOf(Offset.Zero) }
@@ -7659,7 +7669,7 @@ private fun PhotoGroupDetailSheet(
 					verticalArrangement = Arrangement.spacedBy(10.dp),
 					modifier = Modifier
 						.fillMaxSize()
-						.pointerInput(orderedItems.size) {
+						.pointerInput(group.id) {
 							awaitEachGesture {
 								val down = awaitFirstDown(requireUnconsumed = false)
 								val startOffset = down.position
@@ -7700,6 +7710,8 @@ private fun PhotoGroupDetailSheet(
 									fingerInItem = startOffset - topLeft
 									pointerInGrid = startOffset
 									isHoveringRemove = false
+									var lastSwapTimeMs = 0L
+									var lastSwappedTarget: String? = null
 									haptic.performHapticFeedback(HapticFeedbackType.LongPress)
 									down.consume()
 
@@ -7714,9 +7726,9 @@ private fun PhotoGroupDetailSheet(
 											isHoveringRemove = false
 											if (shouldRemove) {
 												localOrder = finalOrder.filterNot { it == hitPath }
-												onRemoveItem(hitPath)
-											} else if (finalOrder != group.items) {
-												onReorderItems(finalOrder)
+												currentOnRemoveItem(hitPath)
+											} else if (finalOrder != currentGroup.items) {
+												currentOnReorderItems(finalOrder)
 											}
 											break
 										}
@@ -7736,7 +7748,8 @@ private fun PhotoGroupDetailSheet(
 													pointerInGrid.y <= info.offset.y + info.size.height
 											}
 											val targetPath = target?.key as? String
-											if (targetPath != null) {
+											val nowMs = android.os.SystemClock.uptimeMillis()
+											if (targetPath != null && (targetPath != lastSwappedTarget || nowMs - lastSwapTimeMs >= 260L)) {
 												val fromIdx = localOrder.indexOf(hitPath)
 												val toIdx = localOrder.indexOf(targetPath)
 												if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
@@ -7744,6 +7757,8 @@ private fun PhotoGroupDetailSheet(
 													val moved = mutable.removeAt(fromIdx)
 													mutable.add(toIdx, moved)
 													localOrder = mutable
+													lastSwapTimeMs = nowMs
+													lastSwappedTarget = targetPath
 													haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 												}
 											}
@@ -7751,9 +7766,9 @@ private fun PhotoGroupDetailSheet(
 									}
 								} else if (upOrMove == "up" && !longPressTriggered) {
 									// 短按：直接放大查看（保留全部正常照片操作）
-									val entry = photoMap[hitPath]
+									val entry = currentPhotoMap[hitPath]
 									if (entry != null) {
-										if (entry.isVideo) onOpenVideo(entry) else onOpenImage(entry)
+										if (entry.isVideo) currentOnOpenVideo(entry) else currentOnOpenImage(entry)
 									}
 								}
 							}
