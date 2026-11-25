@@ -319,6 +319,7 @@ class WebDavClient(
 					put("width", m.width)
 					put("height", m.height)
 					put("has_thumb", m.hasThumbnail)
+					if (m.thumbId.isNotBlank()) put("thumb_id", m.thumbId)
 				}
 				json.put(obj)
 			}

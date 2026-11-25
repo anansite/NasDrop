@@ -191,12 +191,13 @@ class UploadService : Service() {
 									LocalThumbs.ensure(this@UploadService, uri, entryPath, isVideo)
 									val thumbFile = LocalThumbs.get(entryPath)
 									if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0L) {
-										val thumbDir = if (dirKey.isEmpty()) ".thumbnails" else "$dirKey/.thumbnails"
+										val thumbId = "t_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().replace("-", "").take(8)}"
+										val thumbDir = ".nasdrop_thumbs"
 										runCatching { client.mkcol(thumbDir) }
-										client.uploadBytes(thumbFile.readBytes(), thumbDir, name)
-										PhotoMetadataStore.markThumbnail(entryPath, true)
-										client.reportMetadata(listOf(meta.copy(hasThumbnail = true)))
-										Log.i("UploadService", "伴生微缩图已上传(图片与视频封面): $thumbDir/$name")
+										client.uploadBytes(thumbFile.readBytes(), thumbDir, "$thumbId.jpg")
+										PhotoMetadataStore.updateThumbId(entryPath, thumbId)
+										client.reportMetadata(listOf(meta.copy(hasThumbnail = true, thumbId = thumbId)))
+										Log.i("UploadService", "公共微缩图已上传: $thumbDir/$thumbId.jpg")
 									}
 								}
 							}

@@ -25,6 +25,7 @@ data class PhotoMetadata(
 	val width: Int = 0,
 	val height: Int = 0,
 	val hasThumbnail: Boolean = false,
+	val thumbId: String = "",
 	val audioPath: String? = null,
 	val audioDurationMs: Long = 0L,
 	val memo: String? = null,
@@ -45,7 +46,7 @@ object PhotoMetadataStore {
 
 	private const val TAG = "PhotoMetadataStore"
 	private const val DB_NAME = "nasdrop_photos.db"
-	private const val DB_VERSION = 2
+	private const val DB_VERSION = 3
 	private const val TABLE_NAME = "photo_metadata"
 
 	private val ioScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -92,6 +93,7 @@ object PhotoMetadataStore {
 				val wIdx = c.getColumnIndexOrThrow("width")
 				val hIdx = c.getColumnIndexOrThrow("height")
 				val thIdx = c.getColumnIndexOrThrow("has_thumb")
+				val tidIdx = c.getColumnIndex("thumb_id")
 				val uIdx = c.getColumnIndexOrThrow("updated_at")
 
 				val aPathIdx = c.getColumnIndex("audio_path")
@@ -112,6 +114,7 @@ object PhotoMetadataStore {
 						width = c.getInt(wIdx),
 						height = c.getInt(hIdx),
 						hasThumbnail = c.getInt(thIdx) == 1,
+						thumbId = if (tidIdx >= 0 && !c.isNull(tidIdx)) c.getString(tidIdx) else "",
 						audioPath = if (aPathIdx >= 0 && !c.isNull(aPathIdx)) c.getString(aPathIdx) else null,
 						audioDurationMs = if (aDurIdx >= 0) c.getLong(aDurIdx) else 0L,
 						memo = if (memoIdx >= 0 && !c.isNull(memoIdx)) c.getString(memoIdx) else null,
@@ -551,6 +554,22 @@ object PhotoMetadataStore {
 		}
 	}
 
+	fun updateThumbId(path: String, thumbId: String) {
+		val key = path.trim('/')
+		val cur = cache[key] ?: return
+		val updated = cur.copy(hasThumbnail = true, thumbId = thumbId, updatedAt = System.currentTimeMillis())
+		cache[key] = updated
+		notifyUpdated()
+		ioScope.launch {
+			try {
+				val db = dbHelper?.writableDatabase ?: return@launch
+				db.insertWithOnConflict(TABLE_NAME, null, toContentValues(updated), SQLiteDatabase.CONFLICT_REPLACE)
+			} catch (e: Exception) {
+				Log.e(TAG, "更新 thumb_id 失败: $path", e)
+			}
+		}
+	}
+
 	private fun toContentValues(meta: PhotoMetadata) = ContentValues().apply {
 		put("path", meta.path.trim('/'))
 		put("name", meta.name)
@@ -561,6 +580,7 @@ object PhotoMetadataStore {
 		put("width", meta.width)
 		put("height", meta.height)
 		put("has_thumb", if (meta.hasThumbnail) 1 else 0)
+		put("thumb_id", meta.thumbId)
 		put("audio_path", meta.audioPath)
 		put("audio_duration_ms", meta.audioDurationMs)
 		put("memo", meta.memo)
@@ -584,6 +604,7 @@ object PhotoMetadataStore {
 					width INTEGER NOT NULL DEFAULT 0,
 					height INTEGER NOT NULL DEFAULT 0,
 					has_thumb INTEGER NOT NULL DEFAULT 0,
+					thumb_id TEXT NOT NULL DEFAULT '',
 					audio_path TEXT DEFAULT NULL,
 					audio_duration_ms INTEGER NOT NULL DEFAULT 0,
 					memo TEXT DEFAULT NULL,
@@ -609,6 +630,13 @@ object PhotoMetadataStore {
 					db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN video_duration_ms INTEGER NOT NULL DEFAULT 0")
 				} catch (e: Exception) {
 					Log.w(TAG, "DB upgrade to v2 failed: ${e.message}")
+				}
+			}
+			if (oldVersion < 3) {
+				try {
+					db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN thumb_id TEXT NOT NULL DEFAULT ''")
+				} catch (e: Exception) {
+					Log.w(TAG, "DB upgrade to v3 failed: ${e.message}")
 				}
 			}
 		}

@@ -1053,12 +1053,21 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			return directUrlFor(key) ?: urlFor(key)
 		}
 
-		// 优先命中伴生 .thumbnails 极速缩略图
+		// 1. 优先命中 NAS 根目录公共缩略图库 .nasdrop_thumbs/<thumb_id>.jpg（禁止服务端解码，仅由 App 端生成并上传）
 		val meta = PhotoMetadataStore.get(key)
+		if (meta != null && meta.thumbId.isNotBlank()) {
+			val dUrl = client?.directUrlFor(".nasdrop_thumbs/${meta.thumbId}.jpg")?.toString()
+			if (dUrl != null) return dUrl
+		}
+		// 2. 兼容存量同级 .thumbnails/<filename>
 		if (meta != null && meta.hasThumbnail) {
 			val thumbPath = if (meta.dir.isEmpty()) ".thumbnails/${meta.name}" else "${meta.dir}/.thumbnails/${meta.name}"
 			val dUrl = client?.directUrlFor(thumbPath)?.toString()
 			if (dUrl != null) return dUrl
+		}
+		// 3. 若当前图片/视频还没有缩略图，由 App 端异步补齐并上传至 .nasdrop_thumbs
+		if (meta == null || (meta.thumbId.isBlank() && !meta.hasThumbnail)) {
+			scheduleAppThumbBackfill(key)
 		}
 
 		val clientThumb = client?.thumbnailUrl(key)?.toString()
@@ -1090,6 +1099,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		@Suppress("UNUSED_VARIABLE") val revision = thumbRevision
 
 		val meta = PhotoMetadataStore.get(key)
+		if (meta != null && meta.thumbId.isNotBlank()) {
+			val dUrl = client?.directUrlFor(".nasdrop_thumbs/${meta.thumbId}.jpg")?.toString()
+			if (dUrl != null) return dUrl
+		}
 		if (meta != null && meta.hasThumbnail) {
 			val thumbPath = if (meta.dir.isEmpty()) ".thumbnails/${meta.name}" else "${meta.dir}/.thumbnails/${meta.name}"
 			val dUrl = client?.directUrlFor(thumbPath)?.toString()
@@ -1112,14 +1125,124 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		return null
 	}
 
+	private val backfillingThumbs = java.util.Collections.synchronizedSet(HashSet<String>())
+	private val backfillThumbSemaphore = Semaphore(2)
+
+	/** App 端自主补齐缩略图并上传至 NAS 根目录 .nasdrop_thumbs/<thumb_id>.jpg（禁止服务端解码） */
+	private fun scheduleAppThumbBackfill(entryPath: String) {
+		val key = entryPath.trim('/')
+		val ext = key.substringAfterLast('.', "").lowercase()
+		val isImage = ext in DavEntry.IMAGES
+		val isVideo = ext in DavEntry.VIDEOS
+		if (!isImage && !isVideo) return
+		if (!backfillingThumbs.add(key)) return
+
+		viewModelScope.launch(Dispatchers.IO) {
+			try {
+				backfillThumbSemaphore.withPermit {
+					val s = app.prefs.current()
+					val c = clientOf(s)
+					val thumbBytes: ByteArray? = if (isImage) {
+						val url = c.directUrlFor(key) ?: c.urlFor(key)
+						val req = okhttp3.Request.Builder().url(url).get().build()
+						c.metaCall(req).execute().use { resp ->
+							if (!resp.isSuccessful) return@use null
+							val raw = resp.body?.bytes() ?: return@use null
+							val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+							android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, opts)
+							var sample = 1
+							val maxOrig = maxOf(opts.outWidth, opts.outHeight)
+							while (maxOrig / sample > 720) sample *= 2
+							val decOpts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+							val bmp = android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, decOpts) ?: return@use null
+							val scale = (360f / maxOf(bmp.width, bmp.height).coerceAtLeast(1)).coerceAtMost(1f)
+							val scaled = if (scale < 1f) {
+								android.graphics.Bitmap.createScaledBitmap(
+									bmp,
+									(bmp.width * scale).toInt().coerceAtLeast(1),
+									(bmp.height * scale).toInt().coerceAtLeast(1),
+									true,
+								).also { if (it != bmp) bmp.recycle() }
+							} else bmp
+							val baos = java.io.ByteArrayOutputStream()
+							scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, baos)
+							scaled.recycle()
+							baos.toByteArray()
+						}
+					} else {
+						val url = (c.directUrlFor(key) ?: c.urlFor(key)).toString()
+						val retriever = android.media.MediaMetadataRetriever()
+						try {
+							val headers = HashMap<String, String>()
+							if (s.user.isNotBlank() || s.pass.isNotBlank()) {
+								headers["Authorization"] = okhttp3.Credentials.basic(s.user, s.pass)
+							}
+							retriever.setDataSource(url, headers)
+							val frame = retriever.getFrameAtTime(1_000_000L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+								?: retriever.getFrameAtTime(0L)
+							if (frame != null) {
+								val scale = (360f / maxOf(frame.width, frame.height).coerceAtLeast(1)).coerceAtMost(1f)
+								val scaled = if (scale < 1f) {
+									android.graphics.Bitmap.createScaledBitmap(
+										frame,
+										(frame.width * scale).toInt().coerceAtLeast(1),
+										(frame.height * scale).toInt().coerceAtLeast(1),
+										true,
+									).also { if (it != frame) frame.recycle() }
+								} else frame
+								val baos = java.io.ByteArrayOutputStream()
+								scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, baos)
+								scaled.recycle()
+								baos.toByteArray()
+							} else null
+						} finally {
+							runCatching { retriever.release() }
+						}
+					}
+
+					if (thumbBytes != null && thumbBytes.isNotEmpty()) {
+						val thumbId = "t_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().replace("-", "").take(8)}"
+						runCatching { c.mkcol(".nasdrop_thumbs") }
+						c.uploadBytes(thumbBytes, ".nasdrop_thumbs", "$thumbId.jpg")
+
+						val existing = PhotoMetadataStore.get(key)
+						val updatedMeta = if (existing != null) {
+							existing.copy(hasThumbnail = true, thumbId = thumbId, updatedAt = System.currentTimeMillis())
+						} else {
+							val entry = (allPhotos + allVideos).firstOrNull { it.path.trim('/') == key }
+							PhotoMetadata(
+								path = key,
+								name = key.substringAfterLast('/'),
+								dir = parentOf(key),
+								size = entry?.size ?: 0L,
+								modified = entry?.modified ?: System.currentTimeMillis(),
+								takenAt = entry?.takenAt ?: 0L,
+								hasThumbnail = true,
+								thumbId = thumbId,
+							)
+						}
+						PhotoMetadataStore.put(updatedMeta)
+						c.reportMetadata(listOf(updatedMeta))
+						withContext(Dispatchers.Main) {
+							thumbRevision++
+						}
+					}
+				}
+			} catch (e: Exception) {
+				Log.w("BrowserViewModel", "App 端补齐缩略图失败 path=$key: ${e.message}")
+			}
+		}
+	}
+
 	fun markThumbnailFailed(entryPath: String) {
 		val key = entryPath.trim('/')
 		PhotoMetadataStore.get(key)?.let { meta ->
-			if (meta.hasThumbnail) {
-				PhotoMetadataStore.putMemoryOnly(meta.copy(hasThumbnail = false))
+			if (meta.hasThumbnail || meta.thumbId.isNotBlank()) {
+				PhotoMetadataStore.putMemoryOnly(meta.copy(hasThumbnail = false, thumbId = ""))
 			}
 		}
 		client?.markThumbnailFailed(entryPath)
+		scheduleAppThumbBackfill(key)
 		thumbRevision++
 	}
 
@@ -1593,10 +1716,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			val s = app.prefs.current()
 			withContext(Dispatchers.IO) {
 				val c = clientOf(s)
-				val cleanTarget = targetDir.trim('/')
-				if (targets.any { it.isImage || it.isVideo }) {
-					runCatching { c.mkcol(if (cleanTarget.isEmpty()) ".thumbnails" else "$cleanTarget/.thumbnails") }
-				}
 				val sem = Semaphore(6)
 				coroutineScope {
 					targets.map { item ->
@@ -1604,12 +1723,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 							sem.withPermit {
 								try {
 									c.move(item.path, join(targetDir, item.name))
-									if (item.isImage || item.isVideo) {
-										val oldDir = parentOf(item.path)
-										val oldThumb = if (oldDir.isEmpty()) ".thumbnails/${item.name}" else "$oldDir/.thumbnails/${item.name}"
-										val newThumb = if (cleanTarget.isEmpty()) ".thumbnails/${item.name}" else "$cleanTarget/.thumbnails/${item.name}"
-										runCatching { c.move(oldThumb, newThumb) }
-									}
 									okCount.incrementAndGet()
 									moved += item.path
 								} catch (e: Exception) {
@@ -2491,18 +2604,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				if (entry.isDir) PhotoMetadataStore.moveDir(entry.path, dest) else PhotoMetadataStore.move(entry.path, dest)
 				pruneMediaPools(listOf(entry.path))
 				mediaDirty = true // 目标目录的相册/影音归属变了，下次进页面时校正
-				if (entry.isImage || entry.isVideo) {
-					launch(Dispatchers.IO) {
-						val oldDir = parentOf(entry.path)
-						val oldThumb = if (oldDir.isEmpty()) ".thumbnails/${entry.name}" else "$oldDir/.thumbnails/${entry.name}"
-						val newThumb = if (targetDir.isEmpty()) ".thumbnails/${entry.name}" else "$targetDir/.thumbnails/${entry.name}"
-						val c = clientOf(app.prefs.current())
-						runCatching {
-							c.mkcol(if (targetDir.isEmpty()) ".thumbnails" else "$targetDir/.thumbnails")
-							c.move(oldThumb, newThumb)
-						}
-					}
-				}
 				runCatching { loadDirectory(targetDir) }
 				refreshSilent()
 				onResult(true, "已移动到 /${targetDir.ifEmpty { "根目录" }}")
