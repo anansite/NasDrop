@@ -1206,7 +1206,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch { app.prefs.setSortOrder(sortOrder.name) }
 	}
 
-	fun setSortOrder(order: SortOrder) {
+	fun updateSortOrder(order: SortOrder) {
 		sortOrder = order
 		viewModelScope.launch { app.prefs.setSortOrder(order.name) }
 	}

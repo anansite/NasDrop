@@ -2106,7 +2106,7 @@ private fun FilesTopBar(
 								{ Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp)) }
 							} else null,
 							onClick = {
-								vm.setSortOrder(order)
+								vm.updateSortOrder(order)
 								sortMenuOpen = false
 							},
 						)
