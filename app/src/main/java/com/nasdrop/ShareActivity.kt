@@ -67,9 +67,10 @@ class ShareActivity : ComponentActivity() {
 			val interrupted = uploadSession != Uploads.sessionId
 
 			LaunchedEffect(Unit) {
+				vm.currentTab = MainTab.Files
 				val s = app.prefs.current()
 				lastDir = s.lastDir
-				if (s.lastDir.isNotEmpty()) vm.open(s.lastDir)
+				vm.open("")
 			}
 			LaunchedEffect(vm.shareUploadBatchId) {
 				vm.shareUploadBatchId?.let { id ->

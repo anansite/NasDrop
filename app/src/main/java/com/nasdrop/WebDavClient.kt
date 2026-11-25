@@ -884,8 +884,18 @@ class WebDavClient(
 	) {
 		val name = Query.nameOf(context, uri)
 		val total = Query.sizeOf(context, uri)
-		uploadStream(name, total, context.contentResolver.getType(uri), remoteDir,
-			openInput = { context.contentResolver.openInputStream(uri) ?: throw IOException("无法读取上传文件") },
+		val sourceUri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
+			uri.authority == "media" &&
+			androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_MEDIA_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+		) {
+			runCatching { android.provider.MediaStore.setRequireOriginal(uri) }.getOrDefault(uri)
+		} else uri
+		uploadStream(name, total, context.contentResolver.getType(sourceUri), remoteDir,
+			openInput = {
+				runCatching { context.contentResolver.openInputStream(sourceUri) }.getOrNull()
+					?: context.contentResolver.openInputStream(uri)
+					?: throw IOException("无法读取上传文件")
+			},
 			onProgress = onProgress, onBodySent = onBodySent, onCall = onCall)
 	}
 
@@ -931,7 +941,7 @@ class WebDavClient(
 				val input = openInput()
 				var sent = 0L
 				input.use { ins ->
-					val buf = ByteArray(32 * 1024)
+					val buf = ByteArray(64 * 1024)
 					var lastReportTime = 0L
 					while (true) {
 						checkCanceled()

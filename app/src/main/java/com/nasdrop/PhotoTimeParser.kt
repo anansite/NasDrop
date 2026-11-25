@@ -114,8 +114,15 @@ object PhotoTimeParser {
 	 * 从本地 Uri 中提取 EXIF 拍摄时间、宽高及旋转信息（用于手机上传时就地读取）
 	 */
 	fun extractExif(context: Context, uri: Uri): ExifInfo {
+		val targetUri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
+			uri.authority == "media" &&
+			androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_MEDIA_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+		) {
+			runCatching { android.provider.MediaStore.setRequireOriginal(uri) }.getOrDefault(uri)
+		} else uri
 		return try {
-			context.contentResolver.openInputStream(uri)?.use { ins ->
+			(runCatching { context.contentResolver.openInputStream(targetUri) }.getOrNull()
+				?: context.contentResolver.openInputStream(uri))?.use { ins ->
 				val exif = ExifInterface(ins)
 				val dateStr = exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL)
 					?: exif.getAttribute(ExifInterface.TAG_DATETIME)

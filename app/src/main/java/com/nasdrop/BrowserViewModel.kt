@@ -19,11 +19,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import java.io.File
@@ -57,8 +62,10 @@ enum class ViewMode {
 }
 
 enum class SortOrder(val label: String) {
-	ModifiedDesc("按修改时间 ↓"),
-	ModifiedAsc("按修改时间 ↑"),
+	UploadDesc("按上传时间 ↓"),
+	UploadAsc("按上传时间 ↑"),
+	CreatedDesc("按生成时间 ↓"),
+	CreatedAsc("按生成时间 ↑"),
 	NameAsc("按名称 A-Z"),
 	SizeDesc("按文件大小 ↓"),
 }
@@ -138,8 +145,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	val fileGridState = LazyGridState()
 	val mediaGridState = LazyGridState()
 
-	/** 夸克同款排序方式：按修改时间 / 按名称 / 按大小 */
-	var sortOrder by mutableStateOf(SortOrder.ModifiedDesc)
+	/** 排序方式：默认按上传时间降序（新上传内容立即置顶），支持按上传时间 / 生成时间 / 名称 / 大小排序 */
+	var sortOrder by mutableStateOf(SortOrder.UploadDesc)
 		private set
 
 	/** 全局搜索关键词 */
@@ -379,48 +386,35 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	val isRoot: Boolean get() = path.isEmpty()
 	val needsLogin: Boolean get() = (connectionMode != ConnectionMode.Direct && !app.repo.isDirectConfirmed) && linkStatus.contains("等待登录")
 
-	/** 经过分类筛选与搜索后的条目列表 */
+	/** 经过分类筛选与搜索后的条目列表（全部文件只显示当前文件夹内容，不做跨目录透视） */
 	val filteredEntries: List<DavEntry>
 		get() {
 			val baseList = when (selectedCategory) {
-				FileCategory.All -> {
-					if (path.isEmpty()) {
-						// 根目录下全部文件：满足需求14，看到所有内容包括子文件夹的照片与视频
-						val rootDirs = entries.filter { it.isDir }
-						val allSubMedia = (allPhotos + allVideos).distinctBy { it.path }
-						val rootFiles = entries.filter { !it.isDir }
-						(rootDirs + allSubMedia + rootFiles).distinctBy { it.path }
-					} else {
-						entries
-					}
-				}
-				FileCategory.Image -> {
-					// 满足需求14：图片分类看到所有内容包括子相册/子文件夹的照片
-					if (allPhotos.isNotEmpty()) allPhotos
-					else entries.filter { !it.isDir && it.isImage }
-				}
-				FileCategory.Video -> {
-					// 满足需求14：视频分类看到所有内容包括子影集/子文件夹的视频
-					if (allVideos.isNotEmpty()) allVideos
-					else entries.filter { !it.isDir && it.isVideo }
-				}
-				FileCategory.Document -> {
-					if (path.isEmpty()) (allDocuments + entries.filter { !it.isDir && it.isDocument }).distinctBy { it.path }
-					else entries.filter { !it.isDir && it.isDocument }
-				}
+				FileCategory.All -> entries
+				FileCategory.Image -> entries.filter { !it.isDir && it.isImage }
+				FileCategory.Video -> entries.filter { !it.isDir && it.isVideo }
+				FileCategory.Document -> entries.filter { !it.isDir && it.isDocument }
 				FileCategory.Audio -> entries.filter { !it.isDir && it.isAudio }
 				FileCategory.Archive -> entries.filter { !it.isDir && it.isArchive }
 			}
 
 			val raw = if (searchQuery.isBlank()) baseList else baseList.filter { it.name.contains(searchQuery.trim(), ignoreCase = true) }
 
-			// 夸克排序逻辑：文件夹恒定排在最上方（置顶），内部按用户所选排序（时间优先按对象真实创建时间排序）
+			// 文件夹恒定置顶，内部按所选排序维度排序
 			return when (sortOrder) {
-				SortOrder.ModifiedDesc -> raw.sortedWith(
+				SortOrder.UploadDesc -> raw.sortedWith(
+					compareBy<DavEntry> { !it.isDir }
+						.thenByDescending { it.modified }
+				)
+				SortOrder.UploadAsc -> raw.sortedWith(
+					compareBy<DavEntry> { !it.isDir }
+						.thenBy { it.modified }
+				)
+				SortOrder.CreatedDesc -> raw.sortedWith(
 					compareBy<DavEntry> { !it.isDir }
 						.thenByDescending { it.effectiveDate }
 				)
-				SortOrder.ModifiedAsc -> raw.sortedWith(
+				SortOrder.CreatedAsc -> raw.sortedWith(
 					compareBy<DavEntry> { !it.isDir }
 						.thenBy { it.effectiveDate }
 				)
@@ -1156,7 +1150,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			runCatching {
 				val savedSort = app.prefs.getSortOrder()
 				if (savedSort != null) {
-					val so = SortOrder.valueOf(savedSort)
+					val so = when (savedSort) {
+						"ModifiedDesc" -> SortOrder.UploadDesc
+						"ModifiedAsc" -> SortOrder.UploadAsc
+						else -> SortOrder.valueOf(savedSort)
+					}
 					withContext(Dispatchers.Main) { sortOrder = so }
 				}
 			}
@@ -1198,12 +1196,19 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	fun cycleSortOrder() {
 		sortOrder = when (sortOrder) {
-			SortOrder.ModifiedDesc -> SortOrder.ModifiedAsc
-			SortOrder.ModifiedAsc -> SortOrder.NameAsc
+			SortOrder.UploadDesc -> SortOrder.UploadAsc
+			SortOrder.UploadAsc -> SortOrder.CreatedDesc
+			SortOrder.CreatedDesc -> SortOrder.CreatedAsc
+			SortOrder.CreatedAsc -> SortOrder.NameAsc
 			SortOrder.NameAsc -> SortOrder.SizeDesc
-			SortOrder.SizeDesc -> SortOrder.ModifiedDesc
+			SortOrder.SizeDesc -> SortOrder.UploadDesc
 		}
 		viewModelScope.launch { app.prefs.setSortOrder(sortOrder.name) }
+	}
+
+	fun setSortOrder(order: SortOrder) {
+		sortOrder = order
+		viewModelScope.launch { app.prefs.setSortOrder(order.name) }
 	}
 
 	/**
@@ -1442,8 +1447,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** 批量删除仅撤销已成功路径的上传覆盖，失败项保留并由刷新恢复。 */
 	fun batchDelete(onDone: (Int, Int) -> Unit = { _, _ -> }) {
-		val targets = selectedEntries.toList()
-		if (targets.isEmpty()) return
+		val targets = selectedEntries.toList().filterNot { isProtectedSystemDir(it) }
+		if (targets.isEmpty()) {
+			if (selectedEntries.isNotEmpty()) {
+				uiMessage = "系统相册根目录不允许删除"
+				exitMultiSelect()
+			}
+			return
+		}
 		val targetPaths = targets.map { it.path }.toSet()
 		fun hit(p: String) = targetPaths.any { p == it || p.startsWith("$it/") }
 
@@ -1460,52 +1471,68 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		exitMultiSelect()
 
 		viewModelScope.launch {
-			var okCount = 0
-			var failCount = 0
-			val deleted = mutableListOf<String>()
+			val okCount = java.util.concurrent.atomic.AtomicInteger(0)
+			val failCount = java.util.concurrent.atomic.AtomicInteger(0)
+			val deleted = java.util.Collections.synchronizedList(mutableListOf<String>())
 			val s = app.prefs.current()
 			withContext(Dispatchers.IO) {
 				val c = clientOf(s)
-				for (item in targets) {
-					try {
-						val meta = PhotoMetadataStore.get(item.path)
-						val companionAudio = meta?.audioPath ?: if (!item.isDir && (item.isImage || item.isVideo)) {
-							PhotoMetadataStore.computeCompanionAudioPath(item.path)
-						} else null
+				val sem = Semaphore(6)
+				coroutineScope {
+					targets.map { item ->
+						async {
+							sem.withPermit {
+								try {
+									val meta = PhotoMetadataStore.get(item.path)
+									val companionAudio = meta?.audioPath ?: if (!item.isDir && item.hasAudio) {
+										PhotoMetadataStore.computeCompanionAudioPath(item.path)
+									} else null
 
-						c.delete(item.path, item.isDir)
-						if (!companionAudio.isNullOrEmpty()) {
-							runCatching { c.delete(companionAudio, false) }
+									c.delete(item.path, item.isDir)
+									if (!companionAudio.isNullOrEmpty()) {
+										runCatching { c.delete(companionAudio, false) }
+									}
+									okCount.incrementAndGet()
+									deleted += item.path
+								} catch (e: Exception) {
+									if (e is CancellationException) throw e
+									Log.w("BrowserViewModel", "批量删除失败 path=${item.path}", e)
+									failCount.incrementAndGet()
+								}
+							}
 						}
-						okCount++
-						deleted += item.path
-					} catch (e: Exception) {
-						if (e is CancellationException) throw e
-						Log.w("BrowserViewModel", "批量删除失败 path=${item.path}", e)
-						failCount++
-					}
+					}.awaitAll()
 				}
 			}
 			dirCache.clear()
-			LocalThumbs.forget(*deleted.toTypedArray())
+			val deletedSnap = deleted.toList()
+			LocalThumbs.forget(*deletedSnap.toTypedArray())
 			val db = NasDb.getInstance(app)
-			deleted.forEach { p ->
+			deletedSnap.forEach { p ->
 				PhotoMetadataStore.delete(p)
 				db.clearVideoProgress(p)
 				db.clearIconIfMatching(p)
 			}
 			folderIcons = db.getAllFolderIcons()
-			pruneMediaPools(deleted)
-			onDone(okCount, failCount)
-			if (failCount > 0) uiMessage = "删除完成：成功 $okCount 项，失败 $failCount 项"
-			refresh()
+			pruneMediaPools(deletedSnap)
+			val ok = okCount.get()
+			val fail = failCount.get()
+			onDone(ok, fail)
+			if (fail > 0) uiMessage = "删除完成：成功 $ok 项，失败 $fail 项"
+			refreshSilent()
 		}
 	}
 
 	/** 批量移动仅撤销成功项的旧路径，失败项仍可见。 */
 	fun batchMove(targetDir: String, onDone: (Int, Int) -> Unit = { _, _ -> }) {
-		val targets = selectedEntries.toList()
-		if (targets.isEmpty()) return
+		val targets = selectedEntries.toList().filterNot { isProtectedSystemDir(it) }
+		if (targets.isEmpty()) {
+			if (selectedEntries.isNotEmpty()) {
+				uiMessage = "系统相册根目录不允许移动"
+				exitMultiSelect()
+			}
+			return
+		}
 		val paths = targets.map { it.path }
 		val pathSet = paths.toSet()
 		fun hit(p: String) = pathSet.any { p == it || p.startsWith("$it/") }
@@ -1521,35 +1548,45 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		if (hit(selectedMediaPath)) selectedMediaPath = ""
 		exitMultiSelect()
 		viewModelScope.launch {
-			var okCount = 0
-			var failCount = 0
-			val moved = mutableListOf<String>()
+			val okCount = java.util.concurrent.atomic.AtomicInteger(0)
+			val failCount = java.util.concurrent.atomic.AtomicInteger(0)
+			val moved = java.util.Collections.synchronizedList(mutableListOf<String>())
 			val s = app.prefs.current()
 			withContext(Dispatchers.IO) {
 				val c = clientOf(s)
-				for (item in targets) {
-					try {
-						c.move(item.path, join(targetDir, item.name))
-						okCount++
-						moved += item.path
-					} catch (e: Exception) {
-						if (e is CancellationException) throw e
-						Log.w("BrowserViewModel", "批量移动失败 path=${item.path} targetDir=$targetDir", e)
-						failCount++
-					}
+				val sem = Semaphore(6)
+				coroutineScope {
+					targets.map { item ->
+						async {
+							sem.withPermit {
+								try {
+									c.move(item.path, join(targetDir, item.name))
+									okCount.incrementAndGet()
+									moved += item.path
+								} catch (e: Exception) {
+									if (e is CancellationException) throw e
+									Log.w("BrowserViewModel", "批量移动失败 path=${item.path} targetDir=$targetDir", e)
+									failCount.incrementAndGet()
+								}
+							}
+						}
+					}.awaitAll()
 				}
 			}
 			dirCache.clear()
-			LocalThumbs.forget(*moved.toTypedArray())
-			moved.forEach { p ->
+			val movedSnap = moved.toList()
+			LocalThumbs.forget(*movedSnap.toTypedArray())
+			movedSnap.forEach { p ->
 				val dest = join(targetDir, p.substringAfterLast('/'))
 				PhotoMetadataStore.move(p, dest)
 			}
-			pruneMediaPools(moved)
+			pruneMediaPools(movedSnap)
 			mediaDirty = true
 			refreshSilent()
-			if (failCount > 0) uiMessage = "移动完成：成功 $okCount 项，失败 $failCount 项"
-			onDone(okCount, failCount)
+			val ok = okCount.get()
+			val fail = failCount.get()
+			if (fail > 0) uiMessage = "移动完成：成功 $ok 项，失败 $fail 项"
+			onDone(ok, fail)
 		}
 	}
 
@@ -2069,11 +2106,24 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
+	fun isProtectedSystemDir(entry: DavEntry): Boolean {
+		val p = entry.path.trim('/')
+		return entry.isDir && (
+			p.equals("Photos", ignoreCase = true) ||
+				p.equals("Photos/默认相册", ignoreCase = true) ||
+				entry.name == "默认相册" ||
+				entry.name == "默认影集" ||
+				entry.name == "默认影音" ||
+				p == "movies/默认影集" ||
+				p == "movies/默认影音"
+			)
+	}
+
 	/** 删除成功后同步撤销跨页面的上传覆盖；删除失败不使原文件的上传记录失效。 */
 	fun delete(entry: DavEntry, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
-		if (entry.name == "默认相册" || entry.name == "默认影集" || entry.name == "默认影音" || entry.path == "Photos/默认相册" || entry.path == "movies/默认影集" || entry.path == "movies/默认影音") {
-			uiMessage = "默认系统目录不允许删除"
-			onResult(false, "默认系统目录不允许删除")
+		if (isProtectedSystemDir(entry)) {
+			uiMessage = "系统相册根目录不允许删除"
+			onResult(false, "系统相册根目录不允许删除")
 			return
 		}
 		val p = entry.path
@@ -2133,9 +2183,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	fun rename(entry: DavEntry, newName: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
-		if (entry.name == "默认相册" || entry.name == "默认影集" || entry.name == "默认影音" || entry.path == "Photos/默认相册" || entry.path == "movies/默认影集" || entry.path == "movies/默认影音") {
-			uiMessage = "默认系统目录不允许修改"
-			onResult(false, "默认系统目录不允许修改")
+		if (isProtectedSystemDir(entry)) {
+			uiMessage = "系统相册根目录不允许修改"
+			onResult(false, "系统相册根目录不允许修改")
 			return
 		}
 		val dest = join(entry.path.substringBeforeLast('/', ""), newName)
@@ -2185,6 +2235,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	 * "提示已移动成功，但文件还在原地"。
 	 */
 	fun move(entry: DavEntry, targetDir: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+		if (isProtectedSystemDir(entry)) {
+			uiMessage = "系统相册根目录不允许移动"
+			onResult(false, "系统相册根目录不允许移动")
+			return
+		}
 		val dest = join(targetDir, entry.name)
 		// 乐观：当前列表里立刻消失，避免"点完没有任何反应"的错觉
 		entries = entries.filterNot { it.path == entry.path }
@@ -2369,7 +2424,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 		}
 
-		val rootEntries = loadDirectory("")
+		var rootEntries = loadDirectory("")
+		// 若存在旧版 movies 目录，自动将内容平滑迁移至 Photos/ 下并删除 movies 文件夹
+		val moviesRoot = rootEntries.firstOrNull { it.isDir && it.name.equals("movies", ignoreCase = true) }
+		if (moviesRoot != null) {
+			migrateMoviesToPhotos(moviesRoot.path)
+			dirCache.remove("")
+			rootEntries = loadDirectory("")
+		}
 		val albums = mutableListOf<DavEntry>()
 		val mediaAlbums = mutableListOf<DavEntry>()
 		val allDocs = mutableListOf<DavEntry>()
@@ -2417,6 +2479,64 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		allMediaFolders = sortAlbums(distinctMedia, mediaOrder)
 		withContext(Dispatchers.Main) {
 			allDocuments = (allDocuments + allDocs).distinctBy { it.path }
+		}
+	}
+
+	/** 将旧版 movies 目录平滑迁移至 Photos 下并清理空的 movies 根目录 */
+	private suspend fun migrateMoviesToPhotos(moviesPath: String) {
+		withContext(Dispatchers.IO) {
+			try {
+				val c = clientOf(app.prefs.current())
+				runCatching { c.mkcol("Photos") }
+				val items = runCatching { c.list(moviesPath) }.getOrNull() ?: return@withContext
+				var allMigrated = true
+				for (item in items) {
+					if (item.name == ".thumbnails") {
+						runCatching { c.delete(item.path, true) }
+						continue
+					}
+					if (item.isDir && (item.name == "默认影集" || item.name == "默认影音")) {
+						runCatching { c.mkcol("Photos/默认相册") }
+						val subItems = runCatching { c.list(item.path) }.getOrNull().orEmpty()
+						for (sub in subItems) {
+							if (sub.name == ".thumbnails") {
+								runCatching { c.delete(sub.path, true) }
+								continue
+							}
+							val dest = "Photos/默认相册/${sub.name}"
+							val ok = runCatching { c.move(sub.path, dest) }.isSuccess
+							if (ok) {
+								if (sub.isDir) PhotoMetadataStore.moveDir(sub.path, dest)
+								else PhotoMetadataStore.move(sub.path, dest)
+							} else {
+								allMigrated = false
+							}
+						}
+						if (allMigrated) {
+							runCatching { c.delete(item.path, true) }
+						}
+					} else {
+						val dest = "Photos/${item.name}"
+						val ok = runCatching { c.move(item.path, dest) }.isSuccess
+						if (ok) {
+							if (item.isDir) PhotoMetadataStore.moveDir(item.path, dest)
+							else PhotoMetadataStore.move(item.path, dest)
+						} else {
+							allMigrated = false
+						}
+					}
+				}
+				if (allMigrated) {
+					val remaining = runCatching { c.list(moviesPath) }.getOrNull().orEmpty()
+						.filterNot { it.name.startsWith(".") }
+					if (remaining.isEmpty()) {
+						runCatching { c.delete(moviesPath, true) }
+					}
+				}
+			} catch (e: Exception) {
+				if (e is CancellationException) throw e
+				Log.w("BrowserViewModel", "迁移 movies 目录失败", e)
+			}
 		}
 	}
 

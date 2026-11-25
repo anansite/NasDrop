@@ -278,6 +278,7 @@ fun BrowserScreen(
 	var showNetSheet by remember { mutableStateOf(false) }
 
 	var activeCreateType by remember { mutableStateOf<CreateDialogType?>(null) }
+	var showUploadTargetConfirm by remember { mutableStateOf(false) }
 	var activeFolderForDelete by remember { mutableStateOf<Pair<DavEntry, Boolean>?>(null) }
 	var showBatchDeleteConfirm by remember { mutableStateOf(false) }
 	var showBatchMoveSheet by remember { mutableStateOf(false) }
@@ -336,6 +337,12 @@ fun BrowserScreen(
 		}
 	}
 
+	LaunchedEffect(mode) {
+		if (mode == BrowserMode.Pick) {
+			vm.currentTab = MainTab.Files
+		}
+	}
+
 	Scaffold(
 		containerColor = MaterialTheme.colorScheme.background,
 		bottomBar = {},
@@ -349,8 +356,9 @@ fun BrowserScreen(
 			Column(
 				modifier = Modifier.fillMaxSize(),
 			) {
+				val effectiveTab = if (mode == BrowserMode.Pick) MainTab.Files else vm.currentTab
 				// 各 Tab 专属顶栏：首页展示 NAS 概况与连接；文件/相册各司其职
-				when (vm.currentTab) {
+				when (effectiveTab) {
 					MainTab.Home -> {
 						HomeTopBar(
 							vm = vm,
@@ -458,18 +466,19 @@ fun BrowserScreen(
 				}
 
 			LaunchedEffect(vm.currentTab) {
-				if (vm.currentTab == MainTab.Photos || vm.currentTab == MainTab.Media) {
+				if (mode != BrowserMode.Pick && (vm.currentTab == MainTab.Photos || vm.currentTab == MainTab.Media)) {
 					vm.ensureMediaScanned()
 				}
 			}
 
 			// 主内容区域根据 Tab 呈现
 			Box(modifier = Modifier.weight(1f)) {
-				val mediaTab = vm.currentTab == MainTab.Photos || vm.currentTab == MainTab.Media
+				val effectiveTab = if (mode == BrowserMode.Pick) MainTab.Files else vm.currentTab
+				val mediaTab = effectiveTab == MainTab.Photos || effectiveTab == MainTab.Media
 				val contentError = if (mediaTab) vm.mediaError else vm.error
 				val initialLoading = (if (mediaTab) vm.mediaScanning else vm.loading) && vm.currentTabEntries.isEmpty()
 				when {
-					vm.currentTab == MainTab.Settings -> {
+					effectiveTab == MainTab.Settings -> {
 						SettingsScreen(
 							vm = vm,
 							onBack = { vm.currentTab = MainTab.Home },
@@ -506,7 +515,7 @@ fun BrowserScreen(
 							)
 						}
 					}
-					else -> when (vm.currentTab) {
+					else -> when (effectiveTab) {
 						MainTab.Home -> {
 							HomeScreenContent(
 								vm = vm,
@@ -646,15 +655,7 @@ fun BrowserScreen(
 				if (!vm.isMultiSelectMode && mode == BrowserMode.Browse && vm.currentTab != MainTab.Home) {
 					DraggableUploadFab(
 						currentTab = vm.currentTab,
-						onUploadFile = { launchSystemUpload(vm.path) },
-						onUploadPhoto = {
-							val target = if (vm.selectedAlbumPath.isNotBlank() && vm.selectedAlbumPath != "__ALL_FOLDERS__") vm.selectedAlbumPath else "Photos/默认相册"
-							launchSystemUpload(target)
-						},
-						onUploadVideo = {
-							val target = if (vm.selectedMediaPath.isNotBlank() && vm.selectedMediaPath != "__ALL_FOLDERS__") vm.selectedMediaPath else "movies/默认影集"
-							launchSystemUpload(target)
-						},
+						onClickUpload = { showUploadTargetConfirm = true },
 					)
 				}
 
@@ -832,10 +833,12 @@ fun BrowserScreen(
 
 	// 1. 统一底部文件操作抽屉
 	activeEntryForAction?.let { entry ->
+		val isProtected = vm.isProtectedSystemDir(entry)
 		ActionBottomSheet(
 			entry = entry,
 			urlOf = { vm.thumbnailUrlFor(it) },
 			customIconKey = if (entry.isDir) vm.folderIcons[entry.path.trim('/')] else null,
+			isProtected = isProtected,
 			onDismiss = { activeEntryForAction = null },
 			onDownload = {
 				activeEntryForAction = null
@@ -862,6 +865,55 @@ fun BrowserScreen(
 					activeEntryForIconPicker = target
 				}
 			} else null,
+		)
+	}
+
+	// 上传目标文件夹确认提示弹窗（点击吸附在边框的上传按钮后弹出，友好展示将要上传的目录）
+	if (showUploadTargetConfirm) {
+		val (targetPath, targetDisplayName, targetHint) = when (vm.currentTab) {
+			MainTab.Photos, MainTab.Home -> {
+				if (vm.selectedAlbumPath.isNotBlank() && vm.selectedAlbumPath != "__ALL_FOLDERS__") {
+					val albumName = vm.allAlbumFolders.firstOrNull { it.path == vm.selectedAlbumPath }?.displayName
+						?: vm.selectedAlbumPath.substringAfterLast('/')
+					Triple(vm.selectedAlbumPath, albumName, "当前位于「$albumName」相册，文件将存入此相册")
+				} else {
+					Triple("Photos/默认相册", "默认相册 (Photos/默认相册)", "当前位于相册根目录，文件将统一存入「默认相册」")
+				}
+			}
+			MainTab.Files -> {
+				if (vm.path.isBlank()) {
+					Triple("", "NAS 根目录 (/)", "当前位于全部文件根目录，文件将直接存入根目录")
+				} else {
+					val folderName = vm.path.trim('/').substringAfterLast('/')
+					Triple(vm.path, "$folderName (/${vm.path.trim('/')})", "当前位于「$folderName」文件夹，文件将存入此目录")
+				}
+			}
+			else -> Triple("Photos/默认相册", "默认相册", "文件将存入「默认相册」")
+		}
+		AlertDialog(
+			onDismissRequest = { showUploadTargetConfirm = false },
+			icon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+			title = { Text("上传到「$targetDisplayName」", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+			text = {
+				Text(
+					targetHint,
+					style = MaterialTheme.typography.bodyMedium,
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+				)
+			},
+			confirmButton = {
+				Button(onClick = {
+					showUploadTargetConfirm = false
+					launchSystemUpload(targetPath)
+				}) {
+					Text("选择文件上传")
+				}
+			},
+			dismissButton = {
+				TextButton(onClick = { showUploadTargetConfirm = false }) {
+					Text("取消")
+				}
+			},
 		)
 	}
 
@@ -1564,7 +1616,7 @@ private fun PhotosTopBar(
 	onShowNetworkSheet: () -> Unit = {},
 ) {
 	val (title, subtitle, isInside) = when (selectedAlbumPath) {
-		"__ALL_FOLDERS__" -> Triple("全部相册", if (allAlbumsCount > 0) "$allAlbumsCount 个相册" else "相册分类总览", true)
+		"__ALL_FOLDERS__" -> Triple("相册", if (allAlbumsCount > 0) "$allAlbumsCount 个相册" else "相册分类总览", true)
 		"" -> Triple("云端相册", "$count 张照片", false)
 		else -> {
 			val name = selectedAlbumPath.substringAfterLast('/')
@@ -2002,7 +2054,8 @@ private fun FilesTopBar(
 			}
 		}
 
-		// 排序与视图切换紧凑行：消除多余上下留白
+		// 排序、新建文件夹与视图切换紧凑行
+		var sortMenuOpen by remember { mutableStateOf(false) }
 		Row(
 			Modifier
 				.fillMaxWidth()
@@ -2010,25 +2063,68 @@ private fun FilesTopBar(
 				.padding(horizontal = 14.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
-			Surface(
-				shape = RoundedCornerShape(6.dp),
-				color = Color.Transparent,
-				onClick = { vm.cycleSortOrder() },
-			) {
-				Row(
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(4.dp),
-					modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+			Box {
+				Surface(
+					shape = RoundedCornerShape(6.dp),
+					color = Color.Transparent,
+					onClick = { sortMenuOpen = true },
 				) {
-					Text(
-						vm.sortOrder.label,
-						fontSize = 12.sp,
-						fontWeight = FontWeight.Medium,
-						color = MaterialTheme.colorScheme.onSurfaceVariant,
-					)
+					Row(
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(4.dp),
+						modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+					) {
+						Text(
+							vm.sortOrder.label,
+							fontSize = 12.sp,
+							fontWeight = FontWeight.Medium,
+							color = MaterialTheme.colorScheme.onSurfaceVariant,
+						)
+						Icon(
+							Icons.Rounded.KeyboardArrowDown,
+							contentDescription = "选择排序方式",
+							modifier = Modifier.size(14.dp),
+							tint = MaterialTheme.colorScheme.onSurfaceVariant,
+						)
+					}
+				}
+				DropdownMenu(
+					expanded = sortMenuOpen,
+					onDismissRequest = { sortMenuOpen = false },
+				) {
+					SortOrder.entries.forEach { order ->
+						DropdownMenuItem(
+							text = {
+								Text(
+									order.label,
+									fontWeight = if (order == vm.sortOrder) FontWeight.Bold else FontWeight.Normal,
+									color = if (order == vm.sortOrder) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+								)
+							},
+							trailingIcon = if (order == vm.sortOrder) {
+								{ Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp)) }
+							} else null,
+							onClick = {
+								vm.setSortOrder(order)
+								sortMenuOpen = false
+							},
+						)
+					}
 				}
 			}
 			Spacer(Modifier.weight(1f))
+			IconButton(
+				onClick = onCreateFolder,
+				modifier = Modifier.size(32.dp),
+			) {
+				Icon(
+					Icons.Rounded.CreateNewFolder,
+					contentDescription = "新建文件夹",
+					modifier = Modifier.size(18.dp),
+					tint = MaterialTheme.colorScheme.onSurfaceVariant,
+				)
+			}
+			Spacer(Modifier.width(4.dp))
 			IconButton(
 				onClick = onToggleMultiSelect,
 				modifier = Modifier.size(32.dp),
@@ -3158,9 +3254,18 @@ private fun HomeScreenContent(
 					modifier = Modifier.fillMaxWidth(),
 				) {
 					Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+						val headerTimeText by androidx.compose.runtime.produceState(
+							initialValue = SimpleDateFormat("MM月dd日 HH:mm", Locale.CHINA).format(Date())
+						) {
+							while (true) {
+								value = SimpleDateFormat("MM月dd日 HH:mm", Locale.CHINA).format(Date())
+								delay(30_000L)
+							}
+						}
 						Row(
 							modifier = Modifier.fillMaxWidth(),
 							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.SpaceBetween,
 						) {
 							Row(
 								verticalAlignment = Alignment.CenterVertically,
@@ -3178,6 +3283,12 @@ private fun HomeScreenContent(
 									fontWeight = FontWeight.Bold,
 								)
 							}
+							Text(
+								text = headerTimeText,
+								style = MaterialTheme.typography.bodySmall,
+								fontSize = 12.sp,
+								color = MaterialTheme.colorScheme.onSurfaceVariant,
+							)
 						}
 
 						Row(
@@ -3598,75 +3709,70 @@ private fun PhotoTimelineContent(
 			horizontalArrangement = Arrangement.spacedBy(8.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
-			// 位置 1: "全部相册" 胶囊
+			// 系统预置双视图切换（无图标、高区分度分段样式：相册 / 时光轴）
 			item {
 				val isFolders = selectedAlbumPath == "__ALL_FOLDERS__"
+				val isAll = selectedAlbumPath.isBlank()
 				Surface(
 					modifier = Modifier.height(34.dp),
-					shape = RoundedCornerShape(17.dp),
-					color = if (isFolders) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-					border = BorderStroke(
-						1.dp,
-						if (isFolders) Color.Transparent
-						else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-					),
-					shadowElevation = if (isFolders) 2.dp else 0.dp,
-					onClick = { onSelectAlbum("__ALL_FOLDERS__") },
+					shape = RoundedCornerShape(10.dp),
+					color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+					border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
 				) {
 					Row(
-						modifier = Modifier.fillMaxHeight().padding(horizontal = 11.dp),
+						modifier = Modifier.fillMaxHeight().padding(2.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(5.dp),
+						horizontalArrangement = Arrangement.spacedBy(2.dp),
 					) {
-						Icon(
-							Icons.Rounded.FolderCopy,
-							contentDescription = null,
-							tint = if (isFolders) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-							modifier = Modifier.size(15.dp)
-						)
-						Text(
-							"全部相册",
-							fontSize = 12.sp,
-							fontWeight = if (isFolders) FontWeight.Bold else FontWeight.Medium,
-							color = if (isFolders) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-						)
+						Surface(
+							modifier = Modifier.fillMaxHeight(),
+							shape = RoundedCornerShape(8.dp),
+							color = if (isFolders) MaterialTheme.colorScheme.primary else Color.Transparent,
+							onClick = { onSelectAlbum("__ALL_FOLDERS__") },
+						) {
+							Box(
+								modifier = Modifier.fillMaxHeight().padding(horizontal = 12.dp),
+								contentAlignment = Alignment.Center,
+							) {
+								Text(
+									"相册",
+									fontSize = 12.sp,
+									fontWeight = if (isFolders) FontWeight.Bold else FontWeight.Medium,
+									color = if (isFolders) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+								)
+							}
+						}
+						Surface(
+							modifier = Modifier.fillMaxHeight(),
+							shape = RoundedCornerShape(8.dp),
+							color = if (isAll) MaterialTheme.colorScheme.primary else Color.Transparent,
+							onClick = { onSelectAlbum("") },
+						) {
+							Box(
+								modifier = Modifier.fillMaxHeight().padding(horizontal = 12.dp),
+								contentAlignment = Alignment.Center,
+							) {
+								Text(
+									"时光轴",
+									fontSize = 12.sp,
+									fontWeight = if (isAll) FontWeight.Bold else FontWeight.Medium,
+									color = if (isAll) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+								)
+							}
+						}
 					}
 				}
 			}
 
-			// 位置 2: "全部照片" 胶囊（紧凑精炼，不占首屏）
-			item {
-				val isAll = selectedAlbumPath.isBlank()
-				Surface(
-					modifier = Modifier.height(34.dp),
-					shape = RoundedCornerShape(17.dp),
-					color = if (isAll) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-					border = BorderStroke(
-						1.dp,
-						if (isAll) Color.Transparent
-						else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-					),
-					shadowElevation = if (isAll) 2.dp else 0.dp,
-					onClick = { onSelectAlbum("") },
-				) {
-					Row(
-						modifier = Modifier.fillMaxHeight().padding(horizontal = 11.dp),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(5.dp),
-					) {
-						Icon(
-							Icons.Rounded.PhotoLibrary,
-							contentDescription = null,
-							tint = if (isAll) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-							modifier = Modifier.size(15.dp)
-						)
-						Text(
-							"全部照片",
-							fontSize = 12.sp,
-							fontWeight = if (isAll) FontWeight.Bold else FontWeight.Medium,
-							color = if (isAll) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-						)
-					}
+			// 系统预置区与用户自定义相册分隔线
+			if (displayAlbums.isNotEmpty()) {
+				item {
+					Box(
+						modifier = Modifier
+							.width(1.dp)
+							.height(18.dp)
+							.background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+					)
 				}
 			}
 
@@ -6079,6 +6185,7 @@ private fun ActionBottomSheet(
 	entry: DavEntry,
 	urlOf: (String) -> String?,
 	customIconKey: String? = null,
+	isProtected: Boolean = false,
 	onDismiss: () -> Unit,
 	onDownload: () -> Unit,
 	onMove: () -> Unit,
@@ -6132,9 +6239,21 @@ private fun ActionBottomSheet(
 						tint = MaterialTheme.colorScheme.primary,
 					)
 				}
-				ActionSheetBtn(icon = Icons.Rounded.DriveFileMove, label = "移动文件", onClick = onMove)
-				ActionSheetBtn(icon = Icons.Rounded.DriveFileRenameOutline, label = "重命名", onClick = onRename)
-				ActionSheetBtn(icon = Icons.Rounded.Delete, label = "彻底删除", onClick = onDelete, tint = MaterialTheme.colorScheme.error)
+				if (!isProtected) {
+					ActionSheetBtn(icon = Icons.Rounded.DriveFileMove, label = "移动文件", onClick = onMove)
+					ActionSheetBtn(icon = Icons.Rounded.DriveFileRenameOutline, label = "重命名", onClick = onRename)
+					ActionSheetBtn(icon = Icons.Rounded.Delete, label = "彻底删除", onClick = onDelete, tint = MaterialTheme.colorScheme.error)
+				}
+			}
+
+			if (isProtected) {
+				Spacer(modifier = Modifier.height(10.dp))
+				Text(
+					"系统相册根目录受保护，仅支持内部子目录操作",
+					fontSize = 11.5.sp,
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+					modifier = Modifier.align(Alignment.CenterHorizontally),
+				)
 			}
 
 			Spacer(modifier = Modifier.height(24.dp))
@@ -6657,9 +6776,7 @@ internal fun formatDate(millis: Long): String {
 @Composable
 private fun DraggableUploadFab(
 	currentTab: MainTab,
-	onUploadFile: () -> Unit,
-	onUploadPhoto: () -> Unit,
-	onUploadVideo: () -> Unit,
+	onClickUpload: () -> Unit,
 ) {
 	if (currentTab == MainTab.Home || currentTab == MainTab.Me || currentTab == MainTab.Settings) return
 
@@ -6668,63 +6785,81 @@ private fun DraggableUploadFab(
 		val boxWidthPx = constraints.maxWidth.toFloat()
 		val boxHeightPx = constraints.maxHeight.toFloat()
 
-		val fabSizeDp = 52.dp
-		val fabSizePx = with(density) { fabSizeDp.toPx() }
-		val marginPx = with(density) { 16.dp.toPx() }
-		val bottomMarginPx = with(density) { 92.dp.toPx() }
+		val tabWidthDp = 46.dp
+		val tabHeightDp = 48.dp
+		val tabWidthPx = with(density) { tabWidthDp.toPx() }
+		val tabHeightPx = with(density) { tabHeightDp.toPx() }
+		val topMarginPx = with(density) { 16.dp.toPx() }
+		val bottomMarginPx = with(density) { 96.dp.toPx() }
 
-		// 默认吸附在可视区右下角：距离右边缘 16dp，距离底部（高于悬浮毛玻璃底栏）92dp
-		var offsetX by remember(boxWidthPx) { mutableFloatStateOf((boxWidthPx - fabSizePx - marginPx).coerceAtLeast(0f)) }
-		var offsetY by remember(boxHeightPx) { mutableFloatStateOf((boxHeightPx - fabSizePx - bottomMarginPx).coerceAtLeast(0f)) }
+		// 默认贴紧右边框（吸附在屏幕边缘，不遮挡中间内容）
+		var dockedRight by remember { mutableStateOf(true) }
+		var dragOffsetX by remember(boxWidthPx) { mutableFloatStateOf((boxWidthPx - tabWidthPx).coerceAtLeast(0f)) }
+		var offsetY by remember(boxHeightPx) { mutableFloatStateOf((boxHeightPx - tabHeightPx - bottomMarginPx).coerceAtLeast(topMarginPx)) }
 		var isDragging by remember { mutableStateOf(false) }
 
-		val (bgColor, icon, label) = when (currentTab) {
-			MainTab.Home -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.FileUpload, "快速上传")
-			MainTab.Files -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.FileUpload, "上传文件")
-			MainTab.Photos -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.FileUpload, "上传照片")
-			MainTab.Media -> Triple(MaterialTheme.colorScheme.primary, Icons.Rounded.FileUpload, "上传视频")
-			MainTab.Settings, MainTab.Me -> Triple(Color.Transparent, Icons.Rounded.Add, "")
+		val targetX = if (isDragging) {
+			dragOffsetX.coerceIn(0f, (boxWidthPx - tabWidthPx).coerceAtLeast(0f))
+		} else {
+			if (dockedRight) (boxWidthPx - tabWidthPx).coerceAtLeast(0f) else 0f
+		}
+		val animatedX by animateFloatAsState(
+			targetValue = targetX,
+			animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+			label = "upload_edge_dock_x",
+		)
+
+		val label = when (currentTab) {
+			MainTab.Files -> "上传文件"
+			MainTab.Photos -> "上传照片"
+			else -> "上传"
+		}
+		val dockShape = if (dockedRight && !isDragging) {
+			RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)
+		} else if (!dockedRight && !isDragging) {
+			RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp)
+		} else {
+			CircleShape
 		}
 
 		Surface(
-			shape = CircleShape,
-			color = bgColor,
+			shape = dockShape,
+			color = MaterialTheme.colorScheme.primary,
 			shadowElevation = if (isDragging) 12.dp else 6.dp,
 			modifier = Modifier
 				.offset {
-					val curX = offsetX.coerceIn(marginPx, (boxWidthPx - fabSizePx - marginPx).coerceAtLeast(marginPx))
-					val curY = offsetY.coerceIn(marginPx, (boxHeightPx - fabSizePx - bottomMarginPx).coerceAtLeast(marginPx))
-					IntOffset(curX.roundToInt(), curY.roundToInt())
+					val curY = offsetY.coerceIn(topMarginPx, (boxHeightPx - tabHeightPx - bottomMarginPx).coerceAtLeast(topMarginPx))
+					IntOffset(animatedX.roundToInt(), curY.roundToInt())
 				}
-				.size(fabSizeDp)
+				.size(width = tabWidthDp, height = tabHeightDp)
 				.pointerInput(currentTab, boxWidthPx, boxHeightPx) {
 					detectDragGestures(
-						onDragStart = { isDragging = true },
+						onDragStart = {
+							isDragging = true
+							dragOffsetX = animatedX
+						},
 						onDragEnd = {
 							isDragging = false
-							val centerX = offsetX + fabSizePx / 2
-							offsetX = if (centerX < boxWidthPx / 2) marginPx else (boxWidthPx - fabSizePx - marginPx)
+							val centerX = dragOffsetX + tabWidthPx / 2f
+							dockedRight = centerX >= boxWidthPx / 2f
 						},
 						onDragCancel = { isDragging = false },
 						onDrag = { change, dragAmount ->
 							change.consume()
-							offsetX = (offsetX + dragAmount.x).coerceIn(marginPx, boxWidthPx - fabSizePx - marginPx)
-							offsetY = (offsetY + dragAmount.y).coerceIn(marginPx, boxHeightPx - fabSizePx - bottomMarginPx)
+							dragOffsetX = (dragOffsetX + dragAmount.x).coerceIn(0f, (boxWidthPx - tabWidthPx).coerceAtLeast(0f))
+							offsetY = (offsetY + dragAmount.y).coerceIn(topMarginPx, (boxHeightPx - tabHeightPx - bottomMarginPx).coerceAtLeast(topMarginPx))
 						}
 					)
 				}
-				.clickable {
-					when (currentTab) {
-						MainTab.Home -> onUploadPhoto()
-						MainTab.Files -> onUploadFile()
-						MainTab.Photos -> onUploadPhoto()
-						MainTab.Media -> onUploadVideo()
-						MainTab.Settings, MainTab.Me -> {}
-					}
-				},
+				.clickable { onClickUpload() },
 		) {
 			Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-					Icon(imageVector = icon, contentDescription = label, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(24.dp))
+				Icon(
+					imageVector = Icons.Rounded.FileUpload,
+					contentDescription = label,
+					tint = MaterialTheme.colorScheme.onPrimary,
+					modifier = Modifier.size(22.dp),
+				)
 			}
 		}
 	}

@@ -50,17 +50,20 @@ object MediaExifHelper {
 		okHttpClient: OkHttpClient?,
 	): MediaExifData? = withContext(Dispatchers.IO) {
 		try {
-			// 1. 优先尝试本地已有磁盘文件（Coil disk cache 或 local_thumbs）
-			val localFile = findLocalFile(context, entry, url)
+			// 1. 仅尝试本地原图磁盘缓存（绝不使用 LocalThumbs / thumb: 缩略图缓存，因为缩略图已剥离 EXIF 与 GPS）
+			val localFile = findLocalOriginalFile(context, url)
 			if (localFile != null && localFile.exists() && localFile.length() > 0) {
-				return@withContext parseExifFromFile(localFile)
+				val parsed = parseExifFromFile(localFile)
+				if (parsed != null && (parsed.hasShootingParams || parsed.hasGps)) {
+					return@withContext parsed
+				}
 			}
 
-			// 2. 否则通过 HTTP Range 请求极速抓取图片头部 64KB（JPEG/HEIC 的 EXIF 位于头部 APP1），仅消耗微量网络且 <100ms
+			// 2. 通过 HTTP Range 请求极速抓取原图头部 256KB（兼容 JPEG/HEIC 等含较大 XMP/MakerNote 的 APP1 头）
 			if (!url.isNullOrBlank() && okHttpClient != null) {
 				val req = Request.Builder()
 					.url(url)
-					.header("Range", "bytes=0-65535")
+					.header("Range", "bytes=0-262143")
 					.build()
 				try {
 					okHttpClient.newCall(req).execute().use { resp ->
@@ -81,11 +84,11 @@ object MediaExifHelper {
 		}
 	}
 
-	private fun findLocalFile(context: Context, entry: DavEntry, url: String?): File? {
-		LocalThumbs.get(entry.path)?.let { if (it.exists()) return it }
+	private fun findLocalOriginalFile(context: Context, url: String?): File? {
+		if (url.isNullOrBlank()) return null
 		try {
 			val diskCache = context.app.repo.imageLoader.diskCache
-			val snap = diskCache?.openSnapshot("thumb:${entry.path}") ?: url?.let { diskCache?.openSnapshot(it) }
+			val snap = diskCache?.openSnapshot(url)
 			snap?.use { return it.data.toFile() }
 		} catch (_: Exception) {}
 		return null

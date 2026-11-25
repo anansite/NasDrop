@@ -79,7 +79,6 @@ fun SettingsScreen(
 	var aboutExpanded by remember { mutableStateOf(false) }
 
 	var testing by remember { mutableStateOf(false) }
-	var logs by remember { mutableStateOf<String?>(null) }
 	var checkingUpdate by remember { mutableStateOf(false) }
 	var cacheSizeStr by remember { mutableStateOf("计算中...") }
 	var saving by remember { mutableStateOf(false) }
@@ -859,40 +858,6 @@ fun SettingsScreen(
 				color = colors.outlineVariant.copy(alpha = 0.25f),
 			)
 
-			// 条目 5: 底层网络诊断日志
-			SettingsEntryCard(
-				title = "底层网络诊断日志",
-				summary = "实时查看网络请求抓包、连接跟踪与排错输出",
-				icon = Icons.Rounded.BugReport,
-				iconTint = Color(0xFFF59E0B),
-				isExpanded = false,
-				onToggle = {
-					scope.launch(Dispatchers.IO) {
-						val text = vm.logs().ifEmpty { "（暂无日志）" }
-						withContext(Dispatchers.Main) { logs = text }
-					}
-				},
-				trailingBadge = {
-					Surface(
-						shape = RoundedCornerShape(6.dp),
-						color = Color(0xFFF59E0B).copy(alpha = 0.12f),
-					) {
-						Text(
-							text = "查看日志",
-							fontSize = 10.5.sp,
-							fontWeight = FontWeight.SemiBold,
-							color = Color(0xFFD97706),
-							modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp),
-						)
-					}
-				},
-			) {}
-
-			HorizontalDivider(
-				modifier = Modifier.padding(start = 58.dp),
-				color = colors.outlineVariant.copy(alpha = 0.25f),
-			)
-
 			// 条目 6: 关于与系统版本更新
 			SettingsEntryCard(
 				title = "关于与系统版本",
@@ -1033,14 +998,6 @@ fun SettingsScreen(
 								Icon(Icons.Rounded.Refresh, contentDescription = "刷新系统指标", tint = colors.onSurfaceVariant)
 							}
 						}
-						IconButton(onClick = {
-							scope.launch(Dispatchers.IO) {
-								val text = vm.logs().ifEmpty { "（暂无日志）" }
-								withContext(Dispatchers.Main) { logs = text }
-							}
-						}) {
-							Icon(Icons.Rounded.BugReport, contentDescription = "诊断日志", tint = colors.onSurfaceVariant)
-						}
 					},
 					colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.background),
 				)
@@ -1050,24 +1007,6 @@ fun SettingsScreen(
 				content()
 			}
 		}
-	}
-
-	// 诊断日志弹窗
-	logs?.let { text ->
-		AlertDialog(
-			onDismissRequest = { logs = null },
-			title = { Text("底层网络诊断日志", fontWeight = FontWeight.Bold) },
-			text = {
-				Column(Modifier.height(340.dp).verticalScroll(rememberScrollState())) {
-					Text(
-						text,
-						style = MaterialTheme.typography.bodySmall,
-						fontFamily = FontFamily.Monospace,
-					)
-				}
-			},
-			confirmButton = { TextButton(onClick = { logs = null }) { Text("关闭") } },
-		)
 	}
 }
 
