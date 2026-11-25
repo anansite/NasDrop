@@ -3662,7 +3662,9 @@ private fun CompanionMemoCapsule(
 	modifier: Modifier = Modifier,
 ) {
 	var isExpanded by remember(memo) { mutableStateOf(false) }
+	var hasVisualOverflow by remember(memo) { mutableStateOf(false) }
 	val scrollState = rememberScrollState()
+	val canExpand = hasVisualOverflow || isExpanded
 
 	Surface(
 		shape = RoundedCornerShape(16.dp),
@@ -3673,7 +3675,10 @@ private fun CompanionMemoCapsule(
 			.fillMaxWidth()
 			.clip(RoundedCornerShape(16.dp))
 			.animateContentSize()
-			.clickable { isExpanded = !isExpanded },
+			.then(
+				if (canExpand) Modifier.clickable { isExpanded = !isExpanded }
+				else Modifier
+			),
 	) {
 		Row(
 			modifier = Modifier
@@ -3710,6 +3715,11 @@ private fun CompanionMemoCapsule(
 					color = Color(0xFFF1F5F9),
 					maxLines = if (isExpanded) Int.MAX_VALUE else 2,
 					overflow = if (isExpanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+					onTextLayout = { textLayoutResult ->
+						if (!isExpanded) {
+							hasVisualOverflow = textLayoutResult.hasVisualOverflow || textLayoutResult.didOverflowHeight
+						}
+					},
 				)
 			}
 			Row(
@@ -3728,12 +3738,14 @@ private fun CompanionMemoCapsule(
 						modifier = Modifier.size(18.dp),
 					)
 				}
-				Icon(
-					imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowDown else Icons.Rounded.KeyboardArrowUp,
-					contentDescription = if (isExpanded) "收起" else "展开",
-					tint = Color(0xFF64748B),
-					modifier = Modifier.size(16.dp),
-				)
+				if (canExpand) {
+					Icon(
+						imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowDown else Icons.Rounded.KeyboardArrowUp,
+						contentDescription = if (isExpanded) "收起" else "展开",
+						tint = Color(0xFF64748B),
+						modifier = Modifier.size(16.dp),
+					)
+				}
 			}
 		}
 	}
