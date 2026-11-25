@@ -6795,10 +6795,15 @@ private fun DraggableUploadFab(
 			RoundedCornerShape(topEnd = 21.dp, bottomEnd = 21.dp)
 		}
 
+		val capsuleBgColor by animateColorAsState(
+			targetValue = MaterialTheme.colorScheme.primary.copy(alpha = if (isExpanded || isDragging) 0.96f else 0.36f),
+			label = "upload_edge_dock_color",
+		)
+
 		Surface(
 			shape = dockShape,
-			color = MaterialTheme.colorScheme.primary.copy(alpha = if (isExpanded || isDragging) 0.96f else 0.85f),
-			shadowElevation = if (isDragging || isExpanded) 8.dp else 4.dp,
+			color = capsuleBgColor,
+			shadowElevation = if (isDragging || isExpanded) 8.dp else 1.dp,
 			modifier = Modifier
 				.offset {
 					val curY = offsetY.coerceIn(topMarginPx, (boxHeightPx - tabHeightPx - bottomMarginPx).coerceAtLeast(topMarginPx))
