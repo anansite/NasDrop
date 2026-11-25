@@ -7882,7 +7882,7 @@ private fun PhotoGroupDetailSheet(
 				}
 
 				// 仅在长按拖拽期间于底部浮现「拖到此处移出集锦」热区
-				AnimatedVisibility(
+				androidx.compose.animation.AnimatedVisibility(
 					visible = draggedPath != null,
 					enter = fadeIn() + slideInVertically { it },
 					exit = fadeOut() + slideOutVertically { it },
