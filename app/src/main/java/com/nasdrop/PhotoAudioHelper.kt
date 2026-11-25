@@ -68,6 +68,53 @@ class CompanionAudioPlayer(private val context: Context) {
 			return
 		}
 		currentUrl = audioUrlOrPath
+		if (audioUrlOrPath.startsWith("http://") || audioUrlOrPath.startsWith("https://")) {
+			Thread {
+				try {
+					val cacheDir = File(context.cacheDir, "audio_cache")
+					if (!cacheDir.exists()) cacheDir.mkdirs()
+					val cacheKey = audioUrlOrPath.hashCode().toUInt().toString(16)
+					val cachedFile = File(cacheDir, "dl_$cacheKey.m4a")
+					if (!cachedFile.exists() || cachedFile.length() == 0L) {
+						val client = okhttp3.OkHttpClient.Builder()
+							.followRedirects(true)
+							.followSslRedirects(true)
+							.build()
+						val reqBuilder = okhttp3.Request.Builder().url(audioUrlOrPath)
+						runCatching {
+							val conf = kotlinx.coroutines.runBlocking { context.app.prefs.current() }
+							if (conf.user.isNotBlank() && conf.password.isNotBlank()) {
+								reqBuilder.header("Authorization", okhttp3.Credentials.basic(conf.user, conf.password))
+							}
+						}
+						client.newCall(reqBuilder.build()).execute().use { resp ->
+							if (!resp.isSuccessful) {
+								Log.w("AudioPlayer", "HTTP download failed: ${resp.code} for $audioUrlOrPath")
+								return@Thread
+							}
+							val bytes = resp.body?.bytes()
+							if (bytes == null || bytes.isEmpty()) {
+								Log.w("AudioPlayer", "Empty audio response for $audioUrlOrPath")
+								return@Thread
+							}
+							cachedFile.writeBytes(bytes)
+						}
+					}
+					handler.post {
+						if (currentUrl == audioUrlOrPath) {
+							startLocalMediaPlayer(cachedFile.absolutePath, fallbackDurationMs)
+						}
+					}
+				} catch (e: Exception) {
+					Log.e("AudioPlayer", "Failed to download audio: $audioUrlOrPath", e)
+				}
+			}.start()
+		} else {
+			startLocalMediaPlayer(audioUrlOrPath, fallbackDurationMs)
+		}
+	}
+
+	private fun startLocalMediaPlayer(localPath: String, fallbackDurationMs: Long = 0L) {
 		try {
 			val player = MediaPlayer().apply {
 				setAudioAttributes(
@@ -76,26 +123,7 @@ class CompanionAudioPlayer(private val context: Context) {
 						.setUsage(AudioAttributes.USAGE_MEDIA)
 						.build()
 				)
-				if (audioUrlOrPath.startsWith("http://") || audioUrlOrPath.startsWith("https://")) {
-					val headers = mutableMapOf<String, String>()
-					runCatching {
-						val s = context.app.prefs.settings
-						// 若有认证配置，携带 Basic 凭据以流式播放远端音频
-						kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-							val conf = context.app.prefs.current()
-							if (conf.user.isNotBlank() && conf.password.isNotBlank()) {
-								headers["Authorization"] = okhttp3.Credentials.basic(conf.user, conf.password)
-							}
-						}
-					}
-					if (headers.isNotEmpty()) {
-						setDataSource(context, Uri.parse(audioUrlOrPath), headers)
-					} else {
-						setDataSource(context, Uri.parse(audioUrlOrPath))
-					}
-				} else {
-					setDataSource(audioUrlOrPath)
-				}
+				setDataSource(localPath)
 				setOnPreparedListener { mp ->
 					val dur = if (mp.duration > 0) mp.duration else fallbackDurationMs.toInt()
 					this@CompanionAudioPlayer.durationMs = dur
@@ -118,7 +146,7 @@ class CompanionAudioPlayer(private val context: Context) {
 			}
 			mediaPlayer = player
 		} catch (e: Exception) {
-			Log.e("AudioPlayer", "Failed to start audio playback for $audioUrlOrPath", e)
+			Log.e("AudioPlayer", "Failed to start audio playback for $localPath", e)
 			stop()
 		}
 	}
