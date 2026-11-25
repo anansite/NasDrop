@@ -6836,12 +6836,6 @@ private fun DraggableUploadFab(
 				modifier = Modifier
 					.height(tabHeightDp)
 					.widthIn(min = peekWidthDp, max = (boxWidthDp - 16.dp).coerceAtLeast(peekWidthDp))
-					.animateContentSize(
-						animationSpec = spring(
-							dampingRatio = Spring.DampingRatioNoBouncy,
-							stiffness = Spring.StiffnessMediumLow,
-						)
-					)
 					.pointerInput(currentTab, boxWidthPx, boxHeightPx) {
 						detectDragGestures(
 							onDragStart = {
@@ -6871,31 +6865,42 @@ private fun DraggableUploadFab(
 						}
 					},
 			) {
-				AnimatedContent(
-					targetState = isExpanded,
-					transitionSpec = {
-						fadeIn(tween(180, delayMillis = 40)) togetherWith fadeOut(tween(120))
-					},
-					label = "upload_capsule_content",
-				) { expanded ->
-					if (!expanded) {
+				val horizSpec = spring<androidx.compose.ui.unit.IntSize>(
+					dampingRatio = Spring.DampingRatioNoBouncy,
+					stiffness = Spring.StiffnessMediumLow,
+				)
+				val rootHandle: @Composable () -> Unit = {
+					Box(
+						modifier = Modifier.width(peekWidthDp).fillMaxHeight(),
+						contentAlignment = Alignment.Center,
+					) {
 						Box(
-							modifier = Modifier.width(peekWidthDp).fillMaxHeight(),
-							contentAlignment = Alignment.Center,
-						) {
-							Box(
-								modifier = Modifier
-									.width(3.dp)
-									.height(18.dp)
-									.clip(RoundedCornerShape(1.5.dp))
-									.background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f))
-							)
-						}
-					} else {
+							modifier = Modifier
+								.width(3.dp)
+								.height(18.dp)
+								.clip(RoundedCornerShape(1.5.dp))
+								.background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f))
+						)
+					}
+				}
+				val expandAnchor = if (dockedRight) Alignment.End else Alignment.Start
+				Row(
+					modifier = Modifier.fillMaxHeight(),
+					verticalAlignment = Alignment.CenterVertically,
+				) {
+					if (!dockedRight) rootHandle()
+					AnimatedVisibility(
+						visible = isExpanded,
+						enter = expandHorizontally(expandFrom = expandAnchor, animationSpec = horizSpec) + fadeIn(tween(150)),
+						exit = shrinkHorizontally(shrinkTowards = expandAnchor, animationSpec = horizSpec) + fadeOut(tween(120)),
+					) {
 						Row(
 							modifier = Modifier
 								.fillMaxHeight()
-								.padding(horizontal = 14.dp),
+								.padding(
+									start = if (dockedRight) 14.dp else 4.dp,
+									end = if (dockedRight) 4.dp else 14.dp,
+								),
 							verticalAlignment = Alignment.CenterVertically,
 							horizontalArrangement = Arrangement.spacedBy(6.dp),
 						) {
@@ -6915,6 +6920,7 @@ private fun DraggableUploadFab(
 							)
 						}
 					}
+					if (dockedRight) rootHandle()
 				}
 			}
 		}
