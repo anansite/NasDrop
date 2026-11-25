@@ -26,10 +26,14 @@ data class PhotoMetadata(
 	val height: Int = 0,
 	val hasThumbnail: Boolean = false,
 	val thumbId: String = "",
+	val voiceId: String = "",
 	val audioPath: String? = null,
 	val audioDurationMs: Long = 0L,
 	val memo: String? = null,
 	val memoUpdatedAt: Long = 0L,
+	val lat: Double = 0.0,
+	val lng: Double = 0.0,
+	val locationName: String = "",
 	val mediaType: Int = 0, // 0: 图片, 1: 视频
 	val videoDurationMs: Long = 0L,
 	val updatedAt: Long = System.currentTimeMillis(),
@@ -38,15 +42,14 @@ data class PhotoMetadata(
 /**
  * 手机端本地图片与媒体元数据存储中心（SQLite + 内存快照双层缓存）。
  * 严禁存储二进制图片或音频文件原文（零 BLOB）。
- * 所有音频等文件型数据均以隐藏文件（"."开头）就地存放在照片所在同级目录下。
- * 负责记录照片拍摄时间、伴随录音指针、文字备注、视频时长及伴生缩略图状态。
- * 并严格保持新增、删除、修改、重命名、移动的级联生命周期一致性（删除照片时级联清理录音、缓存与索引，零残留）。
+ * 缩略图、伴随语音等统一存储在 NAS 根目录共享目录，靠唯一 ID 关联；文字备注存储在服务端 SQLite。
+ * 负责记录照片拍摄时间、伴随录音指针、文字备注、地理位置、视频时长及伴生缩略图状态。
  */
 object PhotoMetadataStore {
 
 	private const val TAG = "PhotoMetadataStore"
 	private const val DB_NAME = "nasdrop_photos.db"
-	private const val DB_VERSION = 3
+	private const val DB_VERSION = 4
 	private const val TABLE_NAME = "photo_metadata"
 
 	private val ioScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -94,16 +97,22 @@ object PhotoMetadataStore {
 				val hIdx = c.getColumnIndexOrThrow("height")
 				val thIdx = c.getColumnIndexOrThrow("has_thumb")
 				val tidIdx = c.getColumnIndex("thumb_id")
+				val vidIdx = c.getColumnIndex("voice_id")
 				val uIdx = c.getColumnIndexOrThrow("updated_at")
 
 				val aPathIdx = c.getColumnIndex("audio_path")
 				val aDurIdx = c.getColumnIndex("audio_duration_ms")
 				val memoIdx = c.getColumnIndex("memo")
 				val memoUpIdx = c.getColumnIndex("memo_updated_at")
+				val latIdx = c.getColumnIndex("lat")
+				val lngIdx = c.getColumnIndex("lng")
+				val locIdx = c.getColumnIndex("location_name")
 				val mTypeIdx = c.getColumnIndex("media_type")
 				val vDurIdx = c.getColumnIndex("video_duration_ms")
 
 				while (c.moveToNext()) {
+					val voiceId = if (vidIdx >= 0 && !c.isNull(vidIdx)) c.getString(vidIdx) else ""
+					val rawAudioPath = if (aPathIdx >= 0 && !c.isNull(aPathIdx)) c.getString(aPathIdx) else null
 					val meta = PhotoMetadata(
 						path = c.getString(pIdx),
 						name = c.getString(nIdx),
@@ -115,10 +124,14 @@ object PhotoMetadataStore {
 						height = c.getInt(hIdx),
 						hasThumbnail = c.getInt(thIdx) == 1,
 						thumbId = if (tidIdx >= 0 && !c.isNull(tidIdx)) c.getString(tidIdx) else "",
-						audioPath = if (aPathIdx >= 0 && !c.isNull(aPathIdx)) c.getString(aPathIdx) else null,
+						voiceId = voiceId,
+						audioPath = rawAudioPath ?: voiceId.takeIf { it.isNotBlank() }?.let { ".nasdrop_voices/$it.m4a" },
 						audioDurationMs = if (aDurIdx >= 0) c.getLong(aDurIdx) else 0L,
 						memo = if (memoIdx >= 0 && !c.isNull(memoIdx)) c.getString(memoIdx) else null,
 						memoUpdatedAt = if (memoUpIdx >= 0) c.getLong(memoUpIdx) else 0L,
+						lat = if (latIdx >= 0) c.getDouble(latIdx) else 0.0,
+						lng = if (lngIdx >= 0) c.getDouble(lngIdx) else 0.0,
+						locationName = if (locIdx >= 0 && !c.isNull(locIdx)) c.getString(locIdx) else "",
 						mediaType = if (mTypeIdx >= 0) c.getInt(mTypeIdx) else 0,
 						videoDurationMs = if (vDurIdx >= 0) c.getLong(vDurIdx) else 0L,
 						updatedAt = c.getLong(uIdx)
@@ -570,6 +583,32 @@ object PhotoMetadataStore {
 		}
 	}
 
+	fun updateVoice(path: String, voiceId: String, audioPath: String?, audioDurationMs: Long) {
+		val key = path.trim('/')
+		val now = System.currentTimeMillis()
+		val cur = cache[key] ?: PhotoMetadata(
+			path = key,
+			name = key.substringAfterLast('/'),
+			dir = if (key.contains('/')) key.substringBeforeLast('/') else ""
+		)
+		val updated = cur.copy(
+			voiceId = voiceId,
+			audioPath = audioPath?.trim('/'),
+			audioDurationMs = if (voiceId.isBlank() && audioPath == null) 0L else audioDurationMs,
+			updatedAt = now
+		)
+		cache[key] = updated
+		notifyUpdated()
+		ioScope.launch {
+			try {
+				val db = dbHelper?.writableDatabase ?: return@launch
+				db.insertWithOnConflict(TABLE_NAME, null, toContentValues(updated), SQLiteDatabase.CONFLICT_REPLACE)
+			} catch (e: Exception) {
+				Log.e(TAG, "更新 voice_id 失败: $path", e)
+			}
+		}
+	}
+
 	private fun toContentValues(meta: PhotoMetadata) = ContentValues().apply {
 		put("path", meta.path.trim('/'))
 		put("name", meta.name)
@@ -581,10 +620,14 @@ object PhotoMetadataStore {
 		put("height", meta.height)
 		put("has_thumb", if (meta.hasThumbnail) 1 else 0)
 		put("thumb_id", meta.thumbId)
+		put("voice_id", meta.voiceId)
 		put("audio_path", meta.audioPath)
 		put("audio_duration_ms", meta.audioDurationMs)
 		put("memo", meta.memo)
 		put("memo_updated_at", meta.memoUpdatedAt)
+		put("lat", meta.lat)
+		put("lng", meta.lng)
+		put("location_name", meta.locationName)
 		put("media_type", meta.mediaType)
 		put("video_duration_ms", meta.videoDurationMs)
 		put("updated_at", meta.updatedAt)
@@ -605,10 +648,14 @@ object PhotoMetadataStore {
 					height INTEGER NOT NULL DEFAULT 0,
 					has_thumb INTEGER NOT NULL DEFAULT 0,
 					thumb_id TEXT NOT NULL DEFAULT '',
+					voice_id TEXT NOT NULL DEFAULT '',
 					audio_path TEXT DEFAULT NULL,
 					audio_duration_ms INTEGER NOT NULL DEFAULT 0,
 					memo TEXT DEFAULT NULL,
 					memo_updated_at INTEGER NOT NULL DEFAULT 0,
+					lat REAL NOT NULL DEFAULT 0,
+					lng REAL NOT NULL DEFAULT 0,
+					location_name TEXT NOT NULL DEFAULT '',
 					media_type INTEGER NOT NULL DEFAULT 0,
 					video_duration_ms INTEGER NOT NULL DEFAULT 0,
 					updated_at INTEGER NOT NULL DEFAULT 0
@@ -637,6 +684,16 @@ object PhotoMetadataStore {
 					db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN thumb_id TEXT NOT NULL DEFAULT ''")
 				} catch (e: Exception) {
 					Log.w(TAG, "DB upgrade to v3 failed: ${e.message}")
+				}
+			}
+			if (oldVersion < 4) {
+				try {
+					db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN voice_id TEXT NOT NULL DEFAULT ''")
+					db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN lat REAL NOT NULL DEFAULT 0")
+					db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN lng REAL NOT NULL DEFAULT 0")
+					db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN location_name TEXT NOT NULL DEFAULT ''")
+				} catch (e: Exception) {
+					Log.w(TAG, "DB upgrade to v4 failed: ${e.message}")
 				}
 			}
 		}

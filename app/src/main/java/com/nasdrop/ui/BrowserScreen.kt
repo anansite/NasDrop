@@ -3813,10 +3813,10 @@ private fun PhotoTimelineContent(
 	var activeMemoryYearGroup by remember { mutableStateOf<com.nasdrop.MemoryYearGroup?>(null) }
 
 	Column(modifier = Modifier.fillMaxSize()) {
-		// 1. 顶部子相册分类横滑条（高质感 34dp 统一高度胶囊，彻底解决高度跳动）
+		// 1. 顶部子相册分类横滑条（紧凑 28dp 统一高度胶囊）
 		LazyRow(
-			contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-			horizontalArrangement = Arrangement.spacedBy(8.dp),
+			contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+			horizontalArrangement = Arrangement.spacedBy(6.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
 			// 系统预置双视图切换（无图标、高区分度分段样式：相册 / 时光轴）
@@ -3824,8 +3824,8 @@ private fun PhotoTimelineContent(
 				val isFolders = selectedAlbumPath == "__ALL_FOLDERS__"
 				val isAll = selectedAlbumPath.isBlank()
 				Surface(
-					modifier = Modifier.height(34.dp),
-					shape = RoundedCornerShape(10.dp),
+					modifier = Modifier.height(28.dp),
+					shape = RoundedCornerShape(8.dp),
 					color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
 					border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
 				) {
@@ -3836,17 +3836,17 @@ private fun PhotoTimelineContent(
 					) {
 						Surface(
 							modifier = Modifier.fillMaxHeight(),
-							shape = RoundedCornerShape(8.dp),
+							shape = RoundedCornerShape(6.dp),
 							color = if (isFolders) MaterialTheme.colorScheme.primary else Color.Transparent,
 							onClick = { onSelectAlbum("__ALL_FOLDERS__") },
 						) {
 							Box(
-								modifier = Modifier.fillMaxHeight().padding(horizontal = 12.dp),
+								modifier = Modifier.fillMaxHeight().padding(horizontal = 9.dp),
 								contentAlignment = Alignment.Center,
 							) {
 								Text(
 									"相册",
-									fontSize = 12.sp,
+									fontSize = 11.5.sp,
 									fontWeight = if (isFolders) FontWeight.Bold else FontWeight.Medium,
 									color = if (isFolders) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
 								)
@@ -3854,17 +3854,17 @@ private fun PhotoTimelineContent(
 						}
 						Surface(
 							modifier = Modifier.fillMaxHeight(),
-							shape = RoundedCornerShape(8.dp),
+							shape = RoundedCornerShape(6.dp),
 							color = if (isAll) MaterialTheme.colorScheme.primary else Color.Transparent,
 							onClick = { onSelectAlbum("") },
 						) {
 							Box(
-								modifier = Modifier.fillMaxHeight().padding(horizontal = 12.dp),
+								modifier = Modifier.fillMaxHeight().padding(horizontal = 9.dp),
 								contentAlignment = Alignment.Center,
 							) {
 								Text(
 									"时光轴",
-									fontSize = 12.sp,
+									fontSize = 11.5.sp,
 									fontWeight = if (isAll) FontWeight.Bold else FontWeight.Medium,
 									color = if (isAll) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
 								)
@@ -3880,7 +3880,7 @@ private fun PhotoTimelineContent(
 					Box(
 						modifier = Modifier
 							.width(1.dp)
-							.height(18.dp)
+							.height(14.dp)
 							.background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
 					)
 				}
@@ -3894,7 +3894,7 @@ private fun PhotoTimelineContent(
 
 				Surface(
 					modifier = Modifier
-						.height(34.dp)
+						.height(28.dp)
 						.zIndex(if (isDragging) 10f else 1f)
 						.graphicsLayer {
 							if (isDragging) {
@@ -3944,7 +3944,7 @@ private fun PhotoTimelineContent(
 							)
 						}
 						.clickable { onSelectAlbum(album.path) },
-					shape = RoundedCornerShape(17.dp),
+					shape = RoundedCornerShape(14.dp),
 					color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
 					border = BorderStroke(
 						1.dp,
@@ -3954,31 +3954,31 @@ private fun PhotoTimelineContent(
 					shadowElevation = if (isDragging) 6.dp else if (isSelected) 2.dp else 0.dp,
 				) {
 					Row(
-						modifier = Modifier.fillMaxHeight().padding(start = 10.dp, end = 3.dp),
+						modifier = Modifier.fillMaxHeight().padding(start = 8.dp, end = 2.dp),
 						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(4.dp),
+						horizontalArrangement = Arrangement.spacedBy(3.dp),
 					) {
 						FileIconByEntry(
 							entry = album,
 							customIconKey = folderIcons[album.path],
-							size = 15.dp,
+							size = 13.dp,
 							urlOf = urlOf,
 							directUrlOf = directUrlOf,
 						)
 						Text(
 							album.name,
-							fontSize = 12.sp,
+							fontSize = 11.5.sp,
 							fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
 							color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
 							maxLines = 1,
 							overflow = TextOverflow.Ellipsis,
-							modifier = Modifier.widthIn(max = 130.dp)
+							modifier = Modifier.widthIn(max = 116.dp)
 						)
 
 						// 胶囊末尾三点按钮（轻量 Box 容器，绝无 M3 48dp 扩张）
 						Box(
 							modifier = Modifier
-								.size(24.dp)
+								.size(20.dp)
 								.clip(CircleShape)
 								.clickable { menuOpen = true },
 							contentAlignment = Alignment.Center,
@@ -3987,7 +3987,7 @@ private fun PhotoTimelineContent(
 								Icons.Rounded.MoreVert,
 								contentDescription = "相册选项",
 								tint = if (isSelected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
-								modifier = Modifier.size(15.dp)
+								modifier = Modifier.size(13.dp)
 							)
 							DropdownMenu(
 								expanded = menuOpen,
@@ -4886,45 +4886,52 @@ private fun TimelineDateScrubber(
 		}
 	}
 
-	// 动态焦点展开：仅展示主干年份 + 当前所在年份及邻近月份（距离越近越优先），其余收起，彻底告别堆叠拥挤
+	// 动态焦点展开：所有年份主干始终完整显示（绝不省略任何年份），仅对当前所在年份动态展开邻近月份
 	val density = LocalDensity.current
 	val visibleMilestones = remember(milestones, activeYear, currentGroupIdx, isDragging, trackHeightPx) {
 		if (milestones.size <= 2) return@remember milestones
-		val minGapFrac = with(density) {
-			val h = (trackHeightPx - 20.dp.toPx()).coerceAtLeast(1f)
-			(24.dp.toPx() / h).coerceIn(0.06f, 0.25f)
-		}
+		val trackH = with(density) { (trackHeightPx - 20.dp.toPx()).coerceAtLeast(1f) }
+		val minMonthGapFrac = with(density) { (22.dp.toPx() / trackH).coerceIn(0.05f, 0.25f) }
+		val minYearGapFrac = with(density) { (13.dp.toPx() / trackH).coerceIn(0.02f, 0.12f) }
 		val placed = mutableListOf<ScrubberMilestone>()
-		fun tryAdd(m: ScrubberMilestone): Boolean {
-			if (placed.none { kotlin.math.abs(it.fraction - m.fraction) < minGapFrac }) {
+
+		// 1. 强制放入全部年份（绝不省略任何年份），若相邻年份过于密集则微调位置防重叠
+		val allYears = milestones.filter { it.isYear }.sortedBy { it.fraction }
+		for (yItem in allYears) {
+			val prevYear = placed.lastOrNull()
+			val adjustedFrac = if (prevYear != null && yItem.fraction - prevYear.fraction < minYearGapFrac) {
+				(prevYear.fraction + minYearGapFrac).coerceAtMost(0.98f)
+			} else {
+				yItem.fraction
+			}
+			placed.add(if (adjustedFrac != yItem.fraction) yItem.copy(fraction = adjustedFrac) else yItem)
+		}
+
+		fun tryAddMonthOrAnchor(m: ScrubberMilestone): Boolean {
+			if (placed.none { kotlin.math.abs(it.fraction - m.fraction) < minMonthGapFrac }) {
 				placed.add(m)
 				return true
 			}
 			return false
 		}
 
-		// 1. 首尾锚点（近期 & 最早）
-		placed.add(milestones.first())
-		tryAdd(milestones.last())
+		// 2. 首尾非年份锚点（如“近期”“更早”）
+		val firstNonYear = milestones.firstOrNull { !it.isYear }
+		if (firstNonYear != null) tryAddMonthOrAnchor(firstNonYear)
+		val lastNonYear = milestones.lastOrNull { !it.isYear }
+		if (lastNonYear != null && lastNonYear != firstNonYear) tryAddMonthOrAnchor(lastNonYear)
 
-		// 2. 自动展开当前滑动/浏览所在年份的邻近月份（离当前焦点越近优先级越高）
+		// 3. 自动展开当前滑动/浏览所在年份的邻近月份（离当前焦点越近优先级越高）
 		if (activeYear.isNotEmpty()) {
-			val activeYearItems = milestones
-				.filter { it.year == activeYear }
+			val activeYearMonths = milestones
+				.filter { it.year == activeYear && !it.isYear }
 				.sortedBy { kotlin.math.abs(it.groupIndex - currentGroupIdx) }
 			val maxExpand = if (isDragging) 4 else 2
 			var expandedCount = 0
-			for (m in activeYearItems) {
-				if (m.isYear || expandedCount < maxExpand) {
-					if (tryAdd(m) && !m.isYear) expandedCount++
+			for (m in activeYearMonths) {
+				if (expandedCount < maxExpand && tryAddMonthOrAnchor(m)) {
+					expandedCount++
 				}
-			}
-		}
-
-		// 3. 其他年份仅保留年份主干（若间隔足够则显示，否则自动收起）
-		for (m in milestones) {
-			if (m.isYear && m.year != activeYear) {
-				tryAdd(m)
 			}
 		}
 

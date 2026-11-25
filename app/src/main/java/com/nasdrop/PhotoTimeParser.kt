@@ -15,6 +15,8 @@ data class ExifInfo(
 	val width: Int = 0,
 	val height: Int = 0,
 	val orientation: Int = 0,
+	val latitude: Double = 0.0,
+	val longitude: Double = 0.0,
 )
 
 /**
@@ -130,11 +132,32 @@ object PhotoTimeParser {
 				val width = exif.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0)
 				val height = exif.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0)
 				val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
-				ExifInfo(takenAt = takenAt, width = width, height = height, orientation = orientation)
+				val latLng = exif.latLong
+				val lat = latLng?.getOrNull(0) ?: 0.0
+				val lng = latLng?.getOrNull(1) ?: 0.0
+				ExifInfo(takenAt = takenAt, width = width, height = height, orientation = orientation, latitude = lat, longitude = lng)
 			} ?: ExifInfo()
 		} catch (e: Exception) {
 			Log.v(TAG, "Uri EXIF 提取失败: $uri", e)
 			ExifInfo()
+		}
+	}
+
+	@Suppress("DEPRECATION")
+	fun resolveLocationName(context: Context, lat: Double, lng: Double): String {
+		if (lat == 0.0 && lng == 0.0) return ""
+		return try {
+			val geocoder = android.location.Geocoder(context, Locale.getDefault())
+			val list = geocoder.getFromLocation(lat, lng, 1)
+			val addr = list?.firstOrNull() ?: return ""
+			val parts = listOfNotNull(
+				addr.locality?.takeIf { it.isNotBlank() },
+				addr.subLocality?.takeIf { it.isNotBlank() },
+				addr.thoroughfare?.takeIf { it.isNotBlank() } ?: addr.featureName?.takeIf { it.isNotBlank() && !it.all { ch -> ch.isDigit() || ch == '.' || ch == '-' } },
+			).distinct()
+			parts.joinToString(" · ").ifBlank { addr.adminArea ?: "" }
+		} catch (_: Exception) {
+			""
 		}
 	}
 

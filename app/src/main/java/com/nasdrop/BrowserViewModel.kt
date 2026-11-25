@@ -2936,12 +2936,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		durationMs: Long,
 		onResult: (Boolean, String?) -> Unit = { _, _ -> },
 	) {
-		val clean = photoPath.trim('/')
-		val parentDir = if (clean.contains('/')) clean.substringBeforeLast('/') else ""
-		val fileName = clean.substringAfterLast('/')
-		val baseName = if (fileName.contains('.')) fileName.substringBeforeLast('.') else fileName
-		val dotAudioName = ".$baseName.m4a"
-		val companionPath = if (parentDir.isEmpty()) dotAudioName else "$parentDir/$dotAudioName"
+		val voiceId = "v_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().replace("-", "").take(8)}"
+		val voiceDir = ".nasdrop_voices"
+		val voiceFileName = "$voiceId.m4a"
+		val unifiedPath = "$voiceDir/$voiceFileName"
+		val oldAudioPath = PhotoMetadataStore.get(photoPath)?.audioPath
 
 		viewModelScope.launch {
 			val s = app.prefs.current()
@@ -2949,17 +2948,22 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				try {
 					val localCacheDir = File(app.cacheDir, "audio_cache")
 					if (!localCacheDir.exists()) localCacheDir.mkdirs()
-					val localFile = File(localCacheDir, companionPath.replace('/', '_'))
+					val localFile = File(localCacheDir, unifiedPath.replace('/', '_'))
 					localFile.writeBytes(audioBytes)
 				} catch (_: Exception) {}
 
 				try {
-					clientOf(s).uploadBytes(
+					val c = clientOf(s)
+					runCatching { c.mkcol(voiceDir) }
+					c.uploadBytes(
 						bytes = audioBytes,
-						remoteDir = parentDir,
-						name = dotAudioName,
+						remoteDir = voiceDir,
+						name = voiceFileName,
 						mimeType = "audio/mp4",
 					)
+					if (!oldAudioPath.isNullOrBlank() && oldAudioPath != unifiedPath) {
+						runCatching { c.delete(oldAudioPath, false) }
+					}
 					null
 				} catch (e: Exception) {
 					if (e is CancellationException) throw e
@@ -2968,7 +2972,13 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 
 			if (err == null) {
-				PhotoMetadataStore.updateAudio(photoPath, companionPath, durationMs)
+				PhotoMetadataStore.updateVoice(photoPath, voiceId, unifiedPath, durationMs)
+				val updatedMeta = PhotoMetadataStore.get(photoPath)
+				if (updatedMeta != null) {
+					viewModelScope.launch(Dispatchers.IO) {
+						runCatching { clientOf(s).reportMetadata(listOf(updatedMeta)) }
+					}
+				}
 				uiMessage = "录音已保存"
 				onResult(true, null)
 			} else {
@@ -2980,8 +2990,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/**
 	 * 删除照片伴随语音录音：
-	 * 1. 彻底从 WebDAV 删除同级目录下的隐藏 .m4a 文件；
-	 * 2. SQLite 置空对应字段，绝不残留。
+	 * 1. 从 NAS 删除语音文件（统一目录或历史同级隐藏 .m4a）；
+	 * 2. 本地与服务端 SQLite 置空对应字段，绝不残留。
 	 */
 	fun deletePhotoVoiceNote(
 		photoPath: String,
@@ -2993,64 +3003,62 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch {
 			val s = app.prefs.current()
 			withContext(Dispatchers.IO) {
-				try {
-					clientOf(s).delete(companionPath, false)
-				} catch (e: Exception) {
-					if (e is CancellationException) throw e
+				runCatching { clientOf(s).delete(companionPath, false) }
+				if (meta != null) {
+					runCatching { clientOf(s).reportMetadata(listOf(meta.copy(voiceId = "__CLEAR__", audioDurationMs = 0L))) }
 				}
 			}
 
-			PhotoMetadataStore.updateAudio(photoPath, null, 0L)
+			PhotoMetadataStore.updateVoice(photoPath, "", null, 0L)
 			uiMessage = "伴随录音已删除"
 			onResult(true, null)
 		}
 	}
 
 	/**
-	 * 保存照片/视频文字备注（写入本地 SQLite + 异步云同步伴生隐藏文件到 WebDAV）
+	 * 保存照片/视频文字备注（写入本地 SQLite + 同步服务端 SQLite，不再在相册里写 .memo 隐藏文件）
 	 */
 	fun savePhotoMemo(photoPath: String, memo: String) {
 		val cleanMemo = memo.trim()
 		PhotoMetadataStore.updateMemo(photoPath, cleanMemo)
 		uiMessage = "备注已保存"
-		if (cleanMemo.isNotEmpty()) {
-			viewModelScope.launch(Dispatchers.IO) {
-				try {
-					val s = app.prefs.current()
-					val clean = photoPath.trim('/')
-					val parentDir = if (clean.contains('/')) clean.substringBeforeLast('/') else ""
-					val fileName = clean.substringAfterLast('/')
-					val baseName = if (fileName.contains('.')) fileName.substringBeforeLast('.') else fileName
-					val memoFileName = ".$baseName.memo"
-					val bytes = cleanMemo.toByteArray(Charsets.UTF_8)
-					clientOf(s).uploadBytes(
-						bytes = bytes,
-						remoteDir = parentDir,
-						name = memoFileName,
-						mimeType = "text/plain; charset=utf-8",
-					)
-				} catch (e: Exception) {
-					if (e is CancellationException) throw e
-					android.util.Log.w("BrowserViewModel", "上传伴生备注至WebDAV失败: ${e.message}")
-				}
+		viewModelScope.launch(Dispatchers.IO) {
+			try {
+				val s = app.prefs.current()
+				val meta = PhotoMetadataStore.get(photoPath) ?: PhotoMetadata(
+					path = photoPath.trim('/'),
+					name = photoPath.trim('/').substringAfterLast('/'),
+					dir = photoPath.trim('/').let { if (it.contains('/')) it.substringBeforeLast('/') else "" },
+				)
+				clientOf(s).reportMetadata(
+					listOf(meta.copy(memo = if (cleanMemo.isEmpty()) "__CLEAR__" else cleanMemo))
+				)
+			} catch (e: Exception) {
+				if (e is CancellationException) throw e
+				android.util.Log.w("BrowserViewModel", "同步备注至服务端 SQLite 失败: ${e.message}")
 			}
 		}
 	}
 
 	/**
-	 * 清空删除照片/视频文字备注（从本地 SQLite 清空 + 异步从 WebDAV 删除伴生隐藏文件）
+	 * 清空删除照片/视频文字备注（从本地 SQLite 清空 + 同步清空服务端 SQLite + 清理历史 .memo 文件）
 	 */
 	fun deletePhotoMemo(photoPath: String) {
+		val meta = PhotoMetadataStore.get(photoPath)
 		PhotoMetadataStore.updateMemo(photoPath, null)
 		uiMessage = "备注已清空"
 		viewModelScope.launch(Dispatchers.IO) {
 			try {
 				val s = app.prefs.current()
+				val c = clientOf(s)
 				val memoPath = PhotoMetadataStore.computeCompanionMemoPath(photoPath)
-				clientOf(s).delete(memoPath, false)
+				runCatching { c.delete(memoPath, false) }
+				if (meta != null) {
+					c.reportMetadata(listOf(meta.copy(memo = "__CLEAR__")))
+				}
 			} catch (e: Exception) {
 				if (e is CancellationException) throw e
-				android.util.Log.w("BrowserViewModel", "从WebDAV删除伴生备注失败: ${e.message}")
+				android.util.Log.w("BrowserViewModel", "清空服务端备注失败: ${e.message}")
 			}
 		}
 	}

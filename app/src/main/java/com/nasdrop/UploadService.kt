@@ -172,6 +172,9 @@ class UploadService : Service() {
 						if (isImage || isVideo) {
 							val exif = if (isImage) PhotoTimeParser.extractExif(this@UploadService, uri) else ExifInfo()
 							val takenAt = exif.takenAt ?: PhotoTimeParser.parseFromFilename(name) ?: startedAt
+							val locationName = if (!isVideo && (exif.latitude != 0.0 || exif.longitude != 0.0)) {
+								PhotoTimeParser.resolveLocationName(this@UploadService, exif.latitude, exif.longitude)
+							} else ""
 							val meta = PhotoMetadata(
 								path = entryPath,
 								name = name,
@@ -181,7 +184,10 @@ class UploadService : Service() {
 								takenAt = takenAt,
 								width = exif.width,
 								height = exif.height,
-								hasThumbnail = false
+								hasThumbnail = false,
+								lat = exif.latitude,
+								lng = exif.longitude,
+								locationName = locationName,
 							)
 							PhotoMetadataStore.put(meta)
 

@@ -279,7 +279,9 @@ fun ImageViewer(
 	}
 
 	DisposableEffect(current.path) {
-		val companionPath = PhotoMetadataStore.computeCompanionAudioPath(current.path)
+		val companionPath = current.photoMeta?.audioPath?.ifBlank { null }
+			?: PhotoMetadataStore.get(current.path)?.audioPath?.ifBlank { null }
+			?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
 		val directAudio = audioUrlOf?.invoke(companionPath) ?: (audioUrlOf ?: urlOf).invoke(current.path)
 		audioPlayer.onDurationResolved = { dur ->
 			PhotoMetadataStore.updateAudioDuration(current.path, dur)
@@ -1160,21 +1162,30 @@ fun ImageViewer(
 								Text("拍摄地点", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
 							}
 
+							val storedMeta = PhotoMetadataStore.get(current.path)
+							val displayLat = if (exifData != null && exifData!!.hasGps) exifData!!.latitude else storedMeta?.lat ?: 0.0
+							val displayLng = if (exifData != null && exifData!!.hasGps) exifData!!.longitude else storedMeta?.lng ?: 0.0
+							val hasLocation = displayLat != 0.0 || displayLng != 0.0
+							val locationLabel = storedMeta?.locationName?.ifBlank { null }
+
 							if (loadingExif) {
 								LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-							} else if (exifData != null && exifData!!.hasGps) {
-								val d = exifData!!
+							} else if (hasLocation) {
+								val d = exifData
+								if (locationLabel != null) {
+									ImageDetailItem(label = "拍摄地点", value = locationLabel)
+								}
 								ImageDetailItem(
 									label = "GPS 坐标",
-									value = d.gpsFormatted ?: "${d.latitude}, ${d.longitude}",
+									value = d?.gpsFormatted ?: String.format(Locale.ROOT, "%.6f, %.6f", displayLat, displayLng),
 									canCopy = true,
 									onCopy = {
 										val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-										clipboard?.setPrimaryClip(ClipData.newPlainText("GPS Coordinates", "${d.latitude}, ${d.longitude}"))
+										clipboard?.setPrimaryClip(ClipData.newPlainText("GPS Coordinates", "$displayLat, $displayLng"))
 										Toast.makeText(context, "已复制 GPS 坐标", Toast.LENGTH_SHORT).show()
 									}
 								)
-								if (d.altitude != null) {
+								if (d?.altitude != null) {
 									ImageDetailItem(label = "海拔高度", value = String.format(Locale.ROOT, "%.1f 米", d.altitude))
 								}
 
@@ -1185,8 +1196,12 @@ fun ImageViewer(
 									OutlinedButton(
 										onClick = {
 											try {
-												val geoUri = Uri.parse("geo:${d.latitude},${d.longitude}?q=${d.latitude},${d.longitude}(${Uri.encode(current.name)})")
-												val mapIntent = Intent(Intent.ACTION_VIEW, geoUri)
+												val geoUriStr = if (locationLabel != null) {
+													"geo:$displayLat,$displayLng?q=$displayLat,$displayLng(${Uri.encode(locationLabel)})"
+												} else {
+													"geo:$displayLat,$displayLng?q=$displayLat,$displayLng"
+												}
+												val mapIntent = Intent(Intent.ACTION_VIEW, Uri.parse(geoUriStr))
 												context.startActivity(mapIntent)
 											} catch (_: Exception) {
 												Toast.makeText(context, "未找到可用地图应用", Toast.LENGTH_SHORT).show()
@@ -1350,7 +1365,9 @@ fun ImageViewer(
 									showRecordSheet = false
 									if (result != null) {
 										val (bytes, durMs) = result
-										val companionPath = PhotoMetadataStore.computeCompanionAudioPath(current.path)
+										val companionPath = current.photoMeta?.audioPath?.ifBlank { null }
+			?: PhotoMetadataStore.get(current.path)?.audioPath?.ifBlank { null }
+			?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
 										PhotoMetadataStore.updateAudio(current.path, companionPath, durMs)
 										val directAudio = audioUrlOf?.invoke(companionPath)
 										if (directAudio != null) {
@@ -1918,7 +1935,9 @@ fun VideoPlayer(
 	}
 
 	DisposableEffect(currentEntry.path) {
-		val companionPath = PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
+		val companionPath = currentEntry.photoMeta?.audioPath?.ifBlank { null }
+			?: PhotoMetadataStore.get(currentEntry.path)?.audioPath?.ifBlank { null }
+			?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
 		val directAudioUrl = audioUrlOf?.invoke(companionPath) ?: audioUrlOf?.invoke(currentEntry.path) ?: ""
 		audioPlayer.onDurationResolved = { dur ->
 			PhotoMetadataStore.updateAudioDuration(currentEntry.path, dur)
@@ -3584,7 +3603,9 @@ fun VideoPlayer(
 									showRecordSheet = false
 									if (result != null) {
 										val (bytes, durMs) = result
-										val companionPath = PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
+										val companionPath = currentEntry.photoMeta?.audioPath?.ifBlank { null }
+			?: PhotoMetadataStore.get(currentEntry.path)?.audioPath?.ifBlank { null }
+			?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
 										PhotoMetadataStore.updateAudio(currentEntry.path, companionPath, durMs)
 										val directAudio = audioUrlOf?.invoke(companionPath)
 										if (directAudio != null) {
