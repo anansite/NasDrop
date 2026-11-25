@@ -3666,7 +3666,7 @@ private fun CompanionMemoCapsule(
 	val scrollState = rememberScrollState()
 	val canExpand = hasVisualOverflow || isExpanded
 	val screenHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
-	val maxExpandedHeight = screenHeight * 0.46f // 优雅半屏高度
+	val maxExpandedHeight = screenHeight * 0.48f // 优雅半屏高度
 
 	Surface(
 		shape = RoundedCornerShape(18.dp),
@@ -3782,29 +3782,13 @@ private fun CompanionMemoCapsule(
 							},
 						)
 					}
-					Row(
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(2.dp),
-					) {
-						IconButton(
-							onClick = onEditClick,
-							modifier = Modifier.size(24.dp),
-						) {
-							Icon(
-								imageVector = Icons.Rounded.EditNote,
-								contentDescription = "编辑记忆",
-								tint = Color(0xFF94A3B8),
-								modifier = Modifier.size(18.dp),
-							)
-						}
-						if (canExpand) {
-							Icon(
-								imageVector = Icons.Rounded.KeyboardArrowUp,
-								contentDescription = "展开放大查看",
-								tint = Color(0xFF64748B),
-								modifier = Modifier.size(16.dp),
-							)
-						}
+					if (canExpand) {
+						Icon(
+							imageVector = Icons.Rounded.KeyboardArrowUp,
+							contentDescription = "向上拉伸展开",
+							tint = Color(0xFF64748B),
+							modifier = Modifier.size(16.dp),
+						)
 					}
 				}
 			}
