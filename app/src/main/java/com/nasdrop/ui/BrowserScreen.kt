@@ -3755,8 +3755,13 @@ private fun PhotoTimelineContent(
 			val first = pg.items.firstOrNull { visibleSet.contains(it) }
 			if (first != null && !byFirst.containsKey(first)) {
 				byFirst[first] = pg
-				pg.items.forEach { p ->
-					if (p != first) collapsed.add(p)
+			}
+		}
+		photoGroups.forEach { pg ->
+			val first = pg.items.firstOrNull { visibleSet.contains(it) }
+			pg.items.forEach { p ->
+				if (p != first && !byFirst.containsKey(p)) {
+					collapsed.add(p)
 				}
 			}
 		}
