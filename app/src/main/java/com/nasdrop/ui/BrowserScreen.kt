@@ -780,7 +780,7 @@ fun BrowserScreen(
 			} else if (vm.isMultiSelectMode) {
 				BatchActionTray(
 					selectedCount = vm.selectedEntries.size,
-					onCreateGroup = if (vm.currentTab == MainTab.Photos && vm.selectedEntries.any { it.isImage || it.isVideo }) {
+					onCreateGroup = if (vm.currentTab == MainTab.Photos && vm.selectedAlbumPath.isNotBlank() && vm.selectedAlbumPath != "__ALL_FOLDERS__" && vm.selectedEntries.any { it.isImage || it.isVideo }) {
 						{
 							val selectedMedia = vm.selectedEntries.filter { it.isImage || it.isVideo }
 							val distinctDirs = selectedMedia.map { it.path.substringBeforeLast('/', "") }.distinct()
@@ -4142,25 +4142,33 @@ private fun PhotoTimelineContent(
 						color = MaterialTheme.colorScheme.primary,
 					)
 					Spacer(Modifier.weight(1f))
-					Row(
-						verticalAlignment = Alignment.CenterVertically,
-						modifier = Modifier
-							.clip(RoundedCornerShape(8.dp))
-							.clickable { showCollectionsInAlbum = !showCollectionsInAlbum }
-							.padding(horizontal = 4.dp, vertical = 2.dp),
+					Surface(
+						onClick = { showCollectionsInAlbum = !showCollectionsInAlbum },
+						shape = RoundedCornerShape(14.dp),
+						color = if (showCollectionsInAlbum) Color(0xFF00897B).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+						border = BorderStroke(
+							1.dp,
+							if (showCollectionsInAlbum) Color(0xFF00897B).copy(alpha = 0.35f) else Color.Transparent,
+						),
 					) {
-						Checkbox(
-							checked = showCollectionsInAlbum,
-							onCheckedChange = { showCollectionsInAlbum = it },
-							modifier = Modifier.size(20.dp),
-						)
-						Spacer(Modifier.width(4.dp))
-						Text(
-							text = "显示集锦",
-							style = MaterialTheme.typography.labelMedium,
-							fontSize = 12.sp,
-							color = MaterialTheme.colorScheme.onSurfaceVariant,
-						)
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(4.dp),
+							modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+						) {
+							Icon(
+								imageVector = Icons.Rounded.Link,
+								contentDescription = null,
+								tint = if (showCollectionsInAlbum) Color(0xFF00695C) else MaterialTheme.colorScheme.onSurfaceVariant,
+								modifier = Modifier.size(13.dp),
+							)
+							Text(
+								text = if (showCollectionsInAlbum) "集锦已收起" else "集锦已展开",
+								fontSize = 11.5.sp,
+								fontWeight = FontWeight.Medium,
+								color = if (showCollectionsInAlbum) Color(0xFF00695C) else MaterialTheme.colorScheme.onSurfaceVariant,
+							)
+						}
 					}
 				}
 			}
