@@ -45,6 +45,7 @@ class CompanionAudioPlayer(private val context: Context) {
 		private set
 
 	fun prepare(audioUrlOrPath: String) {
+		stop()
 		currentUrl = audioUrlOrPath
 	}
 
@@ -206,6 +207,8 @@ class CompanionAudioPlayer(private val context: Context) {
 		isPlaying = false
 		progress = 0f
 		currentPositionMs = 0
+		durationMs = 0
+		currentUrl = ""
 		if (player != null) {
 			try {
 				player.reset()

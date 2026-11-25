@@ -598,6 +598,7 @@ fun ImageViewer(
 							color = MaterialTheme.colorScheme.primary,
 							onClick = {
 								val companionPath = current.photoMeta?.audioPath?.ifBlank { null }
+									?: PhotoMetadataStore.get(current.path)?.audioPath?.ifBlank { null }
 									?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
 								val audioUrl = audioUrlOf?.invoke(companionPath) ?: urlOf(companionPath)
 								if (!audioUrl.isNullOrBlank()) {
@@ -738,6 +739,7 @@ fun ImageViewer(
 								color = MaterialTheme.colorScheme.primary,
 								onClick = {
 									val companionPath = current.photoMeta?.audioPath?.ifBlank { null }
+										?: PhotoMetadataStore.get(current.path)?.audioPath?.ifBlank { null }
 										?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
 									val audioUrl = audioUrlOf?.invoke(companionPath) ?: urlOf(companionPath)
 									if (!audioUrl.isNullOrBlank()) {
@@ -2763,6 +2765,7 @@ fun VideoPlayer(
 							color = MaterialTheme.colorScheme.primary,
 							onClick = {
 								val companionPath = currentEntry.photoMeta?.audioPath?.ifBlank { null }
+									?: PhotoMetadataStore.get(currentEntry.path)?.audioPath?.ifBlank { null }
 									?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
 								val audioUrl = audioUrlOf?.invoke(companionPath) ?: ""
 								if (!audioUrl.isNullOrBlank()) {
@@ -2903,6 +2906,7 @@ fun VideoPlayer(
 								color = MaterialTheme.colorScheme.primary,
 								onClick = {
 									val companionPath = currentEntry.photoMeta?.audioPath?.ifBlank { null }
+										?: PhotoMetadataStore.get(currentEntry.path)?.audioPath?.ifBlank { null }
 										?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
 									val audioUrl = audioUrlOf?.invoke(companionPath) ?: ""
 									if (!audioUrl.isNullOrBlank()) {
