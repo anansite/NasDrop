@@ -2061,7 +2061,13 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			onDone(null)
 			return
 		}
-		val cleanAlbum = albumDir.trim('/')
+		val distinctParents = orderedPaths.map { parentOf(it) }.distinct()
+		if (distinctParents.size > 1) {
+			uiMessage = "仅支持同一相册内的照片/视频创建集锦，不支持跨相册"
+			onDone(null)
+			return
+		}
+		val cleanAlbum = distinctParents.firstOrNull()?.ifBlank { albumDir.trim('/') } ?: albumDir.trim('/')
 		viewModelScope.launch {
 			val created = withContext(Dispatchers.IO) {
 				runCatching {

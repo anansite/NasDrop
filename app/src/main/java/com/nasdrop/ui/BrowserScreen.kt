@@ -780,7 +780,15 @@ fun BrowserScreen(
 				BatchActionTray(
 					selectedCount = vm.selectedEntries.size,
 					onCreateGroup = if (vm.currentTab == MainTab.Photos && vm.selectedEntries.any { it.isImage || it.isVideo }) {
-						{ showCreatePhotoGroupDialog = true }
+						{
+							val selectedMedia = vm.selectedEntries.filter { it.isImage || it.isVideo }
+							val distinctDirs = selectedMedia.map { it.path.substringBeforeLast('/', "") }.distinct()
+							if (distinctDirs.size > 1) {
+								Toast.makeText(context, "仅支持同一相册内的照片/视频创建集锦，不支持跨相册", Toast.LENGTH_SHORT).show()
+							} else {
+								showCreatePhotoGroupDialog = true
+							}
+						}
 					} else null,
 					onDownload = {
 						vm.batchDownload(context) {
@@ -874,14 +882,22 @@ fun BrowserScreen(
 		val allAlbumMedia = remember(vm.allPhotos, vm.allVideos) {
 			(vm.allPhotos + vm.allVideos).distinctBy { it.path }.sortedByDescending { it.effectiveDate }
 		}
-		val albumPool = remember(allAlbumMedia, activeGroup.albumDir) {
-			if (activeGroup.albumDir.isBlank()) allAlbumMedia
-			else allAlbumMedia.filter { it.path.startsWith("${activeGroup.albumDir.trimEnd('/')}/") }
+		val targetAlbumDir = remember(activeGroup.albumDir, activeGroup.items) {
+			activeGroup.albumDir.trim('/').ifBlank {
+				activeGroup.items.firstOrNull()?.substringBeforeLast('/', "")?.trim('/') ?: ""
+			}
+		}
+		val albumPool = remember(allAlbumMedia, targetAlbumDir) {
+			if (targetAlbumDir.isBlank()) {
+				allAlbumMedia.filterNot { it.path.contains('/') }
+			} else {
+				allAlbumMedia.filter { it.path.substringBeforeLast('/', "") == targetAlbumDir }
+			}
 		}
 		PhotoGroupDetailSheet(
 			group = activeGroup,
 			allPhotos = allAlbumMedia,
-			albumPhotos = albumPool.ifEmpty { allAlbumMedia },
+			albumPhotos = albumPool,
 			urlOf = { vm.thumbnailUrlFor(it) },
 			onDismiss = { vm.activePhotoGroupId = null },
 			onOpenImage = onOpenImage,
@@ -3747,17 +3763,28 @@ private fun PhotoTimelineContent(
 	onOpenVideo: (DavEntry) -> Unit = {},
 ) {
 	val currentPhotos = remember(groups) { groups.flatMap { it.items } }
-	val (groupByFirstPath, collapsedNonFirstPaths) = remember(photoGroups, currentPhotos) {
+	var showCollectionsInAlbum by rememberSaveable { mutableStateOf(true) }
+	val (groupByFirstPath, collapsedNonFirstPaths) = remember(photoGroups, currentPhotos, selectedAlbumPath, showCollectionsInAlbum) {
+		// 时光轴上不显示集锦；仅在具体相册内且勾选「显示集锦」时才折叠展示集锦，否则全部展开为普通照片
+		if (selectedAlbumPath.isBlank() || selectedAlbumPath == "__ALL_FOLDERS__" || !showCollectionsInAlbum) {
+			return@remember Pair(emptyMap<String, PhotoGroup>(), emptySet<String>())
+		}
+		val cleanAlbum = selectedAlbumPath.trim('/')
 		val visibleSet = currentPhotos.mapTo(HashSet()) { it.path }
 		val byFirst = HashMap<String, PhotoGroup>()
 		val collapsed = HashSet<String>()
-		photoGroups.forEach { pg ->
+		val albumGroups = photoGroups.filter { pg ->
+			val gDir = pg.albumDir.trim('/')
+			val sameDir = gDir == cleanAlbum || (gDir.isBlank() && pg.items.all { it.substringBeforeLast('/', "") == cleanAlbum })
+			sameDir && pg.items.all { it.substringBeforeLast('/', "") == cleanAlbum }
+		}
+		albumGroups.forEach { pg ->
 			val first = pg.items.firstOrNull { visibleSet.contains(it) }
 			if (first != null && !byFirst.containsKey(first)) {
 				byFirst[first] = pg
 			}
 		}
-		photoGroups.forEach { pg ->
+		albumGroups.forEach { pg ->
 			val first = pg.items.firstOrNull { visibleSet.contains(it) }
 			pg.items.forEach { p ->
 				if (p != first && !byFirst.containsKey(p)) {
@@ -4114,12 +4141,26 @@ private fun PhotoTimelineContent(
 						color = MaterialTheme.colorScheme.primary,
 					)
 					Spacer(Modifier.weight(1f))
-					Text(
-						"点击标签末尾 ··· 可管理相册",
-						style = MaterialTheme.typography.labelSmall,
-						fontSize = 11.sp,
-						color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-					)
+					Row(
+						verticalAlignment = Alignment.CenterVertically,
+						modifier = Modifier
+							.clip(RoundedCornerShape(8.dp))
+							.clickable { showCollectionsInAlbum = !showCollectionsInAlbum }
+							.padding(horizontal = 4.dp, vertical = 2.dp),
+					) {
+						Checkbox(
+							checked = showCollectionsInAlbum,
+							onCheckedChange = { showCollectionsInAlbum = it },
+							modifier = Modifier.size(20.dp),
+						)
+						Spacer(Modifier.width(4.dp))
+						Text(
+							text = "显示集锦",
+							style = MaterialTheme.typography.labelMedium,
+							fontSize = 12.sp,
+							color = MaterialTheme.colorScheme.onSurfaceVariant,
+						)
+					}
 				}
 			}
 
