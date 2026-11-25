@@ -2019,7 +2019,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	/** 若服务端同步回来的集锦中包含本地 allPhotos 尚未收录的新照片，按其父目录定向补拉一次 */
 	private fun backfillMissingGroupDirs(groups: List<PhotoGroup>) {
-		val known = allPhotos.mapTo(HashSet()) { it.path.trim('/') }
+		val known = (allPhotos + allVideos).mapTo(HashSet()) { it.path.trim('/') }
 		val missingDirs = groups.asSequence()
 			.flatMap { it.items.asSequence() }
 			.map { it.trim('/') }

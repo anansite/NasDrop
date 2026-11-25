@@ -871,14 +871,17 @@ fun BrowserScreen(
 
 	val activeGroup = vm.activePhotoGroupId?.let { gid -> vm.photoGroups.firstOrNull { it.id == gid } }
 	if (activeGroup != null) {
-		val albumPool = remember(vm.allPhotos, activeGroup.albumDir) {
-			if (activeGroup.albumDir.isBlank()) vm.allPhotos
-			else vm.allPhotos.filter { it.path.startsWith("${activeGroup.albumDir.trimEnd('/')}/") }
+		val allAlbumMedia = remember(vm.allPhotos, vm.allVideos) {
+			(vm.allPhotos + vm.allVideos).distinctBy { it.path }.sortedByDescending { it.effectiveDate }
+		}
+		val albumPool = remember(allAlbumMedia, activeGroup.albumDir) {
+			if (activeGroup.albumDir.isBlank()) allAlbumMedia
+			else allAlbumMedia.filter { it.path.startsWith("${activeGroup.albumDir.trimEnd('/')}/") }
 		}
 		PhotoGroupDetailSheet(
 			group = activeGroup,
-			allPhotos = vm.allPhotos,
-			albumPhotos = albumPool.ifEmpty { vm.allPhotos },
+			allPhotos = allAlbumMedia,
+			albumPhotos = albumPool.ifEmpty { allAlbumMedia },
 			urlOf = { vm.thumbnailUrlFor(it) },
 			onDismiss = { vm.activePhotoGroupId = null },
 			onOpenImage = onOpenImage,
@@ -8158,6 +8161,11 @@ private fun PickExistingPhotosForGroupSheet(
 									modifier = Modifier.fillMaxSize(),
 								)
 							}
+							MediaThumbBadges(
+								entry = item,
+								modifier = Modifier.fillMaxSize().padding(3.dp),
+								compact = true,
+							)
 							if (isPicked) {
 								Box(
 									modifier = Modifier
