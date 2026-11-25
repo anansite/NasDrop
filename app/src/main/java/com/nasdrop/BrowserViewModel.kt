@@ -1113,6 +1113,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	fun markThumbnailFailed(entryPath: String) {
+		val key = entryPath.trim('/')
+		PhotoMetadataStore.get(key)?.let { meta ->
+			if (meta.hasThumbnail) {
+				PhotoMetadataStore.putMemoryOnly(meta.copy(hasThumbnail = false))
+			}
+		}
 		client?.markThumbnailFailed(entryPath)
 		thumbRevision++
 	}
@@ -1587,6 +1593,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			val s = app.prefs.current()
 			withContext(Dispatchers.IO) {
 				val c = clientOf(s)
+				val cleanTarget = targetDir.trim('/')
+				if (targets.any { it.isImage || it.isVideo }) {
+					runCatching { c.mkcol(if (cleanTarget.isEmpty()) ".thumbnails" else "$cleanTarget/.thumbnails") }
+				}
 				val sem = Semaphore(6)
 				coroutineScope {
 					targets.map { item ->
@@ -1594,6 +1604,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 							sem.withPermit {
 								try {
 									c.move(item.path, join(targetDir, item.name))
+									if (item.isImage || item.isVideo) {
+										val oldDir = parentOf(item.path)
+										val oldThumb = if (oldDir.isEmpty()) ".thumbnails/${item.name}" else "$oldDir/.thumbnails/${item.name}"
+										val newThumb = if (cleanTarget.isEmpty()) ".thumbnails/${item.name}" else "$cleanTarget/.thumbnails/${item.name}"
+										runCatching { c.move(oldThumb, newThumb) }
+									}
 									okCount.incrementAndGet()
 									moved += item.path
 								} catch (e: Exception) {
@@ -1615,6 +1631,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 			pruneMediaPools(movedSnap)
 			mediaDirty = true
+			runCatching { loadDirectory(targetDir) }
 			refreshSilent()
 			val ok = okCount.get()
 			val fail = failCount.get()
@@ -2486,6 +2503,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						}
 					}
 				}
+				runCatching { loadDirectory(targetDir) }
 				refreshSilent()
 				onResult(true, "已移动到 /${targetDir.ifEmpty { "根目录" }}")
 			} else {
