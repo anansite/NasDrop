@@ -7658,8 +7658,8 @@ private fun PhotoGroupDetailSheet(
 						val isDragging = draggedPath == path
 						val meta = remember(path) { PhotoMetadataStore.get(path) }
 						val hasMemo = !meta?.memo.isNullOrBlank() || entry?.hasMemo == true
-						val dateText = remember(entry?.modifiedMs) {
-							val ms = entry?.modifiedMs ?: 0L
+						val dateText = remember(entry?.effectiveDate) {
+							val ms = entry?.effectiveDate ?: 0L
 							if (ms > 0L) java.text.SimpleDateFormat("MM-dd", java.util.Locale.getDefault()).format(java.util.Date(ms)) else ""
 						}
 
