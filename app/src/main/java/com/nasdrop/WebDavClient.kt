@@ -33,6 +33,16 @@ enum class FileCategory(val label: String, val icon: String) {
 	Archive("压缩包", "📦"),
 }
 
+data class PhotoGroup(
+	val id: String,
+	val albumDir: String,
+	val title: String,
+	val memo: String = "",
+	val items: List<String> = emptyList(),
+	val createdAt: Long = 0L,
+	val updatedAt: Long = 0L,
+)
+
 data class DavEntry(
 	val name: String,
 	/** 相对 WebDAV 根的路径，不带首尾斜杠，例如 "Photos/2026" */
@@ -380,6 +390,150 @@ class WebDavClient(
 			}
 		} catch (_: Exception) {
 			null
+		}
+	}
+
+	// ==================== 相册串联组 (Photo Groups) 服务端数据库接口 ====================
+
+	private fun parsePhotoGroup(obj: org.json.JSONObject): PhotoGroup {
+		val arr = obj.optJSONArray("items")
+		val items = mutableListOf<String>()
+		if (arr != null) {
+			for (i in 0 until arr.length()) {
+				val p = arr.optString(i).trim('/')
+				if (p.isNotEmpty()) items.add(p)
+			}
+		}
+		return PhotoGroup(
+			id = obj.optString("id"),
+			albumDir = obj.optString("album_dir"),
+			title = obj.optString("title"),
+			memo = obj.optString("memo", ""),
+			items = items,
+			createdAt = obj.optLong("created_at", 0L),
+			updatedAt = obj.optLong("updated_at", 0L),
+		)
+	}
+
+	fun fetchPhotoGroups(albumDir: String = ""): List<PhotoGroup>? {
+		return try {
+			val urlBuilder = effectiveBase.newBuilder().encodedPath("/api/groups")
+			if (albumDir.isNotBlank()) urlBuilder.addQueryParameter("album", albumDir.trim('/'))
+			val req = Request.Builder().url(urlBuilder.build()).get().build()
+			metaCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return null
+				val body = resp.body?.string() ?: return null
+				val obj = org.json.JSONObject(body)
+				val arr = obj.optJSONArray("groups") ?: return emptyList()
+				val list = mutableListOf<PhotoGroup>()
+				for (i in 0 until arr.length()) {
+					list.add(parsePhotoGroup(arr.getJSONObject(i)))
+				}
+				list
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
+
+	fun createPhotoGroup(albumDir: String, title: String, memo: String, items: List<String>): PhotoGroup? {
+		return try {
+			val payload = org.json.JSONObject().apply {
+				put("album_dir", albumDir.trim('/'))
+				put("title", title)
+				put("memo", memo)
+				put("items", org.json.JSONArray(items.map { it.trim('/') }))
+			}
+			val url = effectiveBase.newBuilder().encodedPath("/api/groups").build()
+			val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+			val req = Request.Builder().url(url).post(body).build()
+			metaCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return null
+				val gObj = org.json.JSONObject(resp.body?.string() ?: return null).optJSONObject("group") ?: return null
+				parsePhotoGroup(gObj)
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
+
+	fun updatePhotoGroup(
+		id: String,
+		title: String? = null,
+		memo: String? = null,
+		items: List<String>? = null,
+		replaceItems: Boolean = false,
+	): PhotoGroup? {
+		return try {
+			val payload = org.json.JSONObject().apply {
+				put("id", id)
+				if (title != null) put("title", title)
+				if (memo != null) put("memo", memo)
+				if (replaceItems && items != null) {
+					put("items", org.json.JSONArray(items.map { it.trim('/') }))
+					put("replace_items", true)
+				}
+			}
+			val url = effectiveBase.newBuilder().encodedPath("/api/groups/update").build()
+			val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+			val req = Request.Builder().url(url).post(body).build()
+			metaCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return null
+				val gObj = org.json.JSONObject(resp.body?.string() ?: return null).optJSONObject("group") ?: return null
+				parsePhotoGroup(gObj)
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
+
+	fun appendPhotoGroupItems(groupId: String, items: List<String>): PhotoGroup? {
+		return try {
+			val payload = org.json.JSONObject().apply {
+				put("group_id", groupId)
+				put("items", org.json.JSONArray(items.map { it.trim('/') }))
+			}
+			val url = effectiveBase.newBuilder().encodedPath("/api/groups/append").build()
+			val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+			val req = Request.Builder().url(url).post(body).build()
+			metaCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return null
+				val gObj = org.json.JSONObject(resp.body?.string() ?: return null).optJSONObject("group") ?: return null
+				parsePhotoGroup(gObj)
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
+
+	fun removePhotoGroupItem(groupId: String, photoPath: String): PhotoGroup? {
+		return try {
+			val payload = org.json.JSONObject().apply {
+				put("group_id", groupId)
+				put("photo_path", photoPath.trim('/'))
+			}
+			val url = effectiveBase.newBuilder().encodedPath("/api/groups/remove-item").build()
+			val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+			val req = Request.Builder().url(url).post(body).build()
+			metaCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return null
+				val gObj = org.json.JSONObject(resp.body?.string() ?: return null).optJSONObject("group") ?: return null
+				parsePhotoGroup(gObj)
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
+
+	fun deletePhotoGroup(groupId: String): Boolean {
+		return try {
+			val payload = org.json.JSONObject().apply { put("id", groupId) }
+			val url = effectiveBase.newBuilder().encodedPath("/api/groups/delete").build()
+			val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+			val req = Request.Builder().url(url).post(body).build()
+			metaCall(req).execute().use { it.isSuccessful }
+		} catch (_: Exception) {
+			false
 		}
 	}
 

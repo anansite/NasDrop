@@ -189,6 +189,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var memoryYearGroups by mutableStateOf<List<MemoryYearGroup>>(emptyList())
 		private set
 
+	/** 相册照片串联组（直接持久化于服务端 SQLite 数据库） */
+	var photoGroups by mutableStateOf<List<PhotoGroup>>(emptyList())
+		private set
+
+	/** 当前打开的串联组 ID（用于从组内放大照片时限定左右滑动范围在组内） */
+	var activePhotoGroupId by mutableStateOf<String?>(null)
+
+	/** 当用户从串联组内点击「+ 追加 -> 新上传照片」时记录目标组 ID，上传完成自动入组 */
+	var pendingAppendGroupId by mutableStateOf<String?>(null)
+
 	/** 媒体筛选模式：全部、仅照片、仅视频、带语音/备忘 */
 	var mediaFilterType by mutableStateOf(MediaFilterType.All)
 
@@ -591,6 +601,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				val finished = owned.filter { it.done && completedIds.add(it.id) }
 				if (finished.isNotEmpty()) {
 					queueUploadRefresh(finished.filter { !it.listed && it.listingActive }.map { it.dir })
+					val targetGroupId = pendingAppendGroupId
+					if (!targetGroupId.isNullOrBlank()) {
+						val okPaths = finished.filter { it.error == null && !it.cancelled }.map { join(it.dir, it.name) }
+						if (okPaths.isNotEmpty()) {
+							appendToPhotoGroup(targetGroupId, okPaths)
+						}
+						if (owned.none { !it.done }) {
+							pendingAppendGroupId = null
+						}
+					}
 				}
 			}
 		}
@@ -1325,7 +1345,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 
 	fun imageAlbum(entry: DavEntry): Pair<List<DavEntry>, Int> {
+		val groupPhotos = activePhotoGroupId?.let { gid ->
+			val group = photoGroups.firstOrNull { it.id == gid }
+			if (group != null) {
+				val photoMap = allPhotos.associateBy { it.path }
+				group.items.mapNotNull { p -> photoMap[p] }.filter { it.isImage }
+			} else null
+		}?.takeIf { it.any { item -> item.path == entry.path } }
+
 		val list = when {
+			groupPhotos != null -> groupPhotos
 			currentTab == MainTab.Photos -> {
 				val timelineItems = photoTimelineGroups.flatMap { it.items }.filter { it.isImage }
 				if (timelineItems.any { it.path == entry.path }) timelineItems else allPhotos.filter { it.isImage }
@@ -1977,6 +2006,144 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 	}
 
+	// ==================== 相册照片串联组（直连服务端数据库） ====================
+
+	fun refreshPhotoGroups(albumDir: String = "") {
+		viewModelScope.launch(Dispatchers.IO) {
+			val list = runCatching { clientOf(app.prefs.current()).fetchPhotoGroups(albumDir) }.getOrNull() ?: return@launch
+			withContext(Dispatchers.Main) {
+				photoGroups = if (albumDir.isBlank()) list else {
+					val clean = albumDir.trim('/')
+					photoGroups.filterNot { it.albumDir == clean } + list
+				}
+			}
+		}
+	}
+
+	fun createPhotoGroup(
+		albumDir: String,
+		title: String,
+		memo: String,
+		selected: List<DavEntry>,
+		onDone: (PhotoGroup?) -> Unit = {},
+	) {
+		val orderedPaths = selected.sortedBy { it.effectiveDate }.map { it.path.trim('/') }.distinct()
+		if (orderedPaths.isEmpty()) {
+			onDone(null)
+			return
+		}
+		val cleanAlbum = albumDir.trim('/')
+		viewModelScope.launch {
+			val created = withContext(Dispatchers.IO) {
+				runCatching {
+					clientOf(app.prefs.current()).createPhotoGroup(
+						albumDir = cleanAlbum,
+						title = title.ifBlank { "照片串联组" },
+						memo = memo.trim(),
+						items = orderedPaths,
+					)
+				}.getOrNull()
+			}
+			if (created != null) {
+				photoGroups = listOf(created) + photoGroups.filterNot { it.id == created.id }
+				exitMultiSelect()
+				uiMessage = "已串联 ${created.items.size} 张照片"
+			} else {
+				uiMessage = "创建串联组失败，请检查服务端是否已升级"
+			}
+			onDone(created)
+		}
+	}
+
+	fun updatePhotoGroup(
+		id: String,
+		title: String? = null,
+		memo: String? = null,
+		items: List<String>? = null,
+		replaceItems: Boolean = false,
+		onDone: (PhotoGroup?) -> Unit = {},
+	) {
+		// 乐观更新本地状态，保证拖拽调序/改备注零延迟
+		photoGroups = photoGroups.map { g ->
+			if (g.id == id) {
+				g.copy(
+					title = title ?: g.title,
+					memo = memo ?: g.memo,
+					items = if (replaceItems && items != null) items else g.items,
+					updatedAt = System.currentTimeMillis(),
+				)
+			} else g
+		}
+		viewModelScope.launch {
+			val updated = withContext(Dispatchers.IO) {
+				runCatching {
+					clientOf(app.prefs.current()).updatePhotoGroup(id, title, memo, items, replaceItems)
+				}.getOrNull()
+			}
+			if (updated != null) {
+				photoGroups = photoGroups.map { if (it.id == updated.id) updated else it }
+			}
+			onDone(updated)
+		}
+	}
+
+	fun appendToPhotoGroup(groupId: String, paths: List<String>, onDone: (Boolean) -> Unit = {}) {
+		val clean = paths.map { it.trim('/') }.filter { it.isNotEmpty() }
+		if (clean.isEmpty()) {
+			onDone(false)
+			return
+		}
+		photoGroups = photoGroups.map { g ->
+			if (g.id == groupId) g.copy(items = (g.items + clean).distinct(), updatedAt = System.currentTimeMillis())
+			else g
+		}
+		viewModelScope.launch {
+			val updated = withContext(Dispatchers.IO) {
+				runCatching { clientOf(app.prefs.current()).appendPhotoGroupItems(groupId, clean) }.getOrNull()
+			}
+			if (updated != null) {
+				photoGroups = photoGroups.map { if (it.id == updated.id) updated else it }
+				uiMessage = "已追加 ${clean.size} 张照片到「${updated.title}」"
+				onDone(true)
+			} else {
+				onDone(false)
+			}
+		}
+	}
+
+	fun removeFromPhotoGroup(groupId: String, photoPath: String) {
+		val clean = photoPath.trim('/')
+		photoGroups = photoGroups.map { g ->
+			if (g.id == groupId) g.copy(items = g.items.filterNot { it == clean }, updatedAt = System.currentTimeMillis())
+			else g
+		}
+		viewModelScope.launch {
+			val updated = withContext(Dispatchers.IO) {
+				runCatching { clientOf(app.prefs.current()).removePhotoGroupItem(groupId, clean) }.getOrNull()
+			}
+			if (updated != null) {
+				photoGroups = photoGroups.map { if (it.id == updated.id) updated else it }
+			}
+		}
+	}
+
+	fun deletePhotoGroup(groupId: String, onDone: (Boolean) -> Unit = {}) {
+		val prev = photoGroups
+		photoGroups = photoGroups.filterNot { it.id == groupId }
+		viewModelScope.launch {
+			val ok = withContext(Dispatchers.IO) {
+				runCatching { clientOf(app.prefs.current()).deletePhotoGroup(groupId) }.getOrDefault(false)
+			}
+			if (ok) {
+				uiMessage = "已解散串联组（原照片已保留）"
+			} else {
+				photoGroups = prev
+				uiMessage = "解散串联组失败"
+			}
+			onDone(ok)
+		}
+	}
+
 	fun cd(entry: DavEntry) {
 		if (entry.isDir) open(entry.path)
 	}
@@ -2202,6 +2369,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		allFolderPaths = allFolderPaths.map { if (hit(it)) replacePath(it) else it }.distinct().sorted()
 		if (hit(selectedAlbumPath)) selectedAlbumPath = replacePath(selectedAlbumPath)
 		if (hit(selectedMediaPath)) selectedMediaPath = replacePath(selectedMediaPath)
+		photoGroups = photoGroups.map { g ->
+			g.copy(items = g.items.map { p -> if (hit(p)) replacePath(p) else p })
+		}
 
 		viewModelScope.launch {
 			val err = runRemote { it.move(entry.path, dest) }
@@ -2347,6 +2517,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		allFolderPaths = allFolderPaths.filterNot { hit(it) }
 		if (hit(selectedAlbumPath)) selectedAlbumPath = ""
 		if (hit(selectedMediaPath)) selectedMediaPath = ""
+		photoGroups = photoGroups.mapNotNull { g ->
+			val remaining = g.items.filterNot { hit(it) }
+			if (remaining.isEmpty()) null else g.copy(items = remaining)
+		}
 	}
 
 	/**
@@ -2421,6 +2595,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					mediaOrder = remoteMeta.mediaOrder
 					viewModelScope.launch(Dispatchers.IO) { app.prefs.setMediaOrder(remoteMeta.mediaOrder) }
 				}
+			}
+		}
+
+		// 同步服务端数据库中的照片串联组
+		val remoteGroups = runCatching { client?.fetchPhotoGroups() }.getOrNull()
+		if (remoteGroups != null) {
+			withContext(Dispatchers.Main) {
+				photoGroups = remoteGroups
 			}
 		}
 

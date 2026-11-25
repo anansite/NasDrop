@@ -181,6 +181,9 @@ import com.nasdrop.DavEntry
 import com.nasdrop.FileCategory
 import com.nasdrop.MediaFilterType
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.ArrowForward
+import com.nasdrop.PhotoGroup
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.History
@@ -289,6 +292,7 @@ fun BrowserScreen(
 	var activeMemoryYearGroup by remember { mutableStateOf<com.nasdrop.MemoryYearGroup?>(null) }
 	var showGameCenterSheet by remember { mutableStateOf(false) }
 	var showRandomPhotoGame by remember { mutableStateOf(false) }
+	var showCreatePhotoGroupDialog by remember { mutableStateOf(false) }
 	LaunchedEffect(transferRequest) {
 		if (transferRequest > 0) showTransferSheet = true
 	}
@@ -319,6 +323,8 @@ fun BrowserScreen(
 				else vm.path
 			}
 			startUpload(uris, target)
+		} else {
+			vm.pendingAppendGroupId = null
 		}
 	}
 
@@ -568,6 +574,7 @@ fun BrowserScreen(
 							PhotoTimelineContent(
 								state = vm.photoGridState,
 								groups = vm.photoTimelineGroups,
+								photoGroups = vm.photoGroups,
 								allAlbums = vm.allAlbumFolders,
 								allPhotos = vm.allPhotos,
 								memoryYearGroups = vm.memoryYearGroups,
@@ -594,6 +601,7 @@ fun BrowserScreen(
 								urlOf = { vm.thumbnailUrlFor(it) },
 								directUrlOf = { vm.directUrlFor(it) },
 								onThumbnailError = { vm.markThumbnailFailed(it) },
+								onOpenPhotoGroup = { g -> vm.activePhotoGroupId = g.id },
 								onOpenImage = onOpenImage,
 								onOpenVideo = onOpenVideo,
 							)
@@ -761,6 +769,9 @@ fun BrowserScreen(
 			} else if (vm.isMultiSelectMode) {
 				BatchActionTray(
 					selectedCount = vm.selectedEntries.size,
+					onCreateGroup = if (vm.currentTab == MainTab.Photos && vm.selectedEntries.any { it.isImage || it.isVideo }) {
+						{ showCreatePhotoGroupDialog = true }
+					} else null,
 					onDownload = {
 						vm.batchDownload(context) {
 							Toast.makeText(context, "已将选中文件加入下载队列", Toast.LENGTH_SHORT).show()
@@ -822,6 +833,72 @@ fun BrowserScreen(
 			onOpenVideo = onOpenVideo,
 			urlOf = { vm.thumbnailUrlFor(it) },
 			directUrlOf = { vm.directUrlFor(it) },
+		)
+	}
+
+	if (showCreatePhotoGroupDialog) {
+		val selectedMedia = vm.selectedEntries.filter { it.isImage || it.isVideo }
+		CreatePhotoGroupDialog(
+			selectedCount = selectedMedia.size,
+			onDismiss = { showCreatePhotoGroupDialog = false },
+			onConfirm = { title, memo ->
+				val albumDir = vm.selectedAlbumPath.ifBlank {
+					selectedMedia.firstOrNull()?.path?.substringBeforeLast('/', "") ?: "Photos/默认相册"
+				}
+				showCreatePhotoGroupDialog = false
+				vm.createPhotoGroup(albumDir, title, memo, selectedMedia) { created ->
+					if (created != null) {
+						vm.exitMultiSelect()
+						vm.activePhotoGroupId = created.id
+						Toast.makeText(context, "已串联成组「${created.title}」", Toast.LENGTH_SHORT).show()
+					} else {
+						Toast.makeText(context, "创建串联组失败", Toast.LENGTH_SHORT).show()
+					}
+				}
+			},
+		)
+	}
+
+	val activeGroup = vm.activePhotoGroupId?.let { gid -> vm.photoGroups.firstOrNull { it.id == gid } }
+	if (activeGroup != null) {
+		val albumPool = remember(vm.allPhotos, activeGroup.albumDir) {
+			if (activeGroup.albumDir.isBlank()) vm.allPhotos
+			else vm.allPhotos.filter { it.path.startsWith("${activeGroup.albumDir.trimEnd('/')}/") }
+		}
+		PhotoGroupDetailSheet(
+			group = activeGroup,
+			allPhotos = vm.allPhotos,
+			albumPhotos = albumPool.ifEmpty { vm.allPhotos },
+			urlOf = { vm.thumbnailUrlFor(it) },
+			onDismiss = { vm.activePhotoGroupId = null },
+			onOpenImage = onOpenImage,
+			onOpenVideo = onOpenVideo,
+			onRenameOrEditMemo = { newTitle, newMemo ->
+				vm.updatePhotoGroup(activeGroup.id, title = newTitle, memo = newMemo)
+			},
+			onReorderItems = { newItems ->
+				vm.updatePhotoGroup(activeGroup.id, items = newItems, replaceItems = true)
+			},
+			onRemoveItem = { path ->
+				vm.removeFromPhotoGroup(activeGroup.id, path)
+			},
+			onAppendExisting = { paths ->
+				vm.appendToPhotoGroup(activeGroup.id, paths) { ok ->
+					if (ok) Toast.makeText(context, "已追加 ${paths.size} 张照片", Toast.LENGTH_SHORT).show()
+				}
+			},
+			onAppendNewUpload = {
+				vm.pendingAppendGroupId = activeGroup.id
+				val targetDir = activeGroup.albumDir.ifBlank { vm.selectedAlbumPath.ifBlank { "Photos/默认相册" } }
+				launchSystemUpload(targetDir)
+			},
+			onDeleteGroup = {
+				val gid = activeGroup.id
+				vm.activePhotoGroupId = null
+				vm.deletePhotoGroup(gid) { ok ->
+					if (ok) Toast.makeText(context, "已解散串联组", Toast.LENGTH_SHORT).show()
+				}
+			},
 		)
 	}
 
@@ -2247,6 +2324,7 @@ private fun MultiSelectHeaderStrip(
 @Composable
 private fun BatchActionTray(
 	selectedCount: Int,
+	onCreateGroup: (() -> Unit)? = null,
 	onDownload: () -> Unit,
 	onMove: () -> Unit,
 	onDelete: () -> Unit,
@@ -2280,10 +2358,13 @@ private fun BatchActionTray(
 			Row(
 				modifier = Modifier
 					.fillMaxWidth()
-					.padding(horizontal = 16.dp, vertical = 12.dp),
+					.padding(horizontal = 12.dp, vertical = 12.dp),
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.SpaceAround,
 			) {
+				if (onCreateGroup != null) {
+					BatchActionItem(icon = Icons.Rounded.Link, label = "串联成组", onClick = onCreateGroup, tint = Color(0xFF00897B))
+				}
 				BatchActionItem(icon = Icons.Rounded.CloudDownload, label = "批量下载", onClick = onDownload)
 				BatchActionItem(icon = Icons.Rounded.DriveFileMove, label = "批量移动", onClick = onMove)
 				BatchActionItem(icon = Icons.Rounded.Delete, label = "彻底删除", onClick = onDelete, tint = MaterialTheme.colorScheme.error)
@@ -3621,6 +3702,7 @@ private fun HomeQuickCard(
 private fun PhotoTimelineContent(
 	state: LazyGridState,
 	groups: List<com.nasdrop.TimelineGroup>,
+	photoGroups: List<PhotoGroup> = emptyList(),
 	allAlbums: List<DavEntry>,
 	allPhotos: List<DavEntry> = emptyList(),
 	memoryYearGroups: List<com.nasdrop.MemoryYearGroup> = emptyList(),
@@ -3647,10 +3729,26 @@ private fun PhotoTimelineContent(
 	urlOf: (String) -> String?,
 	directUrlOf: ((String) -> String?)? = null,
 	onThumbnailError: ((String) -> Unit)? = null,
+	onOpenPhotoGroup: (PhotoGroup) -> Unit = {},
 	onOpenImage: (DavEntry) -> Unit,
 	onOpenVideo: (DavEntry) -> Unit = {},
 ) {
 	val currentPhotos = remember(groups) { groups.flatMap { it.items } }
+	val (groupByFirstPath, collapsedNonFirstPaths) = remember(photoGroups, currentPhotos) {
+		val visibleSet = currentPhotos.mapTo(HashSet()) { it.path }
+		val byFirst = HashMap<String, PhotoGroup>()
+		val collapsed = HashSet<String>()
+		photoGroups.forEach { pg ->
+			val first = pg.items.firstOrNull { visibleSet.contains(it) }
+			if (first != null && !byFirst.containsKey(first)) {
+				byFirst[first] = pg
+				pg.items.forEach { p ->
+					if (p != first) collapsed.add(p)
+				}
+			}
+		}
+		Pair(byFirst, collapsed)
+	}
 	val displayAlbums = remember(allAlbums) {
 		val visible = allAlbums.filterNot {
 			it.name.startsWith(".") || it.path.contains(".thumbnails") ||
@@ -4051,6 +4149,9 @@ private fun PhotoTimelineContent(
 								),
 						) {
 							groups.forEach { group ->
+								val visibleItems = group.items.filterNot { collapsedNonFirstPaths.contains(it.path) }
+								if (visibleItems.isEmpty()) return@forEach
+
 								item(span = { GridItemSpan(3) }) {
 									Row(
 										modifier = Modifier
@@ -4067,7 +4168,7 @@ private fun PhotoTimelineContent(
 											Text("${group.count}张", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 										}
 										if (isMulti) {
-											val isAllGroupSelected = group.items.isNotEmpty() && group.items.all { selectedPaths.contains(it.path) }
+											val isAllGroupSelected = visibleItems.isNotEmpty() && visibleItems.all { selectedPaths.contains(it.path) }
 											Surface(
 												shape = RoundedCornerShape(12.dp),
 												color = if (isAllGroupSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
@@ -4087,8 +4188,9 @@ private fun PhotoTimelineContent(
 									}
 								}
 
-								items(group.items, key = { it.path }) { item ->
+								items(visibleItems, key = { it.path }) { item ->
 									val isSelected = selectedPaths.contains(item.path)
+									val photoGroup = groupByFirstPath[item.path]
 									Box(
 										modifier = Modifier
 											.aspectRatio(1f)
@@ -4098,6 +4200,8 @@ private fun PhotoTimelineContent(
 												onClick = {
 													if (isMulti) {
 														onToggleSelect(item)
+													} else if (photoGroup != null) {
+														onOpenPhotoGroup(photoGroup)
 													} else {
 														if (item.isVideo) {
 															onOpenVideo(item)
@@ -4147,11 +4251,61 @@ private fun PhotoTimelineContent(
 										}
 
 										// 媒体角标覆盖层（麦克风伴随语、文字备忘、视频指示与时长）
-										MediaThumbBadges(
-											entry = item,
-											modifier = Modifier.fillMaxSize().padding(3.dp),
-											compact = false,
-										)
+										if (photoGroup == null) {
+											MediaThumbBadges(
+												entry = item,
+												modifier = Modifier.fillMaxSize().padding(3.dp),
+												compact = false,
+											)
+										} else {
+											// 串联组：保持普通网格尺寸不变，在右上角展示 🔗 N 徽章，底部展示组名与备注预览
+											Box(
+												modifier = Modifier
+													.fillMaxSize()
+													.border(1.5.dp, Color.White.copy(alpha = 0.72f), RoundedCornerShape(6.dp)),
+											)
+											Surface(
+												shape = RoundedCornerShape(10.dp),
+												color = Color(0xFF00695C).copy(alpha = 0.88f),
+												modifier = Modifier
+													.align(Alignment.TopEnd)
+													.padding(5.dp),
+											) {
+												Row(
+													modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+													verticalAlignment = Alignment.CenterVertically,
+													horizontalArrangement = Arrangement.spacedBy(2.dp),
+												) {
+													Icon(Icons.Rounded.Link, contentDescription = null, tint = Color.White, modifier = Modifier.size(11.dp))
+													Text("${photoGroup.items.size}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+												}
+											}
+											Column(
+												modifier = Modifier
+													.align(Alignment.BottomCenter)
+													.fillMaxWidth()
+													.background(Color.Black.copy(alpha = 0.64f))
+													.padding(horizontal = 6.dp, vertical = 4.dp),
+											) {
+												Text(
+													text = photoGroup.title.ifBlank { "串联组" },
+													fontSize = 10.5.sp,
+													fontWeight = FontWeight.Bold,
+													color = Color.White,
+													maxLines = 1,
+													overflow = TextOverflow.Ellipsis,
+												)
+												if (photoGroup.memo.isNotBlank()) {
+													Text(
+														text = photoGroup.memo,
+														fontSize = 9.sp,
+														color = Color.White.copy(alpha = 0.84f),
+														maxLines = 1,
+														overflow = TextOverflow.Ellipsis,
+													)
+												}
+											}
+										}
 
 										// 多选选中时显示精致主题色边框与半透明遮罩
 										if (isMulti && isSelected) {
@@ -7318,6 +7472,586 @@ private fun MemoryDetailModalSheet(
 
 					item(key = "album_spacer_${album.albumPath}") {
 						Spacer(Modifier.height(10.dp))
+					}
+				}
+			}
+		}
+	}
+}
+
+// ==================== 相册照片串联组弹窗与详情页 ====================
+
+@Composable
+private fun CreatePhotoGroupDialog(
+	selectedCount: Int,
+	onDismiss: () -> Unit,
+	onConfirm: (title: String, memo: String) -> Unit,
+) {
+	var title by remember { mutableStateOf("") }
+	var memo by remember { mutableStateOf("") }
+
+	AlertDialog(
+		onDismissRequest = onDismiss,
+		title = { Text("串联成组（已选 $selectedCount 张）", fontWeight = FontWeight.Bold) },
+		text = {
+			Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+				OutlinedTextField(
+					value = title,
+					onValueChange = { title = it },
+					singleLine = true,
+					label = { Text("组名称（如：语文作业）") },
+					modifier = Modifier.fillMaxWidth(),
+				)
+				OutlinedTextField(
+					value = memo,
+					onValueChange = { memo = it },
+					minLines = 2,
+					maxLines = 4,
+					label = { Text("组备注（可选，如：老师布置与完成打卡）") },
+					modifier = Modifier.fillMaxWidth(),
+				)
+			}
+		},
+		confirmButton = {
+			Button(
+				onClick = { onConfirm(title.trim().ifBlank { "照片串联组" }, memo.trim()) },
+			) { Text("创建串联组") }
+		},
+		dismissButton = {
+			TextButton(onClick = onDismiss) { Text("取消") }
+		},
+	)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PhotoGroupDetailSheet(
+	group: PhotoGroup,
+	allPhotos: List<DavEntry>,
+	albumPhotos: List<DavEntry>,
+	urlOf: (String) -> String?,
+	onDismiss: () -> Unit,
+	onOpenImage: (DavEntry) -> Unit,
+	onOpenVideo: (DavEntry) -> Unit,
+	onRenameOrEditMemo: (title: String, memo: String) -> Unit,
+	onReorderItems: (List<String>) -> Unit,
+	onRemoveItem: (String) -> Unit,
+	onAppendExisting: (List<String>) -> Unit,
+	onAppendNewUpload: () -> Unit,
+	onDeleteGroup: () -> Unit,
+) {
+	val photoMap = remember(allPhotos) { allPhotos.associateBy { it.path } }
+	var isReorderMode by remember { mutableStateOf(false) }
+	var showMenu by remember { mutableStateOf(false) }
+	var showEditMetaDialog by remember { mutableStateOf(false) }
+	var showDeleteConfirm by remember { mutableStateOf(false) }
+	var showAppendOptionsSheet by remember { mutableStateOf(false) }
+	var showPickExistingSheet by remember { mutableStateOf(false) }
+
+	val orderedItems = remember(group.items, photoMap) {
+		group.items.map { p -> p to photoMap[p] }
+	}
+
+	Surface(
+		modifier = Modifier
+			.fillMaxSize()
+			.statusBarsPadding()
+			.navigationBarsPadding(),
+		color = MaterialTheme.colorScheme.background,
+	) {
+		Column(modifier = Modifier.fillMaxSize()) {
+			// 顶部栏：返回 + 组名 + 追加 + 菜单
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 8.dp, vertical = 8.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				IconButton(onClick = onDismiss) {
+					Icon(Icons.Rounded.ArrowBack, contentDescription = "返回")
+				}
+				Column(modifier = Modifier.weight(1f)) {
+					Text(
+						text = group.title.ifBlank { "串联组" },
+						fontSize = 18.sp,
+						fontWeight = FontWeight.Bold,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
+					Text(
+						text = "共 ${group.items.size} 张 · 点击照片可放大查看",
+						fontSize = 11.5.sp,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+					)
+				}
+				FilledTonalButton(
+					onClick = { showAppendOptionsSheet = true },
+					contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+					shape = RoundedCornerShape(18.dp),
+				) {
+					Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+					Spacer(Modifier.width(4.dp))
+					Text("追加", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+				}
+				Box {
+					IconButton(onClick = { showMenu = true }) {
+						Icon(Icons.Rounded.MoreVert, contentDescription = "管理组")
+					}
+					DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+						DropdownMenuItem(
+							text = { Text("重命名 / 编辑备注") },
+							leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
+							onClick = {
+								showMenu = false
+								showEditMetaDialog = true
+							},
+						)
+						DropdownMenuItem(
+							text = { Text(if (isReorderMode) "完成顺序调整" else "调整顺序 / 移出照片") },
+							leadingIcon = { Icon(Icons.Rounded.Tune, contentDescription = null) },
+							onClick = {
+								showMenu = false
+								isReorderMode = !isReorderMode
+							},
+						)
+						DropdownMenuItem(
+							text = { Text("解散本组", color = MaterialTheme.colorScheme.error) },
+							leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+							onClick = {
+								showMenu = false
+								showDeleteConfirm = true
+							},
+						)
+					}
+				}
+			}
+
+			// 组备注卡片（绿色强调边框 + 点击可编辑）
+			Surface(
+				onClick = { showEditMetaDialog = true },
+				shape = RoundedCornerShape(14.dp),
+				color = Color(0xFF00897B).copy(alpha = 0.09f),
+				border = BorderStroke(1.dp, Color(0xFF00897B).copy(alpha = 0.28f)),
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 14.dp, vertical = 4.dp),
+			) {
+				Row(
+					modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(8.dp),
+				) {
+					Icon(Icons.Rounded.Edit, contentDescription = null, tint = Color(0xFF00897B), modifier = Modifier.size(16.dp))
+					Text(
+						text = group.memo.ifBlank { "组备注（点击可添加或修改备注）" },
+						fontSize = 13.sp,
+						color = if (group.memo.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+						maxLines = 3,
+						overflow = TextOverflow.Ellipsis,
+					)
+				}
+			}
+
+			// 模式切换条
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 14.dp, vertical = 6.dp),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.SpaceBetween,
+			) {
+				Text(
+					text = if (isReorderMode) "调整模式：可左右移动顺序或移出组" else "组内照片（按串联顺序）",
+					fontSize = 12.5.sp,
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+				)
+				FilterChip(
+					selected = isReorderMode,
+					onClick = { isReorderMode = !isReorderMode },
+					label = { Text(if (isReorderMode) "完成" else "调整顺序", fontSize = 12.sp) },
+				)
+			}
+
+			// 2列大图网格
+			LazyVerticalGrid(
+				columns = GridCells.Fixed(2),
+				contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+				horizontalArrangement = Arrangement.spacedBy(10.dp),
+				verticalArrangement = Arrangement.spacedBy(10.dp),
+				modifier = Modifier.weight(1f),
+			) {
+				items(orderedItems.size, key = { idx -> orderedItems[idx].first }) { idx ->
+					val (path, entry) = orderedItems[idx]
+					val displayName = entry?.name ?: path.substringAfterLast('/')
+					val thumbUrl = urlOf(path)
+
+					Surface(
+						shape = RoundedCornerShape(14.dp),
+						color = MaterialTheme.colorScheme.surfaceVariant,
+						shadowElevation = 2.dp,
+						modifier = Modifier
+							.fillMaxWidth()
+							.aspectRatio(0.92f)
+							.clip(RoundedCornerShape(14.dp))
+							.clickable(enabled = !isReorderMode && entry != null) {
+								if (entry != null) {
+									if (entry.isVideo) onOpenVideo(entry) else onOpenImage(entry)
+								}
+							},
+					) {
+						Box(modifier = Modifier.fillMaxSize()) {
+							if (!thumbUrl.isNullOrBlank()) {
+								AsyncImage(
+									model = thumbUrl,
+									contentDescription = displayName,
+									contentScale = ContentScale.Crop,
+									modifier = Modifier.fillMaxSize(),
+								)
+							} else {
+								Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+									FileIcon(category = FileCategory.Image, isDir = false, size = 36.dp)
+								}
+							}
+
+							// 左上角序号徽章
+							Surface(
+								shape = CircleShape,
+								color = Color(0xFF00695C).copy(alpha = 0.90f),
+								modifier = Modifier
+									.align(Alignment.TopStart)
+									.padding(8.dp),
+							) {
+								Text(
+									text = "${idx + 1}",
+									fontSize = 11.5.sp,
+									fontWeight = FontWeight.Bold,
+									color = Color.White,
+									modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+								)
+							}
+
+							if (isReorderMode) {
+								// 右上角：移出本组（不删除原照片）
+								Surface(
+									onClick = { onRemoveItem(path) },
+									shape = CircleShape,
+									color = MaterialTheme.colorScheme.error.copy(alpha = 0.90f),
+									modifier = Modifier
+										.align(Alignment.TopEnd)
+										.padding(8.dp)
+										.size(28.dp),
+								) {
+									Box(contentAlignment = Alignment.Center) {
+										Icon(Icons.Rounded.Close, contentDescription = "移出本组", tint = Color.White, modifier = Modifier.size(16.dp))
+									}
+								}
+
+								// 底部：前移 / 后移按钮
+								Row(
+									modifier = Modifier
+										.align(Alignment.BottomCenter)
+										.fillMaxWidth()
+										.background(Color.Black.copy(alpha = 0.65f))
+										.padding(horizontal = 8.dp, vertical = 6.dp),
+									horizontalArrangement = Arrangement.SpaceBetween,
+									verticalAlignment = Alignment.CenterVertically,
+								) {
+									IconButton(
+										enabled = idx > 0,
+										onClick = {
+											val mutable = group.items.toMutableList()
+											val tmp = mutable[idx - 1]
+											mutable[idx - 1] = mutable[idx]
+											mutable[idx] = tmp
+											onReorderItems(mutable)
+										},
+										modifier = Modifier.size(30.dp),
+									) {
+										Icon(Icons.Rounded.ArrowBack, contentDescription = "前移", tint = if (idx > 0) Color.White else Color.Gray, modifier = Modifier.size(18.dp))
+									}
+									Text("调序", fontSize = 11.sp, color = Color.White)
+									IconButton(
+										enabled = idx < orderedItems.lastIndex,
+										onClick = {
+											val mutable = group.items.toMutableList()
+											val tmp = mutable[idx + 1]
+											mutable[idx + 1] = mutable[idx]
+											mutable[idx] = tmp
+											onReorderItems(mutable)
+										},
+										modifier = Modifier.size(30.dp),
+									) {
+										Icon(Icons.Rounded.ArrowForward, contentDescription = "后移", tint = if (idx < orderedItems.lastIndex) Color.White else Color.Gray, modifier = Modifier.size(18.dp))
+									}
+								}
+							} else {
+								// 正常模式底部文件名/时间预览
+								Column(
+									modifier = Modifier
+										.align(Alignment.BottomCenter)
+										.fillMaxWidth()
+										.background(Color.Black.copy(alpha = 0.56f))
+										.padding(horizontal = 8.dp, vertical = 6.dp),
+								) {
+									Text(
+										text = displayName,
+										fontSize = 11.sp,
+										color = Color.White,
+										maxLines = 1,
+										overflow = TextOverflow.Ellipsis,
+									)
+								}
+							}
+						}
+					}
+				}
+
+				// 末尾虚线/轻色调“+ 追加照片”卡片
+				item(key = "append_tile") {
+					Surface(
+						onClick = { showAppendOptionsSheet = true },
+						shape = RoundedCornerShape(14.dp),
+						color = Color(0xFF00897B).copy(alpha = 0.08f),
+						border = BorderStroke(1.5.dp, Color(0xFF00897B).copy(alpha = 0.45f)),
+						modifier = Modifier
+							.fillMaxWidth()
+							.aspectRatio(0.92f),
+					) {
+						Column(
+							modifier = Modifier.fillMaxSize(),
+							verticalArrangement = Arrangement.Center,
+							horizontalAlignment = Alignment.CenterHorizontally,
+						) {
+							Icon(Icons.Rounded.Add, contentDescription = null, tint = Color(0xFF00897B), modifier = Modifier.size(32.dp))
+							Spacer(Modifier.height(6.dp))
+							Text("追加照片", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00897B))
+						}
+					}
+				}
+			}
+
+			if (isReorderMode) {
+				Row(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(horizontal = 14.dp, vertical = 10.dp),
+					horizontalArrangement = Arrangement.spacedBy(10.dp),
+				) {
+					OutlinedButton(
+						onClick = { showEditMetaDialog = true },
+						modifier = Modifier.weight(1f),
+					) { Text("重命名 / 备注") }
+					OutlinedButton(
+						onClick = { showDeleteConfirm = true },
+						colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+						modifier = Modifier.weight(1f),
+					) { Text("解散本组") }
+				}
+			}
+		}
+	}
+
+	if (showEditMetaDialog) {
+		var editTitle by remember(group.id) { mutableStateOf(group.title) }
+		var editMemo by remember(group.id) { mutableStateOf(group.memo) }
+		AlertDialog(
+			onDismissRequest = { showEditMetaDialog = false },
+			title = { Text("编辑串联组信息", fontWeight = FontWeight.Bold) },
+			text = {
+				Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+					OutlinedTextField(
+						value = editTitle,
+						onValueChange = { editTitle = it },
+						singleLine = true,
+						label = { Text("组名称") },
+						modifier = Modifier.fillMaxWidth(),
+					)
+					OutlinedTextField(
+						value = editMemo,
+						onValueChange = { editMemo = it },
+						minLines = 2,
+						maxLines = 4,
+						label = { Text("组备注") },
+						modifier = Modifier.fillMaxWidth(),
+					)
+				}
+			},
+			confirmButton = {
+				Button(onClick = {
+					onRenameOrEditMemo(editTitle.trim().ifBlank { "串联组" }, editMemo.trim())
+					showEditMetaDialog = false
+				}) { Text("保存") }
+			},
+			dismissButton = {
+				TextButton(onClick = { showEditMetaDialog = false }) { Text("取消") }
+			},
+		)
+	}
+
+	if (showDeleteConfirm) {
+		AlertDialog(
+			onDismissRequest = { showDeleteConfirm = false },
+			title = { Text("解散串联组？", fontWeight = FontWeight.Bold) },
+			text = { Text("解散后仅取消「${group.title}」的串联关系，组内照片本身不会被删除。") },
+			confirmButton = {
+				Button(
+					onClick = {
+						showDeleteConfirm = false
+						onDeleteGroup()
+					},
+					colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+				) { Text("确认解散") }
+			},
+			dismissButton = {
+				TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
+			},
+		)
+	}
+
+	if (showAppendOptionsSheet) {
+		ModalBottomSheet(onDismissRequest = { showAppendOptionsSheet = false }) {
+			Column(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 20.dp)
+					.padding(bottom = 28.dp),
+				verticalArrangement = Arrangement.spacedBy(10.dp),
+			) {
+				Text("追加照片到「${group.title}」", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+				Surface(
+					onClick = {
+						showAppendOptionsSheet = false
+						showPickExistingSheet = true
+					},
+					shape = RoundedCornerShape(14.dp),
+					color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+					modifier = Modifier.fillMaxWidth(),
+				) {
+					Row(
+						modifier = Modifier.padding(16.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(12.dp),
+					) {
+						Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, tint = Color(0xFF00897B))
+						Column {
+							Text("从相册选择（已上传）", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+							Text("直接勾选当前相册中未入组的照片", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+						}
+					}
+				}
+				Surface(
+					onClick = {
+						showAppendOptionsSheet = false
+						onAppendNewUpload()
+					},
+					shape = RoundedCornerShape(14.dp),
+					color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+					modifier = Modifier.fillMaxWidth(),
+				) {
+					Row(
+						modifier = Modifier.padding(16.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(12.dp),
+					) {
+						Icon(Icons.Rounded.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+						Column {
+							Text("新上传照片", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+							Text("上传完成后自动追加到当前串联组", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (showPickExistingSheet) {
+		PickExistingPhotosForGroupSheet(
+			candidates = albumPhotos.filterNot { group.items.contains(it.path) },
+			urlOf = urlOf,
+			onDismiss = { showPickExistingSheet = false },
+			onConfirm = { picked ->
+				showPickExistingSheet = false
+				if (picked.isNotEmpty()) onAppendExisting(picked)
+			},
+		)
+	}
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PickExistingPhotosForGroupSheet(
+	candidates: List<DavEntry>,
+	urlOf: (String) -> String?,
+	onDismiss: () -> Unit,
+	onConfirm: (List<String>) -> Unit,
+) {
+	var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+	ModalBottomSheet(onDismissRequest = onDismiss) {
+		Column(
+			modifier = Modifier
+				.fillMaxWidth()
+				.heightIn(max = 540.dp)
+				.padding(horizontal = 16.dp)
+				.padding(bottom = 20.dp),
+		) {
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.SpaceBetween,
+			) {
+				Text("从相册选择照片（已选 ${selected.size}）", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+				Button(
+					enabled = selected.isNotEmpty(),
+					onClick = { onConfirm(selected.toList()) },
+				) { Text("确认追加") }
+			}
+			Spacer(Modifier.height(10.dp))
+			if (candidates.isEmpty()) {
+				Box(
+					modifier = Modifier
+						.fillMaxWidth()
+						.height(160.dp),
+					contentAlignment = Alignment.Center,
+				) {
+					Text("当前相册暂无可追加的未入组照片", color = MaterialTheme.colorScheme.onSurfaceVariant)
+				}
+			} else {
+				LazyVerticalGrid(
+					columns = GridCells.Fixed(3),
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
+					verticalArrangement = Arrangement.spacedBy(6.dp),
+					modifier = Modifier.fillMaxWidth(),
+				) {
+					items(candidates, key = { it.path }) { item ->
+						val isPicked = selected.contains(item.path)
+						Box(
+							modifier = Modifier
+								.aspectRatio(1f)
+								.clip(RoundedCornerShape(8.dp))
+								.background(MaterialTheme.colorScheme.surfaceVariant)
+								.clickable {
+									selected = if (isPicked) selected - item.path else selected + item.path
+								},
+						) {
+							val u = urlOf(item.path)
+							if (!u.isNullOrBlank()) {
+								AsyncImage(
+									model = u,
+									contentDescription = item.name,
+									contentScale = ContentScale.Crop,
+									modifier = Modifier.fillMaxSize(),
+								)
+							}
+							if (isPicked) {
+								Box(
+									modifier = Modifier
+										.fillMaxSize()
+										.border(2.5.dp, Color(0xFF00897B), RoundedCornerShape(8.dp))
+										.background(Color(0xFF00897B).copy(alpha = 0.22f)),
+								)
+							}
+						}
 					}
 				}
 			}
