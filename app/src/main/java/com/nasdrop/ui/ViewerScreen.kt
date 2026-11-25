@@ -3665,86 +3665,147 @@ private fun CompanionMemoCapsule(
 	var hasVisualOverflow by remember(memo) { mutableStateOf(false) }
 	val scrollState = rememberScrollState()
 	val canExpand = hasVisualOverflow || isExpanded
+	val screenHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
+	val maxExpandedHeight = screenHeight * 0.46f // 优雅半屏高度
 
 	Surface(
-		shape = RoundedCornerShape(16.dp),
+		shape = RoundedCornerShape(18.dp),
 		color = Color(0xDE0F172A),
 		border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
-		shadowElevation = 6.dp,
+		shadowElevation = 8.dp,
 		modifier = modifier
 			.fillMaxWidth()
-			.clip(RoundedCornerShape(16.dp))
+			.clip(RoundedCornerShape(18.dp))
 			.animateContentSize()
 			.then(
 				if (canExpand) Modifier.clickable { isExpanded = !isExpanded }
 				else Modifier
 			),
 	) {
-		Row(
+		Column(
 			modifier = Modifier
-				.padding(horizontal = 14.dp, vertical = 9.dp)
+				.padding(horizontal = 16.dp, vertical = if (isExpanded) 12.dp else 9.dp)
 				.fillMaxWidth(),
-			verticalAlignment = if (isExpanded) Alignment.Top else Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.spacedBy(8.dp),
 		) {
-			Box(
-				modifier = Modifier
-					.padding(top = if (isExpanded) 3.dp else 0.dp)
-					.width(3.dp)
-					.height(14.dp)
-					.clip(RoundedCornerShape(1.5.dp))
-					.background(accentColor)
-			)
-			Box(
-				modifier = Modifier
-					.weight(1f)
-					.then(
-						if (isExpanded) {
-							Modifier
-								.heightIn(max = 180.dp)
-								.verticalScroll(scrollState)
-						} else {
-							Modifier
-						}
-					)
-			) {
-				Text(
-					text = memo,
-					fontSize = 13.sp,
-					lineHeight = 18.sp,
-					color = Color(0xFFF1F5F9),
-					maxLines = if (isExpanded) Int.MAX_VALUE else 2,
-					overflow = if (isExpanded) TextOverflow.Clip else TextOverflow.Ellipsis,
-					onTextLayout = { textLayoutResult ->
-						if (!isExpanded) {
-							hasVisualOverflow = textLayoutResult.hasVisualOverflow || textLayoutResult.didOverflowHeight
-						}
-					},
-				)
-			}
-			Row(
-				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(2.dp),
-				modifier = Modifier.padding(top = if (isExpanded) 1.dp else 0.dp),
-			) {
-				IconButton(
-					onClick = onEditClick,
-					modifier = Modifier.size(24.dp),
+			if (isExpanded) {
+				Row(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(bottom = 8.dp),
+					horizontalArrangement = Arrangement.SpaceBetween,
+					verticalAlignment = Alignment.CenterVertically,
 				) {
-					Icon(
-						imageVector = Icons.Rounded.EditNote,
-						contentDescription = "编辑记忆",
-						tint = Color(0xFF94A3B8),
-						modifier = Modifier.size(18.dp),
+					Row(
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(6.dp),
+					) {
+						Box(
+							modifier = Modifier
+								.width(3.dp)
+								.height(14.dp)
+								.clip(RoundedCornerShape(1.5.dp))
+								.background(accentColor)
+						)
+						Text(
+							"伴生碎语",
+							fontSize = 12.sp,
+							fontWeight = FontWeight.SemiBold,
+							color = accentColor,
+						)
+					}
+					Row(
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(4.dp),
+					) {
+						IconButton(
+							onClick = onEditClick,
+							modifier = Modifier.size(24.dp),
+						) {
+							Icon(
+								imageVector = Icons.Rounded.EditNote,
+								contentDescription = "编辑记忆",
+								tint = Color(0xFF94A3B8),
+								modifier = Modifier.size(18.dp),
+							)
+						}
+						IconButton(
+							onClick = { isExpanded = false },
+							modifier = Modifier.size(24.dp),
+						) {
+							Icon(
+								imageVector = Icons.Rounded.KeyboardArrowDown,
+								contentDescription = "收起",
+								tint = Color(0xFF94A3B8),
+								modifier = Modifier.size(18.dp),
+							)
+						}
+					}
+				}
+				Box(
+					modifier = Modifier
+						.fillMaxWidth()
+						.heightIn(max = maxExpandedHeight)
+						.verticalScroll(scrollState),
+				) {
+					Text(
+						text = memo,
+						fontSize = 14.sp,
+						lineHeight = 22.sp,
+						color = Color(0xFFF1F5F9),
 					)
 				}
-				if (canExpand) {
-					Icon(
-						imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowDown else Icons.Rounded.KeyboardArrowUp,
-						contentDescription = if (isExpanded) "收起" else "展开",
-						tint = Color(0xFF64748B),
-						modifier = Modifier.size(16.dp),
+			} else {
+				Row(
+					modifier = Modifier.fillMaxWidth(),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(8.dp),
+				) {
+					Box(
+						modifier = Modifier
+							.width(3.dp)
+							.height(14.dp)
+							.clip(RoundedCornerShape(1.5.dp))
+							.background(accentColor)
 					)
+					Box(
+						modifier = Modifier.weight(1f),
+					) {
+						Text(
+							text = memo,
+							fontSize = 13.sp,
+							lineHeight = 18.sp,
+							color = Color(0xFFF1F5F9),
+							maxLines = 2,
+							overflow = TextOverflow.Ellipsis,
+							onTextLayout = { textLayoutResult ->
+								hasVisualOverflow = textLayoutResult.hasVisualOverflow || textLayoutResult.didOverflowHeight
+							},
+						)
+					}
+					Row(
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(2.dp),
+					) {
+						IconButton(
+							onClick = onEditClick,
+							modifier = Modifier.size(24.dp),
+						) {
+							Icon(
+								imageVector = Icons.Rounded.EditNote,
+								contentDescription = "编辑记忆",
+								tint = Color(0xFF94A3B8),
+								modifier = Modifier.size(18.dp),
+							)
+						}
+						if (canExpand) {
+							Icon(
+								imageVector = Icons.Rounded.KeyboardArrowUp,
+								contentDescription = "展开放大查看",
+								tint = Color(0xFF64748B),
+								modifier = Modifier.size(16.dp),
+							)
+						}
+					}
 				}
 			}
 		}
