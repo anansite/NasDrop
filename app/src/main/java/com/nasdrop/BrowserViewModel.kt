@@ -1089,16 +1089,22 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 							baos.toByteArray()
 						}
 					} else {
-						val url = (c.directUrlFor(key) ?: c.urlFor(key)).toString()
+						val url = c.directUrlFor(key) ?: c.urlFor(key)
+						val tmpFile = File(app.cacheDir, "vthumb_${key.hashCode().toUInt().toString(16)}.tmp")
 						val retriever = android.media.MediaMetadataRetriever()
 						try {
-							val headers = HashMap<String, String>()
-							if (s.user.isNotBlank() || s.password.isNotBlank()) {
-								headers["Authorization"] = okhttp3.Credentials.basic(s.user, s.password)
+							val req = okhttp3.Request.Builder().url(url).get().build()
+							val ok = c.metaCall(req).execute().use { resp ->
+								if (!resp.isSuccessful) return@use false
+								val body = resp.body ?: return@use false
+								tmpFile.outputStream().use { out -> body.byteStream().copyTo(out) }
+								tmpFile.length() > 0L
 							}
-							retriever.setDataSource(url, headers)
-							val frame = retriever.getFrameAtTime(1_000_000L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-								?: retriever.getFrameAtTime(0L)
+							val frame = if (ok) {
+								retriever.setDataSource(tmpFile.absolutePath)
+								retriever.getFrameAtTime(1_000_000L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+									?: retriever.getFrameAtTime(0L)
+							} else null
 							if (frame != null) {
 								val scale = (360f / maxOf(frame.width, frame.height).coerceAtLeast(1)).coerceAtMost(1f)
 								val scaled = if (scale < 1f) {
@@ -1116,6 +1122,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 							} else null
 						} finally {
 							runCatching { retriever.release() }
+							runCatching { tmpFile.delete() }
 						}
 					}
 
@@ -1149,6 +1156,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					}
 				}
 			} catch (e: Exception) {
+				backfillingThumbs.remove(key)
 				Log.w("BrowserViewModel", "App 端补齐缩略图失败 path=$key: ${e.message}")
 			}
 		}
@@ -1813,14 +1821,23 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						if (currentTab == MainTab.Photos) {
 							refreshPhotoGroups()
 						}
-						if (selected.isNotBlank()) {
-							try { loadDirectory(selected); mediaError = null }
+						if (selected.isNotBlank() && selected != "__ALL_FOLDERS__") {
+							try {
+								withContext(Dispatchers.IO) {
+									clientOf(app.prefs.current()).syncServerDir(selected)
+								}
+								loadTimelinePage(dir = selected, reset = true)
+								mediaError = null
+							}
 							catch (e: Exception) {
 								if (e is CancellationException) throw e
 								mediaError = e.message ?: "媒体刷新失败"
 								Log.w("BrowserViewModel", "媒体刷新失败 dir=$selected", e)
 							}
 						} else {
+							withContext(Dispatchers.IO) {
+								clientOf(app.prefs.current()).syncServerDir("Photos")
+							}
 							ensureMediaScanned(force = true)
 							withTimeoutOrNull(20_000L) {
 								mediaScanJob?.join()
@@ -2290,10 +2307,56 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}) { it.mkcol(newPath) }
 	}
 
+	private val albumPageOffsets = mutableMapOf<String, Int>()
+	private val albumHasMoreMap = mutableMapOf<String, Boolean>()
+	var timelineLoadingMore by mutableStateOf(false)
+		private set
+
 	fun openAlbum(albumPath: String) {
 		if (selectedAlbumPath != albumPath) {
 			selectedAlbumPath = albumPath
 			viewModelScope.launch { runCatching { photoGridState.scrollToItem(0) } }
+			if (albumPath.isNotBlank() && albumPath != "__ALL_FOLDERS__" && !albumPageOffsets.containsKey(albumPath)) {
+				viewModelScope.launch { loadTimelinePage(dir = albumPath, reset = true) }
+			}
+		}
+	}
+
+	fun loadMoreTimelineIfNeeded() {
+		if (currentTab != MainTab.Photos) return
+		val dirKey = if (selectedAlbumPath == "__ALL_FOLDERS__") "" else selectedAlbumPath.trim('/')
+		if (timelineLoadingMore) return
+		if (albumHasMoreMap[dirKey] != true) return
+		viewModelScope.launch {
+			loadTimelinePage(dir = dirKey, reset = false)
+		}
+	}
+
+	private suspend fun loadTimelinePage(dir: String, reset: Boolean) {
+		val cleanDir = dir.trim('/')
+		val offset = if (reset) 0 else (albumPageOffsets[cleanDir] ?: 0)
+		if (!reset && timelineLoadingMore) return
+		timelineLoadingMore = true
+		try {
+			val cfg = app.prefs.current()
+			val page = withContext(Dispatchers.IO) {
+				clientOf(cfg).fetchServerTimelinePage(limit = 120, offset = offset, dir = cleanDir)
+			} ?: return
+			val newPhotos = page.items.filter { it.isImage }
+			val newVideos = page.items.filter { it.isVideo }
+			withContext(Dispatchers.Main) {
+				if (reset && cleanDir.isEmpty()) {
+					allPhotos = newPhotos.distinctBy { it.path }
+					allVideos = newVideos.distinctBy { it.path }
+				} else {
+					allPhotos = (allPhotos + newPhotos).distinctBy { it.path }
+					allVideos = (allVideos + newVideos).distinctBy { it.path }
+				}
+				albumPageOffsets[cleanDir] = offset + page.items.size
+				albumHasMoreMap[cleanDir] = page.hasMore
+			}
+		} finally {
+			timelineLoadingMore = false
 		}
 	}
 
@@ -2713,33 +2776,52 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 		}
 
+		// 2. 优先走服务端 SQLite 分页拉取第一页（120条，毫秒级首屏，彻底解决单文件夹数千张图卡顿）
+		val page = withContext(Dispatchers.IO) {
+			clientOf(cfg).fetchServerTimelinePage(limit = 120, offset = 0, dir = "")
+		}
+		if (page != null) {
+			withContext(Dispatchers.Main) {
+				allPhotos = page.items.filter { it.isImage }.distinctBy { it.path }
+				allVideos = page.items.filter { it.isVideo }.distinctBy { it.path }
+				albumPageOffsets.clear()
+				albumHasMoreMap.clear()
+				albumPageOffsets[""] = page.items.size
+				albumHasMoreMap[""] = page.hasMore
+			}
+		}
+
+		// 3. 轻量列举相册目录结构（不再递归列举数千张子文件，除非服务端未启用数据库）
 		val rootEntries = loadDirectory("")
 		val albums = mutableListOf<DavEntry>()
 		val mediaAlbums = mutableListOf<DavEntry>()
 		val allDocs = mutableListOf<DavEntry>()
 		allDocs.addAll(rootEntries.filter { !it.isDir && it.isDocument })
 
-		// 默认相册初始化确保存在（不在根目录直接传文件，满足语义对齐）
 		val defaultAlbum = DavEntry(name = "默认相册", path = "Photos/默认相册", isDir = true, modified = System.currentTimeMillis())
 		albums.add(defaultAlbum)
 
-		for (dir in rootEntries.filter { it.isDir && !it.name.startsWith(".") && !it.path.contains(".thumbnails") }) {
+		for (dir in rootEntries.filter { it.isDir && !it.name.startsWith(".") }) {
+			if (page != null && (dir.name.equals("Photos", true) || dir.name == "相册")) {
+				val subDirs = runCatching { clientOf(cfg).list(dir.path) }.getOrDefault(emptyList())
+					.filter { it.isDir && !it.name.startsWith(".") }
+				albums.addAll(subDirs)
+				continue
+			}
 			val sub = scanMediaDirectory(dir.path) ?: continue
 			allDocs.addAll(sub.filter { !it.isDir && it.isDocument })
 			if (dir.name.equals("Photos", true) || dir.name == "相册") {
-				// 深度递归扫描相册目录，确保各层级照片与子文件夹完整入池
 				scanRecursiveMedia(dir.path, maxDepth = 4) { subDir ->
 					albums.add(subDir)
 				}
 			} else if (dir.name.equals("movies", true) || dir.name.equals("Videos", true) || dir.name == "影视" || dir.name == "影音" || dir.name == "视频" || dir.name == "影集") {
-				// 深度递归扫描影视目录，视频分类直接作为常规相册入池
 				scanRecursiveMedia(dir.path, maxDepth = 4) { subDir ->
 					albums.add(subDir)
 					mediaAlbums.add(subDir)
 				}
 			} else {
-				if (sub.any { it.isImage && !it.path.contains(".thumbnails") }) albums.add(dir)
-				if (sub.any { it.isVideo && !it.path.contains(".thumbnails") }) {
+				if (sub.any { it.isImage }) albums.add(dir)
+				if (sub.any { it.isVideo }) {
 					albums.add(dir)
 					mediaAlbums.add(dir)
 				}

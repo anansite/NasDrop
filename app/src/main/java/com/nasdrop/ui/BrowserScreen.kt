@@ -613,6 +613,7 @@ fun BrowserScreen(
 								directUrlOf = { vm.directUrlFor(it) },
 								onThumbnailError = { vm.markThumbnailFailed(it) },
 								onOpenPhotoGroup = { g -> vm.activePhotoGroupId = g.id },
+								onLoadMore = { vm.loadMoreTimelineIfNeeded() },
 								onOpenImage = onOpenImage,
 								onOpenVideo = onOpenVideo,
 							)
@@ -3742,6 +3743,7 @@ private fun PhotoTimelineContent(
 	onClearFilter: () -> Unit = {},
 	isRefreshing: Boolean = false,
 	onRefresh: () -> Unit = {},
+	onLoadMore: () -> Unit = {},
 	isMulti: Boolean = false,
 	selectedPaths: Set<String> = emptySet(),
 	onToggleSelect: (DavEntry) -> Unit = {},
@@ -3811,6 +3813,17 @@ private fun PhotoTimelineContent(
 	var draggingIndex by remember { mutableStateOf<Int?>(null) }
 	var dragOffsetXPx by remember { mutableFloatStateOf(0f) }
 	var activeMemoryYearGroup by remember { mutableStateOf<com.nasdrop.MemoryYearGroup?>(null) }
+
+	val shouldLoadMore by remember {
+		derivedStateOf {
+			val total = state.layoutInfo.totalItemsCount
+			val lastVisible = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+			total > 0 && lastVisible >= (total - 12).coerceAtLeast(0)
+		}
+	}
+	LaunchedEffect(shouldLoadMore) {
+		if (shouldLoadMore) onLoadMore()
+	}
 
 	Column(modifier = Modifier.fillMaxSize()) {
 		// 1. 顶部子相册分类横滑条（紧凑 28dp 统一高度胶囊）
@@ -5088,6 +5101,7 @@ private fun MediaStreamContent(
 	folderIcons: Map<String, String> = emptyMap(),
 	isRefreshing: Boolean = false,
 	onRefresh: () -> Unit = {},
+	onLoadMore: () -> Unit = {},
 	isMulti: Boolean = false,
 	selectedPaths: Set<String> = emptySet(),
 	onToggleSelect: (DavEntry) -> Unit = {},

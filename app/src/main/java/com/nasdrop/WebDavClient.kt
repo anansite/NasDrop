@@ -324,7 +324,13 @@ class WebDavClient(
 		}
 	}
 
-	fun fetchServerTimeline(limit: Int = 100, offset: Int = 0, dir: String = ""): List<DavEntry>? {
+	data class TimelinePage(
+		val items: List<DavEntry>,
+		val total: Int,
+		val hasMore: Boolean,
+	)
+
+	fun fetchServerTimelinePage(limit: Int = 120, offset: Int = 0, dir: String = ""): TimelinePage? {
 		return try {
 			val urlBuilder = effectiveBase.newBuilder().encodedPath("/api/timeline")
 				.addQueryParameter("limit", limit.toString())
@@ -336,7 +342,7 @@ class WebDavClient(
 				if (!resp.isSuccessful) return null
 				val body = resp.body?.string() ?: return null
 				val obj = org.json.JSONObject(body)
-				val items = obj.optJSONArray("items") ?: return emptyList()
+				val items = obj.optJSONArray("items") ?: return TimelinePage(emptyList(), 0, false)
 				val list = mutableListOf<DavEntry>()
 				for (i in 0 until items.length()) {
 					val item = items.getJSONObject(i)
@@ -348,10 +354,29 @@ class WebDavClient(
 					syncServerMetaIntoStore(item)
 					list.add(DavEntry(name = n, path = p, isDir = false, size = s, modified = m, takenAt = t))
 				}
-				list
+				val total = obj.optInt("total", list.size)
+				val hasMore = obj.optBoolean("has_more", false)
+				TimelinePage(list, total, hasMore)
 			}
 		} catch (_: Exception) {
 			null
+		}
+	}
+
+	fun fetchServerTimeline(limit: Int = 100, offset: Int = 0, dir: String = ""): List<DavEntry>? =
+		fetchServerTimelinePage(limit, offset, dir)?.items
+
+	fun syncServerDir(dir: String = "Photos"): Boolean {
+		return try {
+			val urlBuilder = effectiveBase.newBuilder().encodedPath("/api/sync-dir")
+			if (dir.isNotBlank()) urlBuilder.addQueryParameter("dir", dir.trim('/'))
+			val req = Request.Builder()
+				.url(urlBuilder.build())
+				.post("".toRequestBody(null))
+				.build()
+			metaCall(req).execute().use { it.isSuccessful }
+		} catch (_: Exception) {
+			false
 		}
 	}
 
