@@ -49,7 +49,7 @@ object PhotoMetadataStore {
 
 	private const val TAG = "PhotoMetadataStore"
 	private const val DB_NAME = "nasdrop_photos.db"
-	private const val DB_VERSION = 4
+	private const val DB_VERSION = 5
 	private const val TABLE_NAME = "photo_metadata"
 
 	private val ioScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -378,35 +378,6 @@ object PhotoMetadataStore {
 	}
 
 	/**
-	 * 标记伴生缩略图状态
-	 */
-	/**
-	 * 计算照片伴随录音的隐藏文件相对路径（保存在同级目录下，以"."开头，默认不可见）。
-	 * 例如: "family/baby/IMG_001.jpg" -> "family/baby/.IMG_001.m4a"
-	 */
-	fun computeCompanionAudioPath(photoPath: String): String {
-		val clean = photoPath.trim('/')
-		val parentDir = if (clean.contains('/')) clean.substringBeforeLast('/') else ""
-		val fileName = clean.substringAfterLast('/')
-		val baseName = if (fileName.contains('.')) fileName.substringBeforeLast('.') else fileName
-		val dotAudioName = ".$baseName.m4a"
-		return if (parentDir.isEmpty()) dotAudioName else "$parentDir/$dotAudioName"
-	}
-
-	/**
-	 * 计算照片/视频伴随文字备忘的隐藏文件相对路径（保存在同级目录下，以"."开头，以".memo"结尾）。
-	 * 例如: "Photos/作业/IMG_001.jpg" -> "Photos/作业/.IMG_001.memo"
-	 */
-	fun computeCompanionMemoPath(photoPath: String): String {
-		val clean = photoPath.trim('/')
-		val parentDir = if (clean.contains('/')) clean.substringBeforeLast('/') else ""
-		val fileName = clean.substringAfterLast('/')
-		val baseName = if (fileName.contains('.')) fileName.substringBeforeLast('.') else fileName
-		val dotMemoName = ".$baseName.memo"
-		return if (parentDir.isEmpty()) dotMemoName else "$parentDir/$dotMemoName"
-	}
-
-	/**
 	 * 更新照片伴随录音信息（audioPath 为 null 时代表删除伴随录音）。
 	 * 纯文本路径与时长毫秒，绝对不存录音文件二进制。
 	 */
@@ -699,6 +670,13 @@ object PhotoMetadataStore {
 					db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN location_name TEXT NOT NULL DEFAULT ''")
 				} catch (e: Exception) {
 					Log.w(TAG, "DB upgrade to v4 failed: ${e.message}")
+				}
+			}
+			if (oldVersion < 5) {
+				try {
+					db.execSQL("UPDATE $TABLE_NAME SET audio_path = NULL WHERE audio_path IS NOT NULL AND audio_path NOT LIKE '.nasdrop_voices/%'")
+				} catch (e: Exception) {
+					Log.w(TAG, "DB upgrade to v5 failed: ${e.message}")
 				}
 			}
 		}

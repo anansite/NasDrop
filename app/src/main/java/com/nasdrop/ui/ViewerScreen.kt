@@ -281,7 +281,7 @@ fun ImageViewer(
 	DisposableEffect(current.path) {
 		val companionPath = current.photoMeta?.audioPath?.ifBlank { null }
 			?: PhotoMetadataStore.get(current.path)?.audioPath?.ifBlank { null }
-			?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
+			?: ""
 		val directAudio = audioUrlOf?.invoke(companionPath) ?: (audioUrlOf ?: urlOf).invoke(current.path)
 		audioPlayer.onDurationResolved = { dur ->
 			PhotoMetadataStore.updateAudioDuration(current.path, dur)
@@ -602,7 +602,7 @@ fun ImageViewer(
 							onClick = {
 								val companionPath = current.photoMeta?.audioPath?.ifBlank { null }
 									?: PhotoMetadataStore.get(current.path)?.audioPath?.ifBlank { null }
-									?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
+									?: ""
 								val audioUrl = audioUrlOf?.invoke(companionPath) ?: urlOf(companionPath)
 								if (!audioUrl.isNullOrBlank() && audioPlayer.currentUrl != audioUrl) {
 									audioPlayer.prepare(audioUrl)
@@ -743,7 +743,7 @@ fun ImageViewer(
 								onClick = {
 									val companionPath = current.photoMeta?.audioPath?.ifBlank { null }
 										?: PhotoMetadataStore.get(current.path)?.audioPath?.ifBlank { null }
-										?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
+										?: ""
 									val audioUrl = audioUrlOf?.invoke(companionPath) ?: urlOf(companionPath)
 									if (!audioUrl.isNullOrBlank() && audioPlayer.currentUrl != audioUrl) {
 										audioPlayer.prepare(audioUrl)
@@ -1372,7 +1372,7 @@ fun ImageViewer(
 										val (bytes, durMs) = result
 										val companionPath = current.photoMeta?.audioPath?.ifBlank { null }
 			?: PhotoMetadataStore.get(current.path)?.audioPath?.ifBlank { null }
-			?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
+			?: ""
 										PhotoMetadataStore.updateAudio(current.path, companionPath, durMs)
 										val directAudio = audioUrlOf?.invoke(companionPath)
 										if (directAudio != null) {
@@ -1942,7 +1942,7 @@ fun VideoPlayer(
 	DisposableEffect(currentEntry.path) {
 		val companionPath = currentEntry.photoMeta?.audioPath?.ifBlank { null }
 			?: PhotoMetadataStore.get(currentEntry.path)?.audioPath?.ifBlank { null }
-			?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
+			?: ""
 		val directAudioUrl = audioUrlOf?.invoke(companionPath) ?: audioUrlOf?.invoke(currentEntry.path) ?: ""
 		audioPlayer.onDurationResolved = { dur ->
 			PhotoMetadataStore.updateAudioDuration(currentEntry.path, dur)
@@ -2769,7 +2769,7 @@ fun VideoPlayer(
 							onClick = {
 								val companionPath = currentEntry.photoMeta?.audioPath?.ifBlank { null }
 									?: PhotoMetadataStore.get(currentEntry.path)?.audioPath?.ifBlank { null }
-									?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
+									?: ""
 								val audioUrl = audioUrlOf?.invoke(companionPath) ?: ""
 								if (!audioUrl.isNullOrBlank() && audioPlayer.currentUrl != audioUrl) {
 									audioPlayer.prepare(audioUrl)
@@ -2910,7 +2910,7 @@ fun VideoPlayer(
 								onClick = {
 									val companionPath = currentEntry.photoMeta?.audioPath?.ifBlank { null }
 										?: PhotoMetadataStore.get(currentEntry.path)?.audioPath?.ifBlank { null }
-										?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
+										?: ""
 									val audioUrl = audioUrlOf?.invoke(companionPath) ?: ""
 									if (!audioUrl.isNullOrBlank() && audioPlayer.currentUrl != audioUrl) {
 										audioPlayer.prepare(audioUrl)
@@ -3612,7 +3612,7 @@ fun VideoPlayer(
 										val (bytes, durMs) = result
 										val companionPath = currentEntry.photoMeta?.audioPath?.ifBlank { null }
 			?: PhotoMetadataStore.get(currentEntry.path)?.audioPath?.ifBlank { null }
-			?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
+			?: ""
 										PhotoMetadataStore.updateAudio(currentEntry.path, companionPath, durMs)
 										val directAudio = audioUrlOf?.invoke(companionPath)
 										if (directAudio != null) {

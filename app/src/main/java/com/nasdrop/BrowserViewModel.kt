@@ -759,60 +759,18 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	private fun applyDirectoryListing(dir: String, fresh: List<DavEntry>) {
 		val cleanDir = dir.trim('/')
 
-		// 1. 扫描当前目录下存在的隐藏伴生文件（伴生录音与备忘）
-		val companionAudios = fresh.filter {
-			it.name.startsWith(".") && (it.name.endsWith(".m4a") || it.name.endsWith(".aac") || it.name.endsWith(".wav") || it.name.endsWith(".mp3"))
-		}
-		val audioByBaseName = companionAudios.associateBy {
-			val raw = it.name.removePrefix(".")
-			if (raw.contains('.')) raw.substringBeforeLast('.') else raw
-		}
-
-		val companionMemos = fresh.filter {
-			it.name.startsWith(".") && (it.name.endsWith(".memo") || it.name.endsWith(".txt"))
-		}
-		val memoByBaseName = companionMemos.associateBy {
-			val raw = it.name.removePrefix(".")
-			if (raw.contains('.')) raw.substringBeforeLast('.') else raw
-		}
-
-		// 过滤隐藏的 .thumbnails 缩略图目录及点开头目录，不让其干扰主目录浏览
-		val filteredFresh = fresh.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }
+		// 过滤所有点开头目录/隐藏文件，不让其干扰主目录浏览
+		val filteredFresh = fresh.filterNot { it.name.startsWith(".") }
 
 		// 差量对齐：比对远端真实文件，清理已被电脑端删除的孤儿元数据记录（后台 IO 自动执行）
 		PhotoMetadataStore.reconcile(cleanDir, filteredFresh)
 
-		// 注入并同步拍摄时间（takenAt）元数据与伴生资产（内存缓存瞬时更新，后台批量落库）
+		// 注入并同步拍摄时间（takenAt）元数据与伴生资产（全部来自统一新存储与 SQLite）
 		val toPersist = mutableListOf<PhotoMetadata>()
 		val resolvedFresh = filteredFresh.map { entry ->
 			if (entry.isImage || entry.isVideo) {
 				val meta = PhotoMetadataStore.get(entry.path)
-				val fileName = entry.name
-				val baseName = if (fileName.contains('.')) fileName.substringBeforeLast('.') else fileName
-				val matchedAudio = audioByBaseName[baseName]
-				val matchedMemo = memoByBaseName[baseName]
-
-				val audioPath = matchedAudio?.path ?: meta?.audioPath
-				val audioDurationMs = when {
-					(meta?.audioDurationMs ?: 0L) > 0L -> meta!!.audioDurationMs
-					matchedAudio != null -> 1000L // 远端检测到伴生音频文件，自动关联
-					else -> 0L
-				}
-
-				// 远端如果存在伴生备忘文件且本地备忘为空，启动异步拉取
-				if (matchedMemo != null && meta?.memo.isNullOrEmpty()) {
-					viewModelScope.launch(Dispatchers.IO) {
-						val s = app.prefs.current()
-						val content = clientOf(s).downloadText(matchedMemo.path)?.trim()
-						if (!content.isNullOrEmpty()) {
-							withContext(Dispatchers.Main) {
-								PhotoMetadataStore.updateMemo(entry.path, content)
-							}
-						}
-					}
-				}
-
-				val takenAt = if (meta != null && meta.takenAt > 0L && meta.size == entry.size && meta.modified == entry.modified && meta.audioPath == audioPath && meta.audioDurationMs == audioDurationMs) {
+				val takenAt = if (meta != null && meta.takenAt > 0L && meta.size == entry.size && meta.modified == entry.modified) {
 					meta.takenAt
 				} else {
 					val parsed = PhotoTimeParser.parseFromFilename(entry.name) ?: if (entry.created > 0L) entry.created else entry.modified
@@ -824,10 +782,15 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						modified = entry.modified,
 						takenAt = parsed,
 						hasThumbnail = meta?.hasThumbnail == true,
-						audioPath = audioPath,
-						audioDurationMs = audioDurationMs,
+						thumbId = meta?.thumbId ?: "",
+						voiceId = meta?.voiceId ?: "",
+						audioPath = meta?.audioPath,
+						audioDurationMs = meta?.audioDurationMs ?: 0L,
 						memo = meta?.memo,
 						memoUpdatedAt = meta?.memoUpdatedAt ?: 0L,
+						lat = meta?.lat ?: 0.0,
+						lng = meta?.lng ?: 0.0,
+						locationName = meta?.locationName ?: "",
 						mediaType = if (entry.isVideo) 1 else 0,
 					)
 					toPersist.add(newMeta)
@@ -1053,44 +1016,19 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			return directUrlFor(key) ?: urlFor(key)
 		}
 
-		// 1. 优先命中 NAS 根目录公共缩略图库 .nasdrop_thumbs/<thumb_id>.jpg（禁止服务端解码，仅由 App 端生成并上传）
+		// 1. 仅命中 NAS 根目录公共缩略图库 .nasdrop_thumbs/<thumb_id>.jpg（禁止服务端解码与旧式同级 .thumbnails 回退）
 		val meta = PhotoMetadataStore.get(key)
 		if (meta != null && meta.thumbId.isNotBlank()) {
 			val dUrl = client?.directUrlFor(".nasdrop_thumbs/${meta.thumbId}.jpg")?.toString()
 			if (dUrl != null) return dUrl
 		}
-		// 2. 兼容存量同级 .thumbnails/<filename>
-		if (meta != null && meta.hasThumbnail) {
-			val thumbPath = if (meta.dir.isEmpty()) ".thumbnails/${meta.name}" else "${meta.dir}/.thumbnails/${meta.name}"
-			val dUrl = client?.directUrlFor(thumbPath)?.toString()
-			if (dUrl != null) return dUrl
-		}
-		// 3. 若当前图片/视频还没有缩略图，由 App 端异步补齐并上传至 .nasdrop_thumbs
-		if (meta == null || (meta.thumbId.isBlank() && !meta.hasThumbnail)) {
-			scheduleAppThumbBackfill(key)
-		}
-
-		val clientThumb = client?.thumbnailUrl(key)?.toString()
-		if (clientThumb != null) return clientThumb
-
-		// 核心冷启动降级：当 client 尚未就绪时，从 observedConfiguration 或 Prefs.lastSettings 构建确定性缩略图 URL，使 Coil 立即命中本地磁盘缓存
-		val baseUrlStr = client?.baseUrl?.toString() ?: observedConfiguration?.baseUrl ?: Prefs.lastSettings?.baseUrl
-		val baseUrl = baseUrlStr?.toHttpUrlOrNull()
-		if (baseUrl != null) {
-			val encoded = if (key.startsWith("/")) key else "/$key"
-			return baseUrl.newBuilder()
-				.encodedPath("/api/thumbnail")
-				.setQueryParameter("path", encoded)
-				.setQueryParameter("dim", "320")
-				.build().toString()
-		}
+		// 2. 若当前图片/视频还没有公共 thumb_id，由 App 端异步补齐并上传至 .nasdrop_thumbs
+		scheduleAppThumbBackfill(key)
 		return null
 	}
 
 	/**
-	 * 看图器垫底层专用：本地小图 > **真正的服务端缩略图**，没有就返回 null。
-	 * 不能复用 thumbnailUrlFor —— 那对图片会回退成原图 WebDAV 地址，
-	 * 而原图层走的是 /p/?sign= 直链，两个 URL 不互命中缓存，等于把原图下两遍。
+	 * 看图器垫底层专用：本地小图 > 公共缩略图，没有就返回 null。
 	 */
 	fun serverThumbUrlFor(entryPath: String): String? {
 		@Suppress("UNUSED_VARIABLE") val localRev = LocalThumbs.revision
@@ -1102,25 +1040,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		if (meta != null && meta.thumbId.isNotBlank()) {
 			val dUrl = client?.directUrlFor(".nasdrop_thumbs/${meta.thumbId}.jpg")?.toString()
 			if (dUrl != null) return dUrl
-		}
-		if (meta != null && meta.hasThumbnail) {
-			val thumbPath = if (meta.dir.isEmpty()) ".thumbnails/${meta.name}" else "${meta.dir}/.thumbnails/${meta.name}"
-			val dUrl = client?.directUrlFor(thumbPath)?.toString()
-			if (dUrl != null) return dUrl
-		}
-
-		val clientThumb = client?.serverThumbUrl(key)?.toString()
-		if (clientThumb != null) return clientThumb
-
-		val baseUrlStr = client?.baseUrl?.toString() ?: observedConfiguration?.baseUrl ?: Prefs.lastSettings?.baseUrl
-		val baseUrl = baseUrlStr?.toHttpUrlOrNull()
-		if (baseUrl != null) {
-			val encoded = if (key.startsWith("/")) key else "/$key"
-			return baseUrl.newBuilder()
-				.encodedPath("/api/thumbnail")
-				.setQueryParameter("path", encoded)
-				.setQueryParameter("dim", "320")
-				.build().toString()
 		}
 		return null
 	}
@@ -1647,13 +1566,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 							sem.withPermit {
 								try {
 									val meta = PhotoMetadataStore.get(item.path)
-									val companionAudio = meta?.audioPath ?: if (!item.isDir && item.hasAudio) {
-										PhotoMetadataStore.computeCompanionAudioPath(item.path)
-									} else null
-
 									c.delete(item.path, item.isDir)
-									if (!companionAudio.isNullOrEmpty()) {
-										runCatching { c.delete(companionAudio, false) }
+									if (meta != null && meta.voiceId.isNotBlank()) {
+										runCatching { c.delete(".nasdrop_voices/${meta.voiceId}.m4a", false) }
+									}
+									if (meta != null && meta.thumbId.isNotBlank()) {
+										runCatching { c.delete(".nasdrop_thumbs/${meta.thumbId}.jpg", false) }
 									}
 									okCount.incrementAndGet()
 									deleted += item.path
@@ -2500,14 +2418,13 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 		viewModelScope.launch {
 			val meta = PhotoMetadataStore.get(entry.path)
-			val companionAudio = meta?.audioPath ?: if (!entry.isDir && (entry.isImage || entry.isVideo)) {
-				PhotoMetadataStore.computeCompanionAudioPath(entry.path)
-			} else null
-
 			val err = runRemote { client ->
 				client.delete(entry.path, entry.isDir)
-				if (!companionAudio.isNullOrEmpty()) {
-					runCatching { client.delete(companionAudio, false) }
+				if (meta != null && meta.voiceId.isNotBlank()) {
+					runCatching { client.delete(".nasdrop_voices/${meta.voiceId}.m4a", false) }
+				}
+				if (meta != null && meta.thumbId.isNotBlank()) {
+					runCatching { client.delete(".nasdrop_thumbs/${meta.thumbId}.jpg", false) }
 				}
 			}
 			dirCache.clear()
@@ -2524,13 +2441,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				}
 				folderIcons = db.getAllFolderIcons()
 				pruneMediaPools(listOf(entry.path))
-				if (entry.isImage || entry.isVideo) {
-					launch(Dispatchers.IO) {
-						val d = parentOf(entry.path)
-						val thumbPath = if (d.isEmpty()) ".thumbnails/${entry.name}" else "$d/.thumbnails/${entry.name}"
-						runCatching { clientOf(app.prefs.current()).delete(thumbPath, false) }
-					}
-				}
 				onResult(true, null)
 			} else {
 				uiMessage = "删除失败：$err"
@@ -2569,17 +2479,19 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			dirCache.clear()
 			refreshSilent()
 			if (err == null) {
-				LocalThumbs.forget(entry.path)
-				if (entry.isDir) PhotoMetadataStore.moveDir(oldPath, dest) else PhotoMetadataStore.move(oldPath, dest, newName)
-				mediaDirty = true
-				if (entry.isImage || entry.isVideo) {
-					launch(Dispatchers.IO) {
-						val d = parentOf(oldPath)
-						val oldThumb = if (d.isEmpty()) ".thumbnails/${entry.name}" else "$d/.thumbnails/${entry.name}"
-						val newThumb = if (d.isEmpty()) ".thumbnails/$newName" else "$d/.thumbnails/$newName"
-						runCatching { clientOf(app.prefs.current()).move(oldThumb, newThumb) }
+				if (entry.isDir) {
+					LocalThumbs.forget(entry.path)
+					PhotoMetadataStore.moveDir(oldPath, dest)
+				} else {
+					LocalThumbs.move(app, oldPath, dest)
+					PhotoMetadataStore.move(oldPath, dest, newName)
+					PhotoMetadataStore.get(dest)?.let { m ->
+						launch(Dispatchers.IO) {
+							runCatching { clientOf(app.prefs.current()).reportMetadata(listOf(m)) }
+						}
 					}
 				}
+				mediaDirty = true
 				onResult(true, "已重命名为 $newName")
 			} else {
 				uiMessage = "重命名失败：$err"
@@ -3016,12 +2928,15 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		onResult: (Boolean, String?) -> Unit = { _, _ -> },
 	) {
 		val meta = PhotoMetadataStore.get(photoPath)
-		val companionPath = meta?.audioPath ?: PhotoMetadataStore.computeCompanionAudioPath(photoPath)
+		val companionPath = meta?.voiceId?.takeIf { it.isNotBlank() }?.let { ".nasdrop_voices/$it.m4a" }
+			?: meta?.audioPath
 
 		viewModelScope.launch {
 			val s = app.prefs.current()
 			withContext(Dispatchers.IO) {
-				runCatching { clientOf(s).delete(companionPath, false) }
+				if (!companionPath.isNullOrBlank()) {
+					runCatching { clientOf(s).delete(companionPath, false) }
+				}
 				if (meta != null) {
 					runCatching { clientOf(s).reportMetadata(listOf(meta.copy(voiceId = "__CLEAR__", audioDurationMs = 0L))) }
 				}
@@ -3072,8 +2987,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			try {
 				val s = app.prefs.current()
 				val c = clientOf(s)
-				val memoPath = PhotoMetadataStore.computeCompanionMemoPath(photoPath)
-				runCatching { c.delete(memoPath, false) }
 				if (meta != null) {
 					c.reportMetadata(listOf(meta.copy(memo = "__CLEAR__")))
 				}
