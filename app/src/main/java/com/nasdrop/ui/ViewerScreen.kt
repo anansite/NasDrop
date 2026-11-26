@@ -263,7 +263,7 @@ fun ImageViewer(
 	var memoInput by remember { mutableStateOf("") }
 	var showRecordSheet by remember { mutableStateOf(false) }
 	var showDeleteAudioConfirm by remember { mutableStateOf(false) }
-	var isMemoryExpanded by remember(pager.currentPage) { mutableStateOf(false) }
+	var isMemoryExpanded by remember(pager.currentPage) { mutableStateOf(true) }
 
 	val audioPlayer = remember { CompanionAudioPlayer(context) }
 	val audioRecorder = remember { CompanionAudioRecorder(context) }
@@ -1924,7 +1924,7 @@ fun VideoPlayer(
 	var memoInput by remember { mutableStateOf("") }
 	var showRecordSheet by remember { mutableStateOf(false) }
 	var showDeleteAudioConfirm by remember { mutableStateOf(false) }
-	var isMemoryExpanded by remember(currentEntry.path) { mutableStateOf(false) }
+	var isMemoryExpanded by remember(currentEntry.path) { mutableStateOf(true) }
 
 	val audioPlayer = remember { com.nasdrop.CompanionAudioPlayer(context) }
 	val audioRecorder = remember { com.nasdrop.CompanionAudioRecorder(context) }

@@ -10,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.runtime.Composable
@@ -133,81 +134,84 @@ class MainActivity : ComponentActivity() {
 				}
 			}
 
-			when (val r = route) {
-				Route.Browser -> {
-					BackHandler(enabled = vm.activePhotoGroupId != null || vm.isMultiSelectMode || vm.currentTab != MainTab.Home || (!vm.isRoot && vm.currentTab == MainTab.Files)) {
-						if (vm.activePhotoGroupId != null) {
-							vm.activePhotoGroupId = null
-						} else if (vm.isMultiSelectMode) {
-							vm.exitMultiSelect()
-						} else if (vm.currentTab == MainTab.Photos && vm.selectedAlbumPath.isNotBlank()) {
-							vm.upAlbum()
-						} else if (vm.currentTab == MainTab.Media && vm.selectedMediaPath.isNotBlank()) {
-							vm.upMedia()
-						} else if (vm.currentTab == MainTab.Files && !vm.isRoot) {
-							vm.up()
-						} else if (vm.currentTab != MainTab.Home) {
-							vm.currentTab = MainTab.Home
-						}
+			androidx.compose.foundation.layout.Box(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
+				// 保持 BrowserScreen 常驻组合树，点开图片/视频或设置再返回时完整保留各页滚动位置
+				BackHandler(enabled = route == Route.Browser && (vm.activePhotoGroupId != null || vm.isMultiSelectMode || vm.currentTab != MainTab.Home || (!vm.isRoot && vm.currentTab == MainTab.Files))) {
+					if (vm.activePhotoGroupId != null) {
+						vm.activePhotoGroupId = null
+					} else if (vm.isMultiSelectMode) {
+						vm.exitMultiSelect()
+					} else if (vm.currentTab == MainTab.Photos && vm.selectedAlbumPath.isNotBlank()) {
+						vm.upAlbum()
+					} else if (vm.currentTab == MainTab.Media && vm.selectedMediaPath.isNotBlank()) {
+						vm.upMedia()
+					} else if (vm.currentTab == MainTab.Files && !vm.isRoot) {
+						vm.up()
+					} else if (vm.currentTab != MainTab.Home) {
+						vm.currentTab = MainTab.Home
 					}
-					BrowserScreen(
-						vm = vm,
-						mode = BrowserMode.Browse,
-						onOpenImage = { entry ->
-							vm.viewerInitialEntry = entry
-							val (album, index) = vm.imageAlbum(entry)
-							route = Route.Images(album, index)
-						},
-						onOpenVideo = { entry -> route = Route.Video(entry) },
-						onOpenSettings = { vm.currentTab = MainTab.Settings },
-						onLogin = login,
-						transferRequest = transferRequest,
-					)
 				}
+				BrowserScreen(
+					vm = vm,
+					mode = BrowserMode.Browse,
+					onOpenImage = { entry ->
+						vm.viewerInitialEntry = entry
+						val (album, index) = vm.imageAlbum(entry)
+						route = Route.Images(album, index)
+					},
+					onOpenVideo = { entry -> route = Route.Video(entry) },
+					onOpenSettings = { vm.currentTab = MainTab.Settings },
+					onLogin = login,
+					transferRequest = transferRequest,
+				)
 
-				Route.Settings -> {
-					BackHandler { route = Route.Browser }
-					SettingsScreen(vm = vm, onBack = { route = Route.Browser })
-				}
+				when (val r = route) {
+					Route.Browser -> {}
 
-				is Route.Images -> {
-					BackHandler { route = Route.Browser }
-					ImageViewer(
-						images = r.list,
-						startIndex = r.index,
-						urlOf = { path -> vm.directUrlFor(path) },
-						fallbackUrlOf = { path -> vm.urlFor(path) },
-						thumbOf = { vm.thumbnailUrlFor(it) },
-						audioUrlOf = { path -> vm.audioUrlFor(path) },
-						onBack = { currentEntry ->
-							if (currentEntry != null && currentEntry.path != vm.viewerInitialEntry?.path) {
-								vm.syncViewerPosition(currentEntry)
-							}
-							vm.viewerInitialEntry = null
-							route = Route.Browser
-						},
-						onSaveToGallery = { entry, cb -> vm.saveImageToGallery(entry, cb) },
-						onShare = { entry, cb -> vm.prepareShareImage(entry, cb) },
-						onDelete = { entry -> vm.delete(entry) },
-						onSaveAudio = { entry, bytes, dur, cb -> vm.savePhotoVoiceNote(entry.path, bytes, dur, cb) },
-						onDeleteAudio = { entry, cb -> vm.deletePhotoVoiceNote(entry.path, cb) },
-						onSaveMemo = { entry, memo -> vm.savePhotoMemo(entry.path, memo) },
-						onDeleteMemo = { entry -> vm.deletePhotoMemo(entry.path) },
-					)
-				}
+					Route.Settings -> {
+						BackHandler { route = Route.Browser }
+						SettingsScreen(vm = vm, onBack = { route = Route.Browser })
+					}
 
-				is Route.Video -> {
-					VideoPlayer(
-						entry = r.entry,
-						url = vm.directUrlFor(r.entry.path),
-						audioUrlOf = { path -> vm.audioUrlFor(path) },
-						onBack = { route = Route.Browser },
-						onSaveToGallery = { entry, cb -> vm.saveVideoToGallery(entry, cb) },
-						onSaveAudio = { entry, bytes, dur, cb -> vm.savePhotoVoiceNote(entry.path, bytes, dur, cb) },
-						onDeleteAudio = { entry, cb -> vm.deletePhotoVoiceNote(entry.path, cb) },
-						onSaveMemo = { entry, memo -> vm.savePhotoMemo(entry.path, memo) },
-						onDeleteMemo = { entry -> vm.deletePhotoMemo(entry.path) },
-					)
+					is Route.Images -> {
+						BackHandler { route = Route.Browser }
+						ImageViewer(
+							images = r.list,
+							startIndex = r.index,
+							urlOf = { path -> vm.directUrlFor(path) },
+							fallbackUrlOf = { path -> vm.urlFor(path) },
+							thumbOf = { vm.thumbnailUrlFor(it) },
+							audioUrlOf = { path -> vm.audioUrlFor(path) },
+							onBack = { currentEntry ->
+								if (currentEntry != null && currentEntry.path != vm.viewerInitialEntry?.path) {
+									vm.syncViewerPosition(currentEntry)
+								}
+								vm.viewerInitialEntry = null
+								route = Route.Browser
+							},
+							onSaveToGallery = { entry, cb -> vm.saveImageToGallery(entry, cb) },
+							onShare = { entry, cb -> vm.prepareShareImage(entry, cb) },
+							onDelete = { entry -> vm.delete(entry) },
+							onSaveAudio = { entry, bytes, dur, cb -> vm.savePhotoVoiceNote(entry.path, bytes, dur, cb) },
+							onDeleteAudio = { entry, cb -> vm.deletePhotoVoiceNote(entry.path, cb) },
+							onSaveMemo = { entry, memo -> vm.savePhotoMemo(entry.path, memo) },
+							onDeleteMemo = { entry -> vm.deletePhotoMemo(entry.path) },
+						)
+					}
+
+					is Route.Video -> {
+						VideoPlayer(
+							entry = r.entry,
+							url = vm.directUrlFor(r.entry.path),
+							audioUrlOf = { path -> vm.audioUrlFor(path) },
+							onBack = { route = Route.Browser },
+							onSaveToGallery = { entry, cb -> vm.saveVideoToGallery(entry, cb) },
+							onSaveAudio = { entry, bytes, dur, cb -> vm.savePhotoVoiceNote(entry.path, bytes, dur, cb) },
+							onDeleteAudio = { entry, cb -> vm.deletePhotoVoiceNote(entry.path, cb) },
+							onSaveMemo = { entry, memo -> vm.savePhotoMemo(entry.path, memo) },
+							onDeleteMemo = { entry -> vm.deletePhotoMemo(entry.path) },
+						)
+					}
 				}
 			}
 

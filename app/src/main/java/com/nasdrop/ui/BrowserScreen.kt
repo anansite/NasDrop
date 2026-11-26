@@ -569,7 +569,7 @@ fun BrowserScreen(
 										} else if (entry.isVideo) {
 											onOpenVideo(entry)
 										} else {
-											activeEntryForAction = entry
+											vm.openWithExternalViewer(context, entry)
 										}
 									},
 									onLongClickEntry = { entry ->
@@ -961,6 +961,12 @@ fun BrowserScreen(
 				Toast.makeText(context, "已加入下载队列: ${entry.name}", Toast.LENGTH_SHORT).show()
 				showTransferSheet = true
 			},
+			onOpenExternal = if (!entry.isDir && !entry.isImage && !entry.isVideo) {
+				{
+					activeEntryForAction = null
+					vm.openWithExternalViewer(context, entry)
+				}
+			} else null,
 			onMove = {
 				activeEntryForAction = null
 				activeEntryForMove = entry
@@ -1164,9 +1170,14 @@ fun BrowserScreen(
 
 	// 批量移动对话框
 	if (showBatchMoveSheet) {
-		val batchCurrentPath = when (vm.currentTab) {
-			MainTab.Photos -> vm.selectedAlbumPath.takeIf { it.isNotBlank() && it != "__ALL_FOLDERS__" } ?: ""
-			MainTab.Media -> vm.selectedMediaPath.takeIf { it.isNotBlank() && it != "__ALL_FOLDERS__" } ?: ""
+		val selectedDirs = vm.selectedEntries
+			.map { it.path.trim('/').substringBeforeLast('/', "") }
+			.distinct()
+		val batchCurrentPath: String? = when {
+			selectedDirs.size == 1 -> selectedDirs.first()
+			selectedDirs.size > 1 -> null
+			vm.currentTab == MainTab.Photos -> vm.selectedAlbumPath.takeIf { it.isNotBlank() && it != "__ALL_FOLDERS__" }
+			vm.currentTab == MainTab.Media -> vm.selectedMediaPath.takeIf { it.isNotBlank() && it != "__ALL_FOLDERS__" }
 			else -> vm.path
 		}
 		LaunchedEffect(Unit) { vm.refreshMoveFolders() }
@@ -4922,16 +4933,16 @@ private fun TimelineDateScrubber(
 		}
 	}
 
-	// 动态焦点展开：所有年份主干始终完整显示（绝不省略任何年份），仅对当前所在年份动态展开邻近月份
+	// 跳到哪一年，就只展开那一年的全部月份，其他年份全部折叠；位置与显隐均做丝滑动画
 	val density = LocalDensity.current
-	val visibleMilestones = remember(milestones, activeYear, currentGroupIdx, isDragging, trackHeightPx) {
-		if (milestones.size <= 2) return@remember milestones
+	val displayFractions = remember(milestones, activeYear, trackHeightPx) {
+		if (milestones.size <= 2) return@remember milestones.associateWith { it.fraction }
 		val trackH = with(density) { (trackHeightPx - 20.dp.toPx()).coerceAtLeast(1f) }
-		val minMonthGapFrac = with(density) { (22.dp.toPx() / trackH).coerceIn(0.05f, 0.25f) }
+		val minMonthGapFrac = with(density) { (18.dp.toPx() / trackH).coerceIn(0.04f, 0.16f) }
 		val minYearGapFrac = with(density) { (18.dp.toPx() / trackH).coerceIn(0.03f, 0.14f) }
-		val placed = mutableListOf<ScrubberMilestone>()
+		val placed = mutableListOf<Pair<ScrubberMilestone, Float>>()
 
-		// 1. 强制放入全部年份（绝不省略任何年份），若相邻年份过于密集则双向微调位置防重叠
+		// 1. 强制放入全部年份主干，防重叠微调
 		val allYears = milestones.filter { it.isYear }.sortedBy { it.fraction }
 		val yearFracs = allYears.map { it.fraction }.toMutableList()
 		for (i in 1 until yearFracs.size) {
@@ -4948,60 +4959,43 @@ private fun TimelineDateScrubber(
 			}
 		}
 		for (i in allYears.indices) {
-			val yItem = allYears[i]
-			val f = yearFracs[i]
-			placed.add(if (f != yItem.fraction) yItem.copy(fraction = f) else yItem)
+			placed.add(allYears[i] to yearFracs[i])
 		}
 
-		fun tryAddMonthOrAnchor(m: ScrubberMilestone): Boolean {
-			if (placed.none { kotlin.math.abs(it.fraction - m.fraction) < minMonthGapFrac }) {
-				placed.add(m)
-				return true
+		// 2. 非年份的纯锚点（如“近期”“更早”）
+		for (m in milestones.filter { !it.isYear && it.year.isEmpty() }) {
+			if (placed.none { kotlin.math.abs(it.second - m.fraction) < minMonthGapFrac }) {
+				placed.add(m to m.fraction)
 			}
-			return false
 		}
 
-		// 2. 首尾非年份锚点（如“近期”“更早”）
-		val firstNonYear = milestones.firstOrNull { !it.isYear }
-		if (firstNonYear != null) tryAddMonthOrAnchor(firstNonYear)
-		val lastNonYear = milestones.lastOrNull { !it.isYear }
-		if (lastNonYear != null && lastNonYear != firstNonYear) tryAddMonthOrAnchor(lastNonYear)
-
-		// 3. 自动展开当前滑动/浏览所在年份的邻近月份（离当前焦点越近优先级越高）；
-		//    若原始位置紧邻年份刻度，则向最近空隙微调偏移，确保滑到对应年份时必定展开月份
+		// 3. 展开当前所在年份的全部分月（不限数量），其余年份月份全部折叠；碰撞时微调到最近空隙
 		if (activeYear.isNotEmpty()) {
 			val activeYearMonths = milestones
 				.filter { it.year == activeYear && !it.isYear }
-				.sortedBy { kotlin.math.abs(it.groupIndex - currentGroupIdx) }
-			val maxExpand = if (isDragging) 6 else 3
-			var expandedCount = 0
+				.sortedBy { it.fraction }
 			for (m in activeYearMonths) {
-				if (expandedCount >= maxExpand) break
-				if (tryAddMonthOrAnchor(m)) {
-					expandedCount++
+				if (placed.none { kotlin.math.abs(it.second - m.fraction) < minMonthGapFrac }) {
+					placed.add(m to m.fraction)
 				} else {
 					var nudgedFrac: Float? = null
-					for (step in 1..6) {
+					for (step in 1..12) {
 						val up = (m.fraction - step * minMonthGapFrac).coerceAtLeast(0.02f)
-						if (placed.none { kotlin.math.abs(it.fraction - up) < minMonthGapFrac }) {
+						if (placed.none { kotlin.math.abs(it.second - up) < minMonthGapFrac }) {
 							nudgedFrac = up
 							break
 						}
 						val down = (m.fraction + step * minMonthGapFrac).coerceAtMost(0.98f)
-						if (placed.none { kotlin.math.abs(it.fraction - down) < minMonthGapFrac }) {
+						if (placed.none { kotlin.math.abs(it.second - down) < minMonthGapFrac }) {
 							nudgedFrac = down
 							break
 						}
 					}
-					if (nudgedFrac != null) {
-						placed.add(m.copy(fraction = nudgedFrac))
-						expandedCount++
-					}
+					placed.add(m to (nudgedFrac ?: m.fraction))
 				}
 			}
 		}
-
-		placed.sortedBy { it.groupIndex }
+		placed.toMap()
 	}
 
 	val currentSelectedIdx = if (isDragging) activeGroupIdx else visibleGroupIdx
@@ -5071,30 +5065,64 @@ private fun TimelineDateScrubber(
 					)
 			)
 
-			// 时间刻度里程碑（按轨道高度自动间距过滤，清晰不重叠）
-			visibleMilestones.forEach { m ->
-				Row(
-					modifier = Modifier
-						.align(Alignment.TopEnd)
-						.offset {
-							val yOffset = ((trackHeightPx - 20.dp.toPx()).coerceAtLeast(0f) * m.fraction).roundToInt()
-							IntOffset(x = 0, y = yOffset)
+			// 时间刻度里程碑：年份主干常驻，当前年月份丝滑展开、其他年份月份自动折叠
+			milestones.forEach { m ->
+				androidx.compose.runtime.key("${m.year}_${m.label}_${m.isYear}") {
+					val targetFrac = displayFractions[m]
+					val isVisible = targetFrac != null
+					val animFrac by animateFloatAsState(
+						targetValue = targetFrac ?: m.fraction,
+						animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
+						label = "scrubberFrac",
+					)
+					val animAlpha by animateFloatAsState(
+						targetValue = if (isVisible) 1f else 0f,
+						animationSpec = tween(durationMillis = if (isVisible) 220 else 140),
+						label = "scrubberAlpha",
+					)
+					val animScale by animateFloatAsState(
+						targetValue = if (isVisible) 1f else 0.72f,
+						animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+						label = "scrubberScale",
+					)
+					if (animAlpha > 0.01f) {
+						Row(
+							modifier = Modifier
+								.align(Alignment.TopEnd)
+								.offset {
+									val yOffset = ((trackHeightPx - 20.dp.toPx()).coerceAtLeast(0f) * animFrac).roundToInt()
+									IntOffset(x = 0, y = yOffset)
+								}
+								.graphicsLayer {
+									alpha = animAlpha
+									scaleX = animScale
+									scaleY = animScale
+								}
+								.padding(end = 10.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(3.dp),
+						) {
+							Text(
+								text = m.label,
+								fontSize = if (m.isYear) 9.5.sp else 9.sp,
+								fontWeight = FontWeight.Bold,
+								color = if (m.isYear && m.year == activeYear) {
+									MaterialTheme.colorScheme.primary
+								} else {
+									MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+								},
+							)
+							Box(
+								modifier = Modifier
+									.size(if (m.isYear && m.year == activeYear) 4.5.dp else 3.5.dp)
+									.background(
+										if (m.isYear && m.year == activeYear) MaterialTheme.colorScheme.primary
+										else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+										CircleShape,
+									)
+							)
 						}
-						.padding(end = 10.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(3.dp),
-				) {
-					Text(
-						text = m.label,
-						fontSize = 9.sp,
-						fontWeight = FontWeight.Bold,
-						color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-					)
-					Box(
-						modifier = Modifier
-							.size(3.5.dp)
-							.background(MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), CircleShape)
-					)
+					}
 				}
 			}
 
@@ -6483,6 +6511,7 @@ private fun ActionBottomSheet(
 	isProtected: Boolean = false,
 	onDismiss: () -> Unit,
 	onDownload: () -> Unit,
+	onOpenExternal: (() -> Unit)? = null,
 	onMove: () -> Unit,
 	onRename: () -> Unit,
 	onDelete: () -> Unit,
@@ -6520,6 +6549,14 @@ private fun ActionBottomSheet(
 				modifier = Modifier.fillMaxWidth(),
 				horizontalArrangement = Arrangement.SpaceAround,
 			) {
+				if (onOpenExternal != null) {
+					ActionSheetBtn(
+						icon = Icons.Rounded.Description,
+						label = "外部打开",
+						onClick = onOpenExternal,
+						tint = MaterialTheme.colorScheme.primary,
+					)
+				}
 				if (!entry.isDir) {
 					ActionSheetBtn(
 						icon = Icons.Rounded.CloudDownload,
@@ -6815,7 +6852,7 @@ fun UploadConflictDialog(vm: BrowserViewModel) {
 @Composable
 private fun MoveFolderSheet(
 	folderPaths: List<String>,
-	currentPath: String,
+	currentPath: String?,
 	onCreateAlbum: ((String) -> String)? = null,
 	onSelectTarget: (String) -> Unit,
 	onDismiss: () -> Unit,
@@ -6823,7 +6860,7 @@ private fun MoveFolderSheet(
 	var query by remember { mutableStateOf("") }
 	var showNewAlbum by remember { mutableStateOf(false) }
 	var newAlbumName by remember { mutableStateOf("") }
-	val normCurrent = currentPath.trim('/')
+	val normCurrent = currentPath?.trim('/')
 	val filtered = remember(folderPaths, query) {
 		val q = query.trim().lowercase()
 		if (q.isEmpty()) folderPaths
@@ -6857,13 +6894,19 @@ private fun MoveFolderSheet(
 			) {
 				Column {
 					Text("选择移动目标目录", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-					if (normCurrent.isNotEmpty()) {
+					if (normCurrent != null) {
 						Text(
-							"当前：/$normCurrent",
+							if (normCurrent.isEmpty()) "当前：根目录 (/)" else "当前：/$normCurrent",
 							fontSize = 11.5.sp,
 							color = MaterialTheme.colorScheme.onSurfaceVariant,
 							maxLines = 1,
 							overflow = TextOverflow.Ellipsis,
+						)
+					} else {
+						Text(
+							"当前：多个目录",
+							fontSize = 11.5.sp,
+							color = MaterialTheme.colorScheme.onSurfaceVariant,
 						)
 					}
 				}
@@ -6934,7 +6977,7 @@ private fun MoveFolderSheet(
 			) {
 				@Composable
 				fun FolderRow(fPath: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color) {
-					val isCurrent = fPath == normCurrent
+					val isCurrent = normCurrent != null && fPath == normCurrent
 					val displayName = when {
 						fPath.isEmpty() -> "根目录"
 						else -> fPath.substringAfterLast('/')

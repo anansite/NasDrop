@@ -1931,6 +1931,74 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	fun clearFinishedTransfers() { Uploads.clearFinished(); downloads.clearFinished() }
 
+	/** 下载并缓存到本地后调用手机外部查看器（如 WPS、系统浏览器、阅读器等）打开 */
+	fun openWithExternalViewer(context: Context, entry: DavEntry) {
+		if (entry.isDir) return
+		viewModelScope.launch {
+			toast("正在准备打开「${entry.name}」…")
+			val result = withContext(Dispatchers.IO) {
+				runCatching {
+					val dir = File(context.cacheDir, "external_open").apply { mkdirs() }
+					val safeName = entry.name.replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank { "file" }
+					val localFile = File(dir, safeName)
+					if (!localFile.exists() || (entry.size > 0L && localFile.length() != entry.size)) {
+						val tmpFile = File(dir, "$safeName.part")
+						val c = clientOf(app.prefs.current())
+						tmpFile.outputStream().use { out ->
+							c.download(entry.path, out, onProgress = { _, _ -> })
+						}
+						if (localFile.exists()) localFile.delete()
+						if (!tmpFile.renameTo(localFile)) {
+							tmpFile.copyTo(localFile, overwrite = true)
+							tmpFile.delete()
+						}
+					}
+					localFile
+				}
+			}
+			result.onSuccess { localFile ->
+				runCatching {
+					val uri = androidx.core.content.FileProvider.getUriForFile(
+						context,
+						"${context.packageName}.fileprovider",
+						localFile,
+					)
+					val ext = entry.ext.lowercase()
+					val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+						?: when (ext) {
+							"pdf" -> "application/pdf"
+							"doc" -> "application/msword"
+							"docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+							"xls" -> "application/vnd.ms-excel"
+							"xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+							"ppt" -> "application/vnd.ms-powerpoint"
+							"pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+							"wps" -> "application/kswps"
+							"et" -> "application/kset"
+							"dps" -> "application/ksdps"
+							"txt", "md", "log", "csv", "json", "xml", "yml", "yaml" -> "text/plain"
+							"html", "htm" -> "text/html"
+							"apk" -> "application/vnd.android.package-archive"
+							"zip" -> "application/zip"
+							else -> "*/*"
+						}
+					val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+						setDataAndType(uri, mime)
+						addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+					}
+					context.startActivity(
+						Intent.createChooser(viewIntent, "选择应用打开").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+					)
+				}.onFailure {
+					toast("未找到可打开此文件的应用，可先下载到本地")
+				}
+			}.onFailure { e ->
+				if (e is CancellationException) throw e
+				toast("打开失败：${e.message ?: "请检查网络"}")
+			}
+		}
+	}
+
 	/** 上传结果定位到远端目录；下载结果通过临时只读 URI 授权交给系统查看器。 */
 	fun openTransferResult(context: Context, taskId: String) {
 		val task = transferTasks.firstOrNull { it.id == taskId && it.status == TransferStatus.COMPLETED } ?: return
@@ -2788,7 +2856,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		if (hit(selectedAlbumPath)) selectedAlbumPath = replacePath(selectedAlbumPath)
 		if (hit(selectedMediaPath)) selectedMediaPath = replacePath(selectedMediaPath)
 		photoGroups = photoGroups.map { g ->
-			g.copy(items = g.items.map { p -> if (hit(p)) replacePath(p) else p })
+			val newAlbumDir = if (hit(g.albumDir)) replacePath(g.albumDir) else g.albumDir
+			g.copy(albumDir = newAlbumDir, items = g.items.map { p -> if (hit(p)) replacePath(p) else p })
+		}
+		if (entry.isDir) {
+			val updatedIcons = folderIcons.entries.associate { (k, v) ->
+				(if (hit(k)) replacePath(k) else k) to v
+			}
+			if (updatedIcons != folderIcons) {
+				folderIcons = updatedIcons
+			}
 		}
 
 		viewModelScope.launch {
