@@ -3331,7 +3331,9 @@ private fun HomeScreenContent(
 		(vm.allPhotos + vm.allVideos).distinctBy { it.path }
 			.sortedByDescending { it.effectiveDate }
 	}
-	val recentItems = remember(allMedia) { allMedia.take(12) }
+	val recentItems = remember(allMedia) {
+		allMedia.sortedByDescending { it.modified }.take(12)
+	}
 
 	// 进入首页即刷新服务端概览（方法内置 2 秒节流，重复进入不会造成请求风暴）
 	LaunchedEffect(Unit) { vm.refreshServerStats() }
@@ -4265,7 +4267,7 @@ private fun PhotoTimelineContent(
 								val visibleItems = group.items.filterNot { collapsedNonFirstPaths.contains(it.path) }
 								if (visibleItems.isEmpty()) return@forEach
 
-								item(span = { GridItemSpan(3) }) {
+								item(key = "hdr_${group.dateTitle}", span = { GridItemSpan(3) }) {
 									Row(
 										modifier = Modifier
 											.fillMaxWidth()
@@ -4907,19 +4909,31 @@ private fun TimelineDateScrubber(
 	var activeGroupIdx by remember { mutableIntStateOf(0) }
 	var trackHeightPx by remember { mutableFloatStateOf(1f) }
 
-	// 联动计算：未拖动时跟随列表当前首个可见 item 对应的 group
-	val visibleGroupIdx by remember(groups, state.firstVisibleItemIndex) {
+	// 联动计算：未拖动时按当前可见分组标题与滚动边界对齐（到底必达最后一组，到顶必达第 0 组）
+	val groupIndexByTitle = remember(groups) {
+		groups.mapIndexed { idx, g -> "hdr_${g.dateTitle}" to idx }.toMap()
+	}
+	val visibleGroupIdx by remember(groups, state) {
 		derivedStateOf {
-			val first = state.firstVisibleItemIndex
-			var matched = 0
-			for (i in groupStartIndices.indices) {
-				if (groupStartIndices[i] <= first) {
-					matched = i
-				} else {
-					break
-				}
+			if (!state.canScrollBackward) return@derivedStateOf 0
+			if (!state.canScrollForward && state.canScrollBackward) return@derivedStateOf groups.lastIndex
+			val info = state.layoutInfo
+			val matchedHdr = info.visibleItemsInfo.firstNotNullOfOrNull { item ->
+				(item.key as? String)?.let { groupIndexByTitle[it] }
 			}
-			matched
+			if (matchedHdr != null) return@derivedStateOf matchedHdr
+			val maxFirst = (info.totalItemsCount - info.visibleItemsInfo.size).coerceAtLeast(1)
+			val ratio = (state.firstVisibleItemIndex.toFloat() / maxFirst).coerceIn(0f, 1f)
+			(ratio * (groups.size - 1)).roundToInt().coerceIn(0, groups.lastIndex)
+		}
+	}
+	val scrollProgress by remember(state) {
+		derivedStateOf {
+			if (!state.canScrollBackward) return@derivedStateOf 0f
+			if (!state.canScrollForward && state.canScrollBackward) return@derivedStateOf 1f
+			val info = state.layoutInfo
+			val maxFirst = (info.totalItemsCount - info.visibleItemsInfo.size).coerceAtLeast(1)
+			(state.firstVisibleItemIndex.toFloat() / maxFirst).coerceIn(0f, 1f)
 		}
 	}
 
@@ -5127,7 +5141,7 @@ private fun TimelineDateScrubber(
 			}
 
 			// 随当前位置滑动的圆润指示胶囊
-			val targetFraction = if (isDragging) dragFraction else (currentSelectedIdx.toFloat() / (groups.size - 1).coerceAtLeast(1))
+			val targetFraction = if (isDragging) dragFraction else scrollProgress
 			val animatedFraction by animateFloatAsState(
 				targetValue = targetFraction.coerceIn(0f, 1f),
 				animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
@@ -5533,7 +5547,7 @@ private fun MediaStreamContent(
 						) {
 							if (groups.isNotEmpty()) {
 								groups.forEach { group ->
-									item(span = { GridItemSpan(2) }) {
+									item(key = "hdr_${group.dateTitle}", span = { GridItemSpan(2) }) {
 										Row(
 											modifier = Modifier
 												.fillMaxWidth()
