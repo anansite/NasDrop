@@ -6261,11 +6261,19 @@ private fun TransferCenterSheet(
 					Text(if (tasks.isEmpty()) "暂无传输任务" else "此筛选下暂无任务", color = MaterialTheme.colorScheme.onSurfaceVariant)
 				}
 			} else {
-				LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+				val transferListState = androidx.compose.foundation.lazy.rememberLazyListState()
+				val topTaskId = visibleTasks.firstOrNull()?.id
+				LaunchedEffect(topTaskId) {
+					if (topTaskId != null && transferListState.firstVisibleItemIndex > 0) {
+						transferListState.scrollToItem(0)
+					}
+				}
+				LazyColumn(state = transferListState, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
 					items(visibleTasks, key = { it.id }) { task ->
 						val isCompleted = task.status == TransferStatus.COMPLETED
 						val terminal = task.status in finishedStates
 						Surface(
+							modifier = Modifier.animateItem(),
 							color = if (isCompleted) Color(0xFF2E7D32).copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant,
 							shape = RoundedCornerShape(10.dp),
 							border = if (isCompleted) BorderStroke(1.dp, Color(0xFF2E7D32).copy(alpha = 0.35f)) else null,

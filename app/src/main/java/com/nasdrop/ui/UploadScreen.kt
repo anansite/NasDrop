@@ -90,8 +90,17 @@ fun UploadProgressScreen(count: Int, batchId: String, interrupted: Boolean = fal
 				)
 			}
 
-			LazyColumn(Modifier.fillMaxSize()) {
-				items(sortedTasks, key = { it.id }) { task -> TaskRow(task) }
+			val uploadListState = androidx.compose.foundation.lazy.rememberLazyListState()
+			val topUploadId = sortedTasks.firstOrNull()?.id
+			androidx.compose.runtime.LaunchedEffect(topUploadId) {
+				if (topUploadId != null && uploadListState.firstVisibleItemIndex > 0) {
+					uploadListState.scrollToItem(0)
+				}
+			}
+			LazyColumn(state = uploadListState, modifier = Modifier.fillMaxSize()) {
+				items(sortedTasks, key = { it.id }) { task ->
+					androidx.compose.foundation.layout.Box(Modifier.animateItem()) { TaskRow(task) }
+				}
 			}
 		}
 	}
