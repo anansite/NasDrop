@@ -393,6 +393,25 @@ class WebDavClient(
 		val memories: Int,
 	)
 
+	fun fetchRemoteFileHash(path: String): String? {
+		return try {
+			val clean = path.trim('/')
+			if (clean.isEmpty()) return null
+			val url = effectiveBase.newBuilder()
+				.encodedPath("/api/file-hash")
+				.addQueryParameter("path", clean)
+				.build()
+			val req = Request.Builder().url(url).get().build()
+			thumbCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return null
+				val body = resp.body?.string() ?: return null
+				org.json.JSONObject(body).optString("sha256", "").takeIf { it.isNotBlank() }
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
+
 	fun fetchServerStats(): ServerStats? {
 		return try {
 			val url = effectiveBase.newBuilder().encodedPath("/api/stats").build()
@@ -1150,8 +1169,9 @@ class WebDavClient(
 		onProgress: (Long, Long) -> Unit,
 		onBodySent: () -> Unit = {},
 		onCall: (Call) -> Unit = {},
+		targetName: String? = null,
 	) {
-		val name = Query.nameOf(context, uri)
+		val name = targetName?.takeIf { it.isNotBlank() } ?: Query.nameOf(context, uri)
 		val total = Query.sizeOf(context, uri)
 		val sourceUri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
 			uri.authority == "media" &&

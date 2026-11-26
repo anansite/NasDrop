@@ -18,3 +18,17 @@ fun findUploadConflicts(
 	val duplicates = names.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
 	return names.filter { it in remoteNames || it in pendingNames || it in duplicates }.distinct()
 }
+
+/** 生成不与 [occupiedNamesLower]（全小写文件名集合）冲突的新文件名，如 `photo (1).jpg`。 */
+fun resolveUniqueUploadName(name: String, occupiedNamesLower: Set<String>): String {
+	if (name.lowercase() !in occupiedNamesLower) return name
+	val dot = name.lastIndexOf('.')
+	val base = if (dot > 0) name.substring(0, dot) else name
+	val ext = if (dot > 0) name.substring(dot) else ""
+	var index = 1
+	while (true) {
+		val candidate = "$base ($index)$ext"
+		if (candidate.lowercase() !in occupiedNamesLower) return candidate
+		index++
+	}
+}

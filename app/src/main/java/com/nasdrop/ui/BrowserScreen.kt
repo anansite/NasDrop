@@ -323,7 +323,7 @@ fun BrowserScreen(
 	}
 
 	// 全功能系统文件选择器（原生 GetMultipleContents，直接直达「最近/近期」聚合视图，支持多选）
-	var activeUploadTargetDir by remember { mutableStateOf("") }
+	var activeUploadTargetDir by rememberSaveable { mutableStateOf("") }
 
 	val systemFilePicker = rememberLauncherForActivityResult(
 		contract = ActivityResultContracts.GetMultipleContents(),
@@ -823,23 +823,8 @@ fun BrowserScreen(
 }
 
 	// ==================== 抽屉与对话框组件 ====================
-	// 确认窗口只在发现同名冲突时预览有限文件名，无冲突时后台平滑起传，彻底消除弹窗闪烁
-	val overwriteNames = vm.pendingUploadOverwriteNames
-	if (overwriteNames.isNotEmpty()) {
-		AlertDialog(
-			onDismissRequest = { vm.dismissUploadOverwrite() },
-			title = { Text("发现 ${overwriteNames.size} 个同名文件") },
-			text = {
-				Column(Modifier.verticalScroll(rememberScrollState())) {
-					Text("继续上传将覆盖 NAS 中的同名文件：")
-					overwriteNames.take(5).forEach { name -> Text("• $name", maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp)) }
-					if (overwriteNames.size > 5) Text("还有 ${overwriteNames.size - 5} 个文件", modifier = Modifier.padding(top = 8.dp))
-				}
-			},
-			confirmButton = { Button(onClick = { vm.confirmUploadOverwrite() }) { Text("覆盖上传") } },
-			dismissButton = { TextButton(onClick = { vm.dismissUploadOverwrite() }) { Text("取消") } },
-		)
-	}
+	// 确认窗口只在发现同名冲突时弹出，支持智能跳过相同文件 / 自动重命名不同文件 / 覆盖上传
+	UploadConflictDialog(vm)
 
 	if (activeMemoryYearGroup != null) {
 		MemoryDetailModalSheet(
@@ -921,7 +906,8 @@ fun BrowserScreen(
 			},
 			onAppendNewUpload = {
 				vm.pendingAppendGroupId = activeGroup.id
-				val targetDir = activeGroup.albumDir.ifBlank { vm.selectedAlbumPath.ifBlank { "Photos/默认相册" } }
+				val fallbackAlbum = vm.selectedAlbumPath.takeIf { it.isNotBlank() && it != "__ALL_FOLDERS__" } ?: "Photos/默认相册"
+				val targetDir = activeGroup.albumDir.ifBlank { fallbackAlbum }
 				launchSystemUpload(targetDir)
 			},
 			onDeleteGroup = {
@@ -1125,9 +1111,15 @@ fun BrowserScreen(
 
 	// 5. 移动文件选择目录对话框
 	activeEntryForMove?.let { entry ->
+		val entryParent = entry.path.trim('/').substringBeforeLast('/', "")
+		LaunchedEffect(entry.path) { vm.refreshMoveFolders() }
 		MoveFolderSheet(
-			folderPaths = vm.allFolderPaths,
-			currentPath = vm.path,
+			folderPaths = vm.availableMoveFolderPaths,
+			currentPath = entryParent,
+			onCreateAlbum = { albumName ->
+				vm.createAlbum(albumName)
+				"Photos/$albumName"
+			},
 			onSelectTarget = { destDir ->
 				activeEntryForMove = null
 				// 结果异步回传：只有真的 MOVE 成功才说"已移动"
@@ -1172,9 +1164,19 @@ fun BrowserScreen(
 
 	// 批量移动对话框
 	if (showBatchMoveSheet) {
+		val batchCurrentPath = when (vm.currentTab) {
+			MainTab.Photos -> vm.selectedAlbumPath.takeIf { it.isNotBlank() && it != "__ALL_FOLDERS__" } ?: ""
+			MainTab.Media -> vm.selectedMediaPath.takeIf { it.isNotBlank() && it != "__ALL_FOLDERS__" } ?: ""
+			else -> vm.path
+		}
+		LaunchedEffect(Unit) { vm.refreshMoveFolders() }
 		MoveFolderSheet(
-			folderPaths = vm.allFolderPaths,
-			currentPath = vm.path,
+			folderPaths = vm.availableMoveFolderPaths,
+			currentPath = batchCurrentPath,
+			onCreateAlbum = { albumName ->
+				vm.createAlbum(albumName)
+				"Photos/$albumName"
+			},
 			onSelectTarget = { destDir ->
 				showBatchMoveSheet = false
 				vm.batchMove(destDir) { okCount, failCount ->
@@ -6700,16 +6702,120 @@ private fun ActionSheetBtn(
 }
 
 /**
- * 移动目录弹窗
+ * 上传同名与内容冲突确认弹窗（主界面与系统分享共用）：
+ * 区分「完全相同（同名+同大小+同SHA-256）」与「同名但内容不同」，
+ * 默认推荐跳过相同并自动重命名不同文件，也可选择全部覆盖上传。
+ */
+@Composable
+fun UploadConflictDialog(vm: BrowserViewModel) {
+	val conflicts = vm.pendingUploadConflicts
+	val fallbackNames = vm.pendingUploadOverwriteNames
+	if (conflicts.isEmpty() && fallbackNames.isEmpty()) return
+
+	val identical = conflicts.filter { it.kind == BrowserViewModel.UploadConflictKind.IDENTICAL }
+	val different = conflicts.filter { it.kind == BrowserViewModel.UploadConflictKind.DIFFERENT_CONTENT }
+	val batchDup = conflicts.filter { it.kind == BrowserViewModel.UploadConflictKind.BATCH_DUPLICATE }
+	val totalCount = if (conflicts.isNotEmpty()) conflicts.size else fallbackNames.size
+
+	val smartLabel = when {
+		identical.isNotEmpty() && different.isEmpty() && batchDup.isEmpty() -> "跳过相同文件"
+		identical.isEmpty() -> "自动重命名保留两者"
+		else -> "跳过相同 · 其余重命名"
+	}
+
+	AlertDialog(
+		onDismissRequest = { vm.dismissUploadOverwrite() },
+		title = { Text("发现 $totalCount 个同名文件", fontWeight = FontWeight.Bold) },
+		text = {
+			Column(
+				modifier = Modifier.verticalScroll(rememberScrollState()),
+				verticalArrangement = Arrangement.spacedBy(8.dp),
+			) {
+				if (identical.isNotEmpty()) {
+					Text(
+						"完全相同（${identical.size} 个，内容一致建议跳过）：",
+						fontSize = 12.sp,
+						fontWeight = FontWeight.SemiBold,
+						color = MaterialTheme.colorScheme.primary,
+					)
+					identical.take(3).forEach {
+						Text("• ${it.originalName}", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+					}
+					if (identical.size > 3) Text("还有 ${identical.size - 3} 个相同文件", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+				}
+				if (different.isNotEmpty() || batchDup.isNotEmpty()) {
+					val diffAll = different + batchDup
+					Text(
+						"同名但内容不同（${diffAll.size} 个，建议重命名避免覆盖）：",
+						fontSize = 12.sp,
+						fontWeight = FontWeight.SemiBold,
+						color = MaterialTheme.colorScheme.error,
+					)
+					diffAll.take(4).forEach {
+						Text(
+							"• ${it.originalName} → ${it.suggestedName}",
+							fontSize = 12.sp,
+							maxLines = 2,
+							overflow = TextOverflow.Ellipsis,
+						)
+					}
+					if (diffAll.size > 4) Text("还有 ${diffAll.size - 4} 个文件", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+				}
+				if (conflicts.isEmpty()) {
+					Text("继续上传将覆盖 NAS 中的同名文件：")
+					fallbackNames.take(5).forEach { name ->
+						Text("• $name", maxLines = 2, overflow = TextOverflow.Ellipsis)
+					}
+				}
+			}
+		},
+		confirmButton = {
+			Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+				TextButton(onClick = { vm.confirmUploadOverwrite() }) {
+					Text("覆盖上传", color = MaterialTheme.colorScheme.error)
+				}
+				Button(onClick = { vm.resolveUploadConflictsSmart() }) {
+					Text(smartLabel)
+				}
+			}
+		},
+		dismissButton = {
+			TextButton(onClick = { vm.dismissUploadOverwrite() }) { Text("取消") }
+		},
+	)
+}
+
+/**
+ * 移动目录弹窗（支持搜索过滤、分类展示与快捷新建相册）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MoveFolderSheet(
 	folderPaths: List<String>,
 	currentPath: String,
+	onCreateAlbum: ((String) -> String)? = null,
 	onSelectTarget: (String) -> Unit,
 	onDismiss: () -> Unit,
 ) {
+	var query by remember { mutableStateOf("") }
+	var showNewAlbum by remember { mutableStateOf(false) }
+	var newAlbumName by remember { mutableStateOf("") }
+	val normCurrent = currentPath.trim('/')
+	val filtered = remember(folderPaths, query) {
+		val q = query.trim().lowercase()
+		if (q.isEmpty()) folderPaths
+		else folderPaths.filter { p ->
+			val label = if (p.isEmpty()) "根目录" else p
+			label.lowercase().contains(q)
+		}
+	}
+	val rootItems = filtered.filter { it.isEmpty() }
+	val albumItems = filtered.filter { it == "Photos" || it.startsWith("Photos/") }
+	val mediaItems = filtered.filter { it == "movies" || it.startsWith("movies/") }
+	val otherItems = filtered.filter {
+		it.isNotEmpty() && it != "Photos" && !it.startsWith("Photos/") && it != "movies" && !it.startsWith("movies/")
+	}
+
 	ModalBottomSheet(
 		onDismissRequest = onDismiss,
 		sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -6719,45 +6825,212 @@ private fun MoveFolderSheet(
 		Column(
 			modifier = Modifier
 				.fillMaxWidth()
-				.padding(horizontal = 20.dp, vertical = 10.dp),
+				.padding(horizontal = 20.dp, vertical = 8.dp),
 		) {
-			Text("选择移动目标目录", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-			Spacer(modifier = Modifier.height(14.dp))
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.SpaceBetween,
+			) {
+				Column {
+					Text("选择移动目标目录", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+					if (normCurrent.isNotEmpty()) {
+						Text(
+							"当前：/$normCurrent",
+							fontSize = 11.5.sp,
+							color = MaterialTheme.colorScheme.onSurfaceVariant,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+						)
+					}
+				}
+				if (onCreateAlbum != null) {
+					TextButton(onClick = { showNewAlbum = !showNewAlbum }) {
+						Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(16.dp))
+						Spacer(modifier = Modifier.width(4.dp))
+						Text(if (showNewAlbum) "收起" else "新建相册", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+					}
+				}
+			}
+
+			if (showNewAlbum && onCreateAlbum != null) {
+				Spacer(modifier = Modifier.height(8.dp))
+				Row(
+					modifier = Modifier.fillMaxWidth(),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(8.dp),
+				) {
+					OutlinedTextField(
+						value = newAlbumName,
+						onValueChange = { newAlbumName = it },
+						placeholder = { Text("输入新相册名称", fontSize = 13.sp) },
+						singleLine = true,
+						shape = RoundedCornerShape(12.dp),
+						modifier = Modifier.weight(1f),
+					)
+					Button(
+						enabled = newAlbumName.trim().isNotEmpty(),
+						shape = RoundedCornerShape(12.dp),
+						onClick = {
+							val clean = newAlbumName.trim().replace("/", "_")
+							if (clean.isNotEmpty()) {
+								val dest = onCreateAlbum(clean)
+								onSelectTarget(dest)
+							}
+						},
+					) {
+						Text("创建并移入", fontSize = 12.5.sp)
+					}
+				}
+			}
+
+			Spacer(modifier = Modifier.height(10.dp))
+			OutlinedTextField(
+				value = query,
+				onValueChange = { query = it },
+				placeholder = { Text("搜索相册或目录名称…", fontSize = 13.sp) },
+				leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+				trailingIcon = {
+					if (query.isNotEmpty()) {
+						IconButton(onClick = { query = "" }) {
+							Icon(Icons.Rounded.Close, contentDescription = "清空", modifier = Modifier.size(16.dp))
+						}
+					}
+				},
+				singleLine = true,
+				shape = RoundedCornerShape(14.dp),
+				modifier = Modifier.fillMaxWidth(),
+			)
+			Spacer(modifier = Modifier.height(10.dp))
 
 			LazyColumn(
 				verticalArrangement = Arrangement.spacedBy(6.dp),
-				modifier = Modifier.fillMaxWidth(),
+				modifier = Modifier
+					.fillMaxWidth()
+					.heightIn(max = 420.dp),
 			) {
-				items(folderPaths) { fPath ->
-					val isCurrent = fPath == currentPath
+				@Composable
+				fun FolderRow(fPath: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color) {
+					val isCurrent = fPath == normCurrent
+					val displayName = when {
+						fPath.isEmpty() -> "根目录"
+						else -> fPath.substringAfterLast('/')
+					}
+					val subtitle = when {
+						fPath.isEmpty() -> "/"
+						else -> "/$fPath"
+					}
 					Surface(
-						shape = RoundedCornerShape(10.dp),
-						color = if (isCurrent) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceVariant,
+						shape = RoundedCornerShape(12.dp),
+						color = if (isCurrent) {
+							MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+						} else {
+							MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.78f)
+						},
 						modifier = Modifier
 							.fillMaxWidth()
 							.clickable(enabled = !isCurrent) { onSelectTarget(fPath) },
 					) {
 						Row(
-							modifier = Modifier.padding(12.dp),
+							modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
 							verticalAlignment = Alignment.CenterVertically,
 							horizontalArrangement = Arrangement.spacedBy(10.dp),
 						) {
-							Icon(Icons.Rounded.Folder, contentDescription = null, tint = Color(0xFFFFA000))
-							Text(
-								text = if (fPath.isEmpty()) "根目录 (/)" else fPath,
-								fontSize = 13.sp,
-								fontWeight = FontWeight.SemiBold,
-								color = if (isCurrent) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-								modifier = Modifier.weight(1f),
+							Icon(
+								imageVector = icon,
+								contentDescription = null,
+								tint = if (isCurrent) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) else tint,
+								modifier = Modifier.size(22.dp),
 							)
+							Column(modifier = Modifier.weight(1f)) {
+								Text(
+									text = displayName,
+									fontSize = 13.5.sp,
+									fontWeight = FontWeight.SemiBold,
+									color = if (isCurrent) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+									maxLines = 1,
+									overflow = TextOverflow.Ellipsis,
+								)
+								Text(
+									text = subtitle,
+									fontSize = 11.sp,
+									color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+									maxLines = 1,
+									overflow = TextOverflow.Ellipsis,
+								)
+							}
 							if (isCurrent) {
-								Text("当前所在", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+								Surface(
+									shape = RoundedCornerShape(8.dp),
+									color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+								) {
+									Text(
+										"当前所在",
+										fontSize = 11.sp,
+										color = MaterialTheme.colorScheme.primary,
+										fontWeight = FontWeight.SemiBold,
+										modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+									)
+								}
 							}
 						}
 					}
 				}
+
+				if (albumItems.isNotEmpty()) {
+					item(key = "hdr_albums") {
+						Text(
+							"相册目录 (${albumItems.size})",
+							fontSize = 11.5.sp,
+							fontWeight = FontWeight.SemiBold,
+							color = MaterialTheme.colorScheme.primary,
+							modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+						)
+					}
+					items(albumItems, key = { "alb:$it" }) { fPath ->
+						FolderRow(fPath, Icons.Rounded.PhotoLibrary, MaterialTheme.colorScheme.primary)
+					}
+				}
+				if (mediaItems.isNotEmpty()) {
+					item(key = "hdr_media") {
+						Text(
+							"影音目录 (${mediaItems.size})",
+							fontSize = 11.5.sp,
+							fontWeight = FontWeight.SemiBold,
+							color = MaterialTheme.colorScheme.secondary,
+							modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
+						)
+					}
+					items(mediaItems, key = { "med:$it" }) { fPath ->
+						FolderRow(fPath, Icons.Rounded.Movie, MaterialTheme.colorScheme.secondary)
+					}
+				}
+				if (rootItems.isNotEmpty() || otherItems.isNotEmpty()) {
+					item(key = "hdr_other") {
+						Text(
+							"网盘文件夹 (${rootItems.size + otherItems.size})",
+							fontSize = 11.5.sp,
+							fontWeight = FontWeight.SemiBold,
+							color = Color(0xFFD97706),
+							modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
+						)
+					}
+					items(rootItems + otherItems, key = { "dir:$it" }) { fPath ->
+						FolderRow(fPath, Icons.Rounded.Folder, Color(0xFFFFA000))
+					}
+				}
+				if (filtered.isEmpty()) {
+					item(key = "empty_move_dirs") {
+						Text(
+							"未找到匹配的目录",
+							fontSize = 13.sp,
+							color = MaterialTheme.colorScheme.onSurfaceVariant,
+							modifier = Modifier.padding(vertical = 20.dp),
+						)
+					}
+				}
 			}
-			Spacer(modifier = Modifier.height(24.dp))
+			Spacer(modifier = Modifier.height(20.dp))
 		}
 	}
 }

@@ -76,6 +76,7 @@ class UploadService : Service() {
 		val uris = intent?.getStringArrayListExtra(EXTRA_URIS)
 			?.mapNotNull { runCatching { Uri.parse(it) }.getOrNull() }
 			.orEmpty()
+		val names = intent?.getStringArrayListExtra(EXTRA_NAMES).orEmpty()
 
 		if (uris.isEmpty()) {
 			stopSelf(startId)
@@ -92,13 +93,20 @@ class UploadService : Service() {
 			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0,
 		)
 
-		scope.launch { upload(app, uris, dir, batchId) }
+		scope.launch { upload(app, uris, names, dir, batchId) }
 		return START_NOT_STICKY
 	}
 
 	/** 批次独立计数与稳定任务 ID；缩略图生成不参与上传完成判定。 */
-	private suspend fun upload(app: NasDropApp, uris: List<Uri>, dir: String, batchId: String) {
-		val tasks = Uploads.begin(uris.map { it.toString() to Query.nameOf(this, it) }, dir, batchId)
+	private suspend fun upload(app: NasDropApp, uris: List<Uri>, nameOverrides: List<String>, dir: String, batchId: String) {
+		val tasks = Uploads.begin(
+			uris.mapIndexed { idx, uri ->
+				val override = nameOverrides.getOrNull(idx)?.takeIf { it.isNotBlank() }
+				uri.toString() to (override ?: Query.nameOf(this, uri))
+			},
+			dir,
+			batchId,
+		)
 		Log.i("UploadService", "批次开始 batch=$batchId dir=$dir count=${tasks.size}")
 		val client = try {
 			val settings = app.prefs.current()
@@ -164,6 +172,7 @@ class UploadService : Service() {
 								Log.i("UploadService", "发送结束，等待服务端持久化确认 batch=$batchId task=${task.id} elapsedMs=${System.currentTimeMillis() - startedAt}")
 							},
 							onCall = { call -> Uploads.registerCall(task.id, call) },
+							targetName = name,
 						)
 						Uploads.update(task.id) { it.copy(done = true, bodySent = true) }
 						Log.i("UploadService", "服务端确认写入完成 batch=$batchId task=${task.id} elapsedMs=${System.currentTimeMillis() - startedAt}")
@@ -333,15 +342,17 @@ class UploadService : Service() {
 		private const val EXTRA_URIS = "uris"
 		private const val EXTRA_DIR = "dir"
 		private const val EXTRA_BATCH = "batch"
+		private const val EXTRA_NAMES = "names"
 
 		/** 并行上传通道数：3 路能跑满上行带宽，又不会因为过多连接抢占导致单文件变慢。 */
 		private const val MAX_PARALLEL = 3
 
 		/** 返回批次 ID，分享页据此仅展示自己提交的文件。 */
-		fun start(context: Context, uris: List<Uri>, dir: String): String {
+		fun start(context: Context, uris: List<Uri>, dir: String, nameOverrides: Map<String, String> = emptyMap()): String {
 			val batchId = UUID.randomUUID().toString()
 			val i = Intent(context, UploadService::class.java).apply {
 				putStringArrayListExtra(EXTRA_URIS, ArrayList(uris.map { it.toString() }))
+				putStringArrayListExtra(EXTRA_NAMES, ArrayList(uris.map { nameOverrides[it.toString()] ?: "" }))
 				putExtra(EXTRA_DIR, dir)
 				putExtra(EXTRA_BATCH, batchId)
 			}

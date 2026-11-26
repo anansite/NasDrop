@@ -20,6 +20,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.nasdrop.ui.BrowserMode
 import com.nasdrop.ui.BrowserScreen
 import com.nasdrop.ui.NasDropTheme
+import com.nasdrop.ui.UploadConflictDialog
 import com.nasdrop.ui.UploadProgressScreen
 import com.nasdrop.ui.SettingsScreen
 
@@ -130,6 +131,7 @@ class ShareActivity : ComponentActivity() {
 					},
 				)
 			}
+			UploadConflictDialog(vm)
 		}
 	}
 

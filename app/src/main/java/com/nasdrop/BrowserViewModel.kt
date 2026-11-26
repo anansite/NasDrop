@@ -242,6 +242,36 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var allFolderPaths by mutableStateOf<List<String>>(listOf(""))
 		private set
 
+	/** 移动目标目录全集：合并已浏览目录、全部相册、全部影集及本地索引已知目录 */
+	val availableMoveFolderPaths: List<String>
+		get() = (allFolderPaths +
+			allAlbumFolders.map { it.path.trim('/') } +
+			allMediaFolders.map { it.path.trim('/') } +
+			PhotoMetadataStore.getAllEntries().mapNotNull { it.path.trim('/').substringBeforeLast('/', "").takeIf { d -> d.isNotBlank() } } +
+			listOf("", "Photos/默认相册"))
+			.map { it.trim('/') }
+			.filterNot { it.startsWith(".") || it.contains("/.") }
+			.distinct()
+			.sortedWith(compareBy<String>({ it.isNotEmpty() }, { it.lowercase() }))
+
+	/** 打开移动弹窗时后台补齐根目录、Photos 与 movies 的子目录，确保子相册/子影集列表完整 */
+	fun refreshMoveFolders() {
+		viewModelScope.launch(Dispatchers.IO) {
+			val c = clientOf(app.prefs.current())
+			val discovered = mutableSetOf<String>("")
+			for (parent in listOf("", "Photos", "movies")) {
+				runCatching { c.list(parent) }.getOrNull()?.forEach { entry ->
+					if (entry.isDir && !entry.name.startsWith(".")) {
+						discovered.add(entry.path.trim('/'))
+					}
+				}
+			}
+			withContext(Dispatchers.Main) {
+				allFolderPaths = (allFolderPaths + discovered).distinct().sorted()
+			}
+		}
+	}
+
 	val routeInfo: StateFlow<RouteInfo> = app.repo.routeInfo
 	val settings: kotlinx.coroutines.flow.Flow<Settings> = app.prefs.settings
 
@@ -614,9 +644,29 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	 */
 	var uiMessage by mutableStateOf<String?>(null)
 		private set
+	enum class UploadConflictKind {
+		/** 文件名、大小与内容指纹(SHA-256)完全一致 */
+		IDENTICAL,
+		/** 同名但大小或内容不同（直接覆盖会丢失旧文件） */
+		DIFFERENT_CONTENT,
+		/** 同批次或排队中的重复文件名 */
+		BATCH_DUPLICATE,
+	}
+
+	data class UploadConflictItem(
+		val uri: Uri,
+		val originalName: String,
+		val kind: UploadConflictKind,
+		val localSize: Long,
+		val remoteSize: Long = -1L,
+		val suggestedName: String = originalName,
+	)
+
 	var checkingUploadDestination by mutableStateOf(false)
 		private set
 	var pendingUploadOverwriteNames by mutableStateOf<List<String>>(emptyList())
+		private set
+	var pendingUploadConflicts by mutableStateOf<List<UploadConflictItem>>(emptyList())
 		private set
 	var shareUploadBatchId by mutableStateOf<String?>(null)
 		private set
@@ -627,7 +677,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	private var uploadPreparation: Job? = null
 	private var preparationVersion = 0
 
-	/** App 内上传与分享上传共用同名检查，明确确认后才允许覆盖远端文件。 */
+	/** App 内上传与分享上传共用同名与内容检查，防止重复上传或误覆盖。 */
 	fun startUploads(uris: List<Uri>, dir: String, onStarted: () -> Unit) {
 		// 若上一批次任务已全部完成，重新选上传时主动清理已结束任务，防止叠加旧批次进度百分比
 		if (uploadTasks.isNotEmpty() && uploadTasks.all { it.status in finishedStates }) {
@@ -648,6 +698,21 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		})
 	}
 
+	private fun computeLocalSha256(uri: Uri): String? {
+		return runCatching {
+			val md = java.security.MessageDigest.getInstance("SHA-256")
+			app.contentResolver.openInputStream(uri)?.use { input ->
+				val buf = ByteArray(64 * 1024)
+				while (true) {
+					val n = input.read(buf)
+					if (n <= 0) break
+					md.update(buf, 0, n)
+				}
+			} ?: return null
+			md.digest().joinToString("") { "%02x".format(it) }
+		}.getOrNull()
+	}
+
 	private fun prepareUploads(request: PendingUpload) {
 		if (request.uris.isEmpty()) return
 		if (checkingUploadDestination || pendingUpload != null) { toast("请先完成当前上传确认"); return }
@@ -660,17 +725,63 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						app.contentResolver.openAssetFileDescriptor(uri, "r")?.close()
 							?: error("无法读取所选文件，请重新选择")
 					}
-					val names = request.uris.map { Query.nameOf(app, it) }
 					val settings = app.prefs.current()
-					val existing = try {
-						clientOf(settings).list(request.directory).map { it.name }.toSet()
+					val client = clientOf(settings)
+					val remoteEntries = try {
+						client.list(request.directory)
 					} catch (e: DavException) {
-						if (e.code == 404) emptySet() else throw e
+						if (e.code == 404) emptyList() else throw e
 					}
-					findUploadConflicts(names, existing, Uploads.tasks.value, request.directory, settings.serverIdentity)
+					val remoteByLower = remoteEntries.filter { !it.isDir }.associateBy { it.name.lowercase() }
+					val pendingNamesLower = Uploads.tasks.value.filter { task ->
+						task.dir == request.directory && (task.ownerKey.isBlank() || task.ownerKey == settings.serverIdentity) &&
+							!task.cancelled && task.error == null && task.listingActive && (!task.done || !task.listed)
+					}.map { it.name.lowercase() }.toSet()
+
+					val occupiedLower = (remoteByLower.keys + pendingNamesLower).toMutableSet()
+					val seenBatchLower = mutableSetOf<String>()
+					val out = mutableListOf<UploadConflictItem>()
+
+					for (uri in request.uris) {
+						val name = Query.nameOf(app, uri)
+						val lower = name.lowercase()
+						val remote = remoteByLower[lower]
+						if (remote != null) {
+							val localSize = Query.sizeOf(app, uri)
+							val kind = if (localSize > 0L && localSize == remote.size) {
+								val localHash = computeLocalSha256(uri)
+								val remoteHash = client.fetchRemoteFileHash(remote.path)
+								if (localHash != null && remoteHash != null) {
+									if (localHash.equals(remoteHash, ignoreCase = true)) UploadConflictKind.IDENTICAL
+									else UploadConflictKind.DIFFERENT_CONTENT
+								} else {
+									// 旧版 WebDAV 服务端无 /api/file-hash 时，同名同大小视为疑似相同
+									UploadConflictKind.IDENTICAL
+								}
+							} else {
+								UploadConflictKind.DIFFERENT_CONTENT
+							}
+							val suggested = resolveUniqueUploadName(name, occupiedLower)
+							occupiedLower.add(suggested.lowercase())
+							out.add(UploadConflictItem(uri, name, kind, localSize, remote.size, suggested))
+						} else if (lower in pendingNamesLower || !seenBatchLower.add(lower)) {
+							val localSize = Query.sizeOf(app, uri)
+							val suggested = resolveUniqueUploadName(name, occupiedLower)
+							occupiedLower.add(suggested.lowercase())
+							out.add(UploadConflictItem(uri, name, UploadConflictKind.BATCH_DUPLICATE, localSize, -1L, suggested))
+						} else {
+							occupiedLower.add(lower)
+						}
+					}
+					out
 				}
-				if (conflicts.isEmpty()) launchUploads(request)
-				else { pendingUpload = request; pendingUploadOverwriteNames = conflicts }
+				if (conflicts.isEmpty()) {
+					launchUploads(request)
+				} else {
+					pendingUpload = request
+					pendingUploadConflicts = conflicts
+					pendingUploadOverwriteNames = conflicts.map { it.originalName }.distinct()
+				}
 			} catch (e: Exception) {
 				if (e is CancellationException) throw e
 				Log.w("BrowserViewModel", "上传准备失败 dir=${request.directory} count=${request.uris.size}", e)
@@ -688,17 +799,54 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		checkingUploadDestination = false
 	}
 
+	/** 智能处理同名冲突：跳过完全相同文件，对不同内容或同批重名文件自动重命名后上传。 */
+	fun resolveUploadConflictsSmart() {
+		val request = pendingUpload ?: return
+		val conflictsByUri = pendingUploadConflicts.associateBy { it.uri.toString() }
+		pendingUpload = null
+		pendingUploadConflicts = emptyList()
+		pendingUploadOverwriteNames = emptyList()
+
+		var skipped = 0
+		val filteredUris = mutableListOf<Uri>()
+		val nameOverrides = mutableMapOf<String, String>()
+		for (uri in request.uris) {
+			val c = conflictsByUri[uri.toString()]
+			when (c?.kind) {
+				UploadConflictKind.IDENTICAL -> skipped++
+				UploadConflictKind.DIFFERENT_CONTENT, UploadConflictKind.BATCH_DUPLICATE -> {
+					filteredUris.add(uri)
+					nameOverrides[uri.toString()] = c.suggestedName
+				}
+				null -> filteredUris.add(uri)
+			}
+		}
+		if (filteredUris.isEmpty()) {
+			toast("已跳过 $skipped 个完全相同的重复文件")
+			return
+		}
+		if (skipped > 0) {
+			toast("已跳过 $skipped 个完全相同文件，其余 ${filteredUris.size} 个继续上传")
+		}
+		launchUploads(request.copy(uris = filteredUris), nameOverrides)
+	}
+
 	fun confirmUploadOverwrite() {
 		val request = pendingUpload ?: return
 		pendingUpload = null
+		pendingUploadConflicts = emptyList()
 		pendingUploadOverwriteNames = emptyList()
 		launchUploads(request)
 	}
 
-	fun dismissUploadOverwrite() { pendingUpload = null; pendingUploadOverwriteNames = emptyList() }
+	fun dismissUploadOverwrite() {
+		pendingUpload = null
+		pendingUploadConflicts = emptyList()
+		pendingUploadOverwriteNames = emptyList()
+	}
 
-	private fun launchUploads(request: PendingUpload) {
-		runCatching { UploadService.start(app, request.uris, request.directory) }
+	private fun launchUploads(request: PendingUpload, nameOverrides: Map<String, String> = emptyMap()) {
+		runCatching { UploadService.start(app, request.uris, request.directory, nameOverrides) }
 			.onSuccess { id -> request.onStarted(id) }
 			.onFailure { error ->
 				Log.w("BrowserViewModel", "无法启动上传服务 dir=${request.directory}", error)
