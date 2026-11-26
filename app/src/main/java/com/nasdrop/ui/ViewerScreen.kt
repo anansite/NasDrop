@@ -286,6 +286,9 @@ fun ImageViewer(
 		audioPlayer.onDurationResolved = { dur ->
 			PhotoMetadataStore.updateAudioDuration(current.path, dur)
 		}
+		audioPlayer.onError = { msg ->
+			Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+		}
 		if (current.hasAudio && directAudio != null) {
 			audioPlayer.prepare(directAudio)
 		} else {
@@ -601,7 +604,7 @@ fun ImageViewer(
 									?: PhotoMetadataStore.get(current.path)?.audioPath?.ifBlank { null }
 									?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
 								val audioUrl = audioUrlOf?.invoke(companionPath) ?: urlOf(companionPath)
-								if (!audioUrl.isNullOrBlank()) {
+								if (!audioUrl.isNullOrBlank() && audioPlayer.currentUrl != audioUrl) {
 									audioPlayer.prepare(audioUrl)
 								}
 								audioPlayer.togglePlayPause(current.photoMeta?.audioDurationMs ?: 0L)
@@ -742,7 +745,7 @@ fun ImageViewer(
 										?: PhotoMetadataStore.get(current.path)?.audioPath?.ifBlank { null }
 										?: PhotoMetadataStore.computeCompanionAudioPath(current.path)
 									val audioUrl = audioUrlOf?.invoke(companionPath) ?: urlOf(companionPath)
-									if (!audioUrl.isNullOrBlank()) {
+									if (!audioUrl.isNullOrBlank() && audioPlayer.currentUrl != audioUrl) {
 										audioPlayer.prepare(audioUrl)
 									}
 									audioPlayer.togglePlayPause(current.photoMeta?.audioDurationMs ?: 0L)
@@ -2768,7 +2771,7 @@ fun VideoPlayer(
 									?: PhotoMetadataStore.get(currentEntry.path)?.audioPath?.ifBlank { null }
 									?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
 								val audioUrl = audioUrlOf?.invoke(companionPath) ?: ""
-								if (!audioUrl.isNullOrBlank()) {
+								if (!audioUrl.isNullOrBlank() && audioPlayer.currentUrl != audioUrl) {
 									audioPlayer.prepare(audioUrl)
 								}
 								audioPlayer.togglePlayPause(currentEntry.photoMeta?.audioDurationMs ?: 0L)
@@ -2909,7 +2912,7 @@ fun VideoPlayer(
 										?: PhotoMetadataStore.get(currentEntry.path)?.audioPath?.ifBlank { null }
 										?: PhotoMetadataStore.computeCompanionAudioPath(currentEntry.path)
 									val audioUrl = audioUrlOf?.invoke(companionPath) ?: ""
-									if (!audioUrl.isNullOrBlank()) {
+									if (!audioUrl.isNullOrBlank() && audioPlayer.currentUrl != audioUrl) {
 										audioPlayer.prepare(audioUrl)
 									}
 									audioPlayer.togglePlayPause(currentEntry.photoMeta?.audioDurationMs ?: 0L)

@@ -50,6 +50,7 @@ class CompanionAudioPlayer(private val context: Context) {
 		private set
 
 	var onDurationResolved: ((Long) -> Unit)? = null
+	var onError: ((String) -> Unit)? = null
 
 	var currentUrl: String = ""
 		private set
@@ -125,7 +126,13 @@ class CompanionAudioPlayer(private val context: Context) {
 
 						override fun onPlayerError(error: PlaybackException) {
 							Log.w("AudioPlayer", "ExoPlayer error for $audioUrlOrPath: ${error.errorCodeName}", error)
+							val msg = if (error.cause?.message?.contains("Malformed", ignoreCase = true) == true) {
+								"伴生语音文件已损坏或为空，无法播放"
+							} else {
+								"伴生语音播放失败"
+							}
 							stop()
+							onError?.invoke(msg)
 						}
 					})
 					prepare()
