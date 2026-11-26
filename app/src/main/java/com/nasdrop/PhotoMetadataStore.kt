@@ -265,6 +265,8 @@ object PhotoMetadataStore {
 			path = newKey,
 			name = newName,
 			dir = newDir,
+			// 公共目录 .nasdrop_thumbs/<thumbId>.jpg 不随文件移动而失效；若无 thumbId 的旧式 .thumbnails 则需重新补齐
+			hasThumbnail = existing.thumbId.isNotBlank(),
 			updatedAt = System.currentTimeMillis()
 		) ?: PhotoMetadata(
 			path = newKey,

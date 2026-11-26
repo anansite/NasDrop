@@ -1201,6 +1201,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					}
 
 					if (thumbBytes != null && thumbBytes.isNotEmpty()) {
+						LocalThumbs.put(app, key, thumbBytes)
 						val thumbId = "t_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().replace("-", "").take(8)}"
 						runCatching { c.mkcol(".nasdrop_thumbs") }
 						c.uploadBytes(thumbBytes, ".nasdrop_thumbs", "$thumbId.jpg")
@@ -1737,10 +1738,17 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 			dirCache.clear()
 			val movedSnap = moved.toList()
-			LocalThumbs.forget(*movedSnap.toTypedArray())
+			val movedMetas = mutableListOf<PhotoMetadata>()
 			movedSnap.forEach { p ->
 				val dest = join(targetDir, p.substringAfterLast('/'))
+				LocalThumbs.move(app, p, dest)
 				PhotoMetadataStore.move(p, dest)
+				PhotoMetadataStore.get(dest)?.let { movedMetas.add(it) }
+			}
+			if (movedMetas.isNotEmpty()) {
+				withContext(Dispatchers.IO) {
+					runCatching { clientOf(s).reportMetadata(movedMetas) }
+				}
 			}
 			pruneMediaPools(movedSnap)
 			mediaDirty = true
@@ -2600,8 +2608,18 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			val err = runRemote { it.move(entry.path, dest) }
 			dirCache.clear()
 			if (err == null) {
-				LocalThumbs.forget(entry.path)
-				if (entry.isDir) PhotoMetadataStore.moveDir(entry.path, dest) else PhotoMetadataStore.move(entry.path, dest)
+				if (entry.isDir) {
+					LocalThumbs.forget(entry.path)
+					PhotoMetadataStore.moveDir(entry.path, dest)
+				} else {
+					LocalThumbs.move(app, entry.path, dest)
+					PhotoMetadataStore.move(entry.path, dest)
+					PhotoMetadataStore.get(dest)?.let { m ->
+						withContext(Dispatchers.IO) {
+							runCatching { client?.reportMetadata(listOf(m)) }
+						}
+					}
+				}
 				pruneMediaPools(listOf(entry.path))
 				mediaDirty = true // 目标目录的相册/影音归属变了，下次进页面时校正
 				runCatching { loadDirectory(targetDir) }

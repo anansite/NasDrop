@@ -115,7 +115,29 @@ object LocalThumbs {
 		return null
 	}
 
-	/** 清掉某个路径的本地图（删除/移动时调用，避免旧图被复用） */
+	/** 移动/重命名时将旧路径的本地缩略图无缝迁移到新路径，避免移动后缩略图瞬间消失 */
+	fun move(context: Context, oldPath: String, newPath: String) {
+		val oldKey = oldPath.trim('/')
+		val newKey = newPath.trim('/')
+		if (oldKey.isEmpty() || newKey.isEmpty() || oldKey == newKey) return
+		val oldFile = map.remove(oldKey) ?: target(context, oldKey).takeIf { it.isFile && it.length() > 0L } ?: return
+		val newFile = target(context, newKey)
+		try {
+			newFile.parentFile?.mkdirs()
+			if (oldFile.absolutePath != newFile.absolutePath) {
+				oldFile.copyTo(newFile, overwrite = true)
+				runCatching { oldFile.delete() }
+			}
+			if (newFile.isFile && newFile.length() > 0L) {
+				map[newKey] = newFile
+			}
+		} catch (_: Throwable) {
+			runCatching { oldFile.delete() }
+		}
+		revision++
+	}
+
+	/** 清掉某个路径的本地图（删除时调用，避免旧图被复用） */
 	fun forget(vararg entryPaths: String) {
 		var changed = false
 		for (p in entryPaths) {
