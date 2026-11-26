@@ -243,35 +243,8 @@ class WebDavClient(
 	}
 
 	/**
-	 * 只返回**服务端真实生成**的缩略图直链（OpenList /d/...?type=thumb），没有就是 null。
-	 *
-	 * 与 [thumbnailUrl] 的区别：后者对图片会回退到原图地址，那是给列表网格用的；
-	 * 看图器如果拿到"回退后的原图地址"，就会在缩略图垫底层和原图层**各下一次原图**
-	 * （/dav/ 与 /p/ 两个不同 URL，缓存互不命中），白白翻倍流量、拖慢清晰时间。
+	 * 上传字节数组，支持自定义文件名与 MIME 类型
 	 */
-	fun serverThumbUrl(path: String): HttpUrl? {
-		val key = path.trim('/')
-		if (failedThumbs.contains(key)) return null
-		return thumbUrls[key]?.toHttpUrlOrNull()
-	}
-
-	/**
-	 * 列表缩略图专用：命中服务端缩略图返回真图片直链（20KB~30KB），绝不直接拉取几十MB原图。
-	 * 下载/播放/删除/查看器等仍走 urlFor() / directUrlFor()，清晰度不受影响。
-	 */
-	fun thumbnailUrl(path: String): HttpUrl? {
-		val key = path.trim('/')
-		if (failedThumbs.contains(key)) return null
-		thumbUrls[key]?.toHttpUrlOrNull()?.let { return it }
-		val ext = path.substringAfterLast('.', "").lowercase()
-		if (ext !in DavEntry.IMAGES && ext !in DavEntry.VIDEOS) return null
-
-		// 服务端轻量缩略图端点：/api/thumbnail?path=<key>&dim=320
-		val b = effectiveBase.newBuilder().encodedPath("/api/thumbnail")
-		b.addQueryParameter("path", key)
-		b.addQueryParameter("dim", "320")
-		return b.build()
-	}
 
 	/**
 	 * 元数据请求专用：20 秒硬截止（call 级 deadline）。
@@ -1007,22 +980,6 @@ class WebDavClient(
 			call.throwIfCanceled(e)
 			logger.log(Level.WARNING, "下载失败 path=$path startByte=$startByte", e)
 			throw e
-		}
-	}
-
-	/**
-	 * 下载远端文本文件内容（例如伴生文字备忘 .*.memo）
-	 */
-	fun downloadText(path: String): String? {
-		return try {
-			val targetUrl = runCatching { directUrlFor(path) }.getOrNull() ?: urlFor(path)
-			val req = Request.Builder().url(targetUrl).header("Accept-Encoding", "identity").get().build()
-			metaCall(req).execute().use { resp ->
-				if (!resp.isSuccessful) null
-				else resp.body?.string()
-			}
-		} catch (_: Exception) {
-			null
 		}
 	}
 
