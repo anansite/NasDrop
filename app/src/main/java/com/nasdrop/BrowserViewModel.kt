@@ -2803,8 +2803,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 		for (dir in rootEntries.filter { it.isDir && !it.name.startsWith(".") }) {
 			if (page != null && (dir.name.equals("Photos", true) || dir.name == "相册")) {
-				val subDirs = runCatching { clientOf(cfg).list(dir.path) }.getOrDefault(emptyList())
-					.filter { it.isDir && !it.name.startsWith(".") }
+				val subDirs = withContext(Dispatchers.IO) {
+					runCatching { clientOf(cfg).list(dir.path) }.getOrDefault(emptyList())
+				}.filter { it.isDir && !it.name.startsWith(".") }
 				albums.addAll(subDirs)
 				continue
 			}
