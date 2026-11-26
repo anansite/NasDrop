@@ -360,6 +360,7 @@ class WebDavClient(
 				val obj = org.json.JSONObject(body)
 				val items = obj.optJSONArray("items") ?: return TimelinePage(emptyList(), 0, false)
 				val list = mutableListOf<DavEntry>()
+				val metaBatch = mutableListOf<PhotoMetadata>()
 				for (i in 0 until items.length()) {
 					val item = items.getJSONObject(i)
 					val p = item.getString("path")
@@ -367,8 +368,11 @@ class WebDavClient(
 					val s = item.optLong("size", 0L)
 					val m = item.optLong("modified", 0L)
 					val t = item.optLong("taken_at", 0L)
-					syncServerMetaIntoStore(item)
+					syncServerMetaIntoStore(item)?.let { metaBatch.add(it) }
 					list.add(DavEntry(name = n, path = p, isDir = false, size = s, modified = m, takenAt = t))
+				}
+				if (metaBatch.isNotEmpty()) {
+					PhotoMetadataStore.putBatch(metaBatch)
 				}
 				val total = obj.optInt("total", list.size)
 				val hasMore = obj.optBoolean("has_more", false)
@@ -448,9 +452,9 @@ class WebDavClient(
 		}
 	}
 
-	private fun syncServerMetaIntoStore(item: org.json.JSONObject) {
+	private fun syncServerMetaIntoStore(item: org.json.JSONObject): PhotoMetadata? {
 		val p = item.optString("path", "").trim('/')
-		if (p.isEmpty()) return
+		if (p.isEmpty()) return null
 		val cur = PhotoMetadataStore.get(p)
 		val thumbId = item.optString("thumb_id", "").ifBlank { cur?.thumbId ?: "" }
 		val voiceId = item.optString("voice_id", "").ifBlank { cur?.voiceId ?: "" }
@@ -462,29 +466,27 @@ class WebDavClient(
 		val audioPath = voiceId.takeIf { it.isNotBlank() }?.let { ".nasdrop_voices/$it.m4a" } ?: cur?.audioPath
 		val hasThumb = item.optBoolean("has_thumb", cur?.hasThumbnail == true) || thumbId.isNotBlank()
 		val dir = item.optString("dir", "").ifBlank { if (p.contains('/')) p.substringBeforeLast('/') else "" }
-		PhotoMetadataStore.putMemoryOnly(
-			PhotoMetadata(
-				path = p,
-				name = item.optString("name", p.substringAfterLast('/')),
-				dir = dir,
-				size = item.optLong("size", cur?.size ?: 0L),
-				modified = item.optLong("modified", cur?.modified ?: 0L),
-				takenAt = item.optLong("taken_at", cur?.takenAt ?: 0L),
-				width = item.optInt("width", cur?.width ?: 0),
-				height = item.optInt("height", cur?.height ?: 0),
-				hasThumbnail = hasThumb,
-				thumbId = thumbId,
-				voiceId = voiceId,
-				audioPath = audioPath,
-				audioDurationMs = voiceDur,
-				memo = memo,
-				memoUpdatedAt = cur?.memoUpdatedAt ?: 0L,
-				lat = lat,
-				lng = lng,
-				locationName = locName,
-				mediaType = cur?.mediaType ?: 0,
-				videoDurationMs = cur?.videoDurationMs ?: 0L,
-			)
+		return PhotoMetadata(
+			path = p,
+			name = item.optString("name", p.substringAfterLast('/')),
+			dir = dir,
+			size = item.optLong("size", cur?.size ?: 0L),
+			modified = item.optLong("modified", cur?.modified ?: 0L),
+			takenAt = item.optLong("taken_at", cur?.takenAt ?: 0L),
+			width = item.optInt("width", cur?.width ?: 0),
+			height = item.optInt("height", cur?.height ?: 0),
+			hasThumbnail = hasThumb,
+			thumbId = thumbId,
+			voiceId = voiceId,
+			audioPath = audioPath,
+			audioDurationMs = voiceDur,
+			memo = memo,
+			memoUpdatedAt = cur?.memoUpdatedAt ?: 0L,
+			lat = lat,
+			lng = lng,
+			locationName = locName,
+			mediaType = cur?.mediaType ?: 0,
+			videoDurationMs = cur?.videoDurationMs ?: 0L,
 		)
 	}
 
@@ -501,6 +503,7 @@ class WebDavClient(
 				val obj = org.json.JSONObject(body)
 				val items = obj.optJSONArray("items") ?: return emptyList()
 				val list = mutableListOf<DavEntry>()
+				val metaBatch = mutableListOf<PhotoMetadata>()
 				for (i in 0 until items.length()) {
 					val item = items.getJSONObject(i)
 					val p = item.getString("path")
@@ -508,8 +511,11 @@ class WebDavClient(
 					val s = item.optLong("size", 0L)
 					val m = item.optLong("modified", 0L)
 					val t = item.optLong("taken_at", 0L)
-					syncServerMetaIntoStore(item)
+					syncServerMetaIntoStore(item)?.let { metaBatch.add(it) }
 					list.add(DavEntry(name = n, path = p, isDir = false, size = s, modified = m, takenAt = t))
+				}
+				if (metaBatch.isNotEmpty()) {
+					PhotoMetadataStore.putBatch(metaBatch)
 				}
 				list
 			}

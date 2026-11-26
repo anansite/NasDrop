@@ -371,9 +371,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	 * 回调在后台线程触发；mutableStateOf 的写线程安全，Compose 会自动安排重组。
 	 */
 	private fun clientOf(s: Settings): WebDavClient {
+		val prev = client
 		val c = app.repo.client(s).also { client = it }
 		if (c.onThumbnailsLoaded == null) {
 			c.onThumbnailsLoaded = { thumbRevision++ }
+		}
+		if (prev !== c) {
+			// client 首次就绪或切换后，立即通知依赖 thumbnailUrlFor 的 UI 重组拉取已有 thumb_id 缩略图
+			viewModelScope.launch(Dispatchers.Main.immediate) {
+				thumbRevision++
+			}
 		}
 		return c
 	}
@@ -491,30 +498,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		loadMediaFromLocalDb()
 		loadUserPreferences()
 		open("")
-		viewModelScope.launch(Dispatchers.IO) {
-			// 后台异步递归扫描远端相册目录中的伴生记忆隐藏文件，自动同步元数据入库
-			val conf = app.prefs.current()
-			val c = clientOf(conf)
-			val queue = ArrayDeque<String>()
-			queue.add("")
-			queue.add("Photos")
-			val visited = mutableSetOf<String>()
-			while (queue.isNotEmpty() && visited.size < 30) {
-				val cur = queue.removeFirst()
-				if (!visited.add(cur)) continue
-				runCatching {
-					val list = c.list(cur)
-					withContext(Dispatchers.Main) {
-						applyDirectoryListing(cur, list)
-					}
-					for (e in list) {
-						if (e.isDir && !e.name.startsWith(".") && !visited.contains(e.path.trim('/'))) {
-							queue.add(e.path.trim('/'))
-						}
-					}
-				}
-			}
-		}
 		viewModelScope.launch {
 			snapshotFlow { PhotoMetadataStore.revision }.collect {
 				loadMediaFromLocalDb()
@@ -1018,12 +1001,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 		// 1. 仅命中 NAS 根目录公共缩略图库 .nasdrop_thumbs/<thumb_id>.jpg（禁止服务端解码与旧式同级 .thumbnails 回退）
 		val meta = PhotoMetadataStore.get(key)
+		val activeClient = client
 		if (meta != null && meta.thumbId.isNotBlank()) {
-			val dUrl = client?.directUrlFor(".nasdrop_thumbs/${meta.thumbId}.jpg")?.toString()
-			if (dUrl != null) return dUrl
+			// client 尚未初始化时直接返回 null，等 clientOf() 就绪后 thumbRevision++ 会自动刷新；
+			// 绝不能因为 client==null 就误判为缺少缩略图而触发后台重下载补齐（尤其视频会拉 4MB）！
+			return activeClient?.directUrlFor(".nasdrop_thumbs/${meta.thumbId}.jpg")?.toString()
 		}
-		// 2. 若当前图片/视频还没有公共 thumb_id，由 App 端异步补齐并上传至 .nasdrop_thumbs
-		scheduleAppThumbBackfill(key)
+		// 2. 若当前图片/视频确实还没有公共 thumb_id，且 client 已就绪，再由 App 端异步补齐
+		if (activeClient != null) {
+			scheduleAppThumbBackfill(key)
+		}
 		return null
 	}
 
