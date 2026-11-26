@@ -990,6 +990,7 @@ class WebDavClient(
 	 * 这里用列目录时从 href 推断出的真实前缀，推断不到才退回 base 自身路径。
 	 */
 	fun move(from: String, to: String) {
+		if (from.trim('/') == to.trim('/')) return
 		val prefix = (davRootPrefix ?: effectiveBase.encodedPath).trimEnd('/')
 		// 对目标路径各个段进行严格的 URL 编码，避免 HTTP Header 中出现中文字符触发 OkHttp 的 IllegalArgumentException
 		val encodedTarget = to.trim('/').split('/').filter { it.isNotEmpty() }.joinToString("/") {

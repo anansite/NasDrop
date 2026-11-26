@@ -742,28 +742,29 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					val seenBatchLower = mutableSetOf<String>()
 					val out = mutableListOf<UploadConflictItem>()
 
+					// 先快速筛选出需要做 SHA-256 指纹比对的「同名且同大小」项，再并发校验（批量上传不卡顿）
+					data class PendingHashCheck(
+						val uri: Uri,
+						val name: String,
+						val localSize: Long,
+						val remote: DavEntry,
+						val suggested: String,
+					)
+					val hashChecks = mutableListOf<PendingHashCheck>()
+
 					for (uri in request.uris) {
 						val name = Query.nameOf(app, uri)
 						val lower = name.lowercase()
 						val remote = remoteByLower[lower]
 						if (remote != null) {
 							val localSize = Query.sizeOf(app, uri)
-							val kind = if (localSize > 0L && localSize == remote.size) {
-								val localHash = computeLocalSha256(uri)
-								val remoteHash = client.fetchRemoteFileHash(remote.path)
-								if (localHash != null && remoteHash != null) {
-									if (localHash.equals(remoteHash, ignoreCase = true)) UploadConflictKind.IDENTICAL
-									else UploadConflictKind.DIFFERENT_CONTENT
-								} else {
-									// 旧版 WebDAV 服务端无 /api/file-hash 时，同名同大小视为疑似相同
-									UploadConflictKind.IDENTICAL
-								}
-							} else {
-								UploadConflictKind.DIFFERENT_CONTENT
-							}
 							val suggested = resolveUniqueUploadName(name, occupiedLower)
 							occupiedLower.add(suggested.lowercase())
-							out.add(UploadConflictItem(uri, name, kind, localSize, remote.size, suggested))
+							if (localSize > 0L && localSize == remote.size) {
+								hashChecks.add(PendingHashCheck(uri, name, localSize, remote, suggested))
+							} else {
+								out.add(UploadConflictItem(uri, name, UploadConflictKind.DIFFERENT_CONTENT, localSize, remote.size, suggested))
+							}
 						} else if (lower in pendingNamesLower || !seenBatchLower.add(lower)) {
 							val localSize = Query.sizeOf(app, uri)
 							val suggested = resolveUniqueUploadName(name, occupiedLower)
@@ -772,6 +773,28 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						} else {
 							occupiedLower.add(lower)
 						}
+					}
+
+					if (hashChecks.isNotEmpty()) {
+						val hashSem = Semaphore(4)
+						val checked = coroutineScope {
+							hashChecks.map { hc ->
+								async {
+									hashSem.withPermit {
+										val localHash = computeLocalSha256(hc.uri)
+										val remoteHash = client.fetchRemoteFileHash(hc.remote.path)
+										val kind = if (localHash != null && remoteHash != null) {
+											if (localHash.equals(remoteHash, ignoreCase = true)) UploadConflictKind.IDENTICAL
+											else UploadConflictKind.DIFFERENT_CONTENT
+										} else {
+											UploadConflictKind.IDENTICAL
+										}
+										UploadConflictItem(hc.uri, hc.name, kind, hc.localSize, hc.remote.size, hc.suggested)
+									}
+								}
+							}.awaitAll()
+						}
+						out.addAll(checked)
 					}
 					out
 				}
@@ -958,7 +981,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 		val (fresh, effectivePath) = withContext(Dispatchers.IO) {
 			val c = clientOf(configuration)
-			c.list(dir) to c.effectiveBase.encodedPath
+			val list = c.list(dir)
+			// 全部文件页浏览任意目录时，若存在本地索引缺少 thumb_id 的照片/视频（如超出首屏 120 条的旧文件），
+			// 从服务端 SQLite 拉取该目录的元数据补齐 thumb_id，避免「全部文件」页显示占位图或重下原视频。
+			val cleanDir = dir.trim('/')
+			val missingThumb = list.any { (it.isImage || it.isVideo) && PhotoMetadataStore.get(it.path)?.thumbId.isNullOrBlank() }
+			if (missingThumb) {
+				runCatching { c.fetchServerTimelinePage(limit = 500, offset = 0, dir = cleanDir) }
+				withContext(Dispatchers.Main) { thumbRevision++ }
+			}
+			list to c.effectiveBase.encodedPath
 		}
 		withContext(Dispatchers.Main) {
 			if (directoryRequests[dir] == request && (observedConfiguration == null || observedConfiguration == configuration)) applyDirectoryListing(dir, fresh)

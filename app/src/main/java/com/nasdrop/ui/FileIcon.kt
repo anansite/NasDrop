@@ -81,7 +81,8 @@ fun FileThumbnail(
 		// 1. 图片真实缩略图（仅加载 20KB 微缩图，严禁在列表拉取几十MB原图）
 		entry.isImage -> {
 			val thumbTarget = urlOf(entry.path)
-			var thumbFailed by remember(entry.path) { mutableStateOf(false) }
+			var failedUrl by remember(entry.path) { mutableStateOf<String?>(null) }
+			val thumbFailed = thumbTarget != null && failedUrl == thumbTarget
 			val actualData = if (!thumbFailed) thumbTarget else null
 
 			if (!actualData.isNullOrBlank()) {
@@ -102,8 +103,8 @@ fun FileThumbnail(
 					AsyncImage(
 						model = ImageRequest.Builder(LocalContext.current)
 							.data(actualData)
-							.memoryCacheKey("thumb:${entry.path.trim('/')}")
-							.diskCacheKey("thumb:${entry.path.trim('/')}")
+							.memoryCacheKey("thumb:${entry.path.trim('/')}:${actualData.hashCode()}")
+							.diskCacheKey("thumb:${entry.path.trim('/')}:${actualData.hashCode()}")
 							.size(240, 240)
 							.precision(coil.size.Precision.INEXACT)
 							.allowRgb565(true)
@@ -112,7 +113,7 @@ fun FileThumbnail(
 						contentDescription = entry.name,
 						contentScale = ContentScale.Crop,
 						onError = {
-							thumbFailed = true
+							failedUrl = actualData
 							onThumbnailError?.invoke(entry.path)
 						},
 						modifier = Modifier.fillMaxSize(),
