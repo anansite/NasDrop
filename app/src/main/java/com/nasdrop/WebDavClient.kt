@@ -255,6 +255,22 @@ class WebDavClient(
 		it.timeout().timeout(20, TimeUnit.SECONDS)
 	}
 
+	/**
+	 * 缩略图补齐专用：走 Range 只取视频头部，允许比 metaCall 更长的 45 秒硬截止，
+	 * 但仍远小于全局 5 分钟的 readTimeout，避免隧道抖动时长时间假死。
+	 */
+	internal fun thumbCall(req: Request) = http.newCall(req).also {
+		it.timeout().timeout(45, TimeUnit.SECONDS)
+	}
+
+	/**
+	 * 全盘索引重建专用：服务端要遍历整棵 NAS 目录树之后才返回响应，
+	 * 媒体多的库可能耗时数分钟，用 metaCall 的 20 秒会把「还在跑」误判成失败。
+	 */
+	internal fun syncCall(req: Request) = http.newCall(req).also {
+		it.timeout().timeout(180, TimeUnit.SECONDS)
+	}
+
 	var isNasDropServer: Boolean = false
 		private set
 
@@ -366,7 +382,47 @@ class WebDavClient(
 	fun fetchServerTimeline(limit: Int = 100, offset: Int = 0, dir: String = ""): List<DavEntry>? =
 		fetchServerTimelinePage(limit, offset, dir)?.items
 
-	fun syncServerDir(dir: String = "Photos"): Boolean {
+	data class ServerStats(
+		val photos: Int,
+		val videos: Int,
+		val albums: Int,
+		val memories: Int,
+	)
+
+	fun fetchServerStats(): ServerStats? {
+		return try {
+			val url = effectiveBase.newBuilder().encodedPath("/api/stats").build()
+			val req = Request.Builder().url(url).get().build()
+			metaCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return null
+				val body = resp.body?.string() ?: return null
+				val obj = org.json.JSONObject(body)
+				ServerStats(
+					photos = obj.optInt("photos", 0),
+					videos = obj.optInt("videos", 0),
+					albums = obj.optInt("albums", 0),
+					memories = obj.optInt("memories", 0),
+				)
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
+
+	/** 服务端扫盘对账结果：total 扫到的文件数，added 新入库，purged 删除的幽灵行。 */
+	data class SyncDirResult(
+		val ok: Boolean,
+		val total: Int = 0,
+		val added: Int = 0,
+		val purged: Int = 0,
+		val purgeSkipped: Boolean = false,
+	)
+
+	/**
+	 * 让服务端按磁盘重扫一遍目录并校正索引库。属于「重建索引」这类重操作，
+	 * 只在设置页由用户手动触发；日常浏览、下拉刷新一律读数据库，不调用这里。
+	 */
+	fun syncServerDir(dir: String = ""): SyncDirResult {
 		return try {
 			val urlBuilder = effectiveBase.newBuilder().encodedPath("/api/sync-dir")
 			if (dir.isNotBlank()) urlBuilder.addQueryParameter("dir", dir.trim('/'))
@@ -374,9 +430,21 @@ class WebDavClient(
 				.url(urlBuilder.build())
 				.post("".toRequestBody(null))
 				.build()
-			metaCall(req).execute().use { it.isSuccessful }
+			syncCall(req).execute().use { resp ->
+				if (!resp.isSuccessful) return SyncDirResult(ok = false)
+				val body = resp.body?.string().orEmpty()
+				val obj = runCatching { org.json.JSONObject(body) }.getOrNull()
+					?: return SyncDirResult(ok = true)
+				SyncDirResult(
+					ok = true,
+					total = obj.optInt("total", 0),
+					added = obj.optInt("added", 0),
+					purged = obj.optInt("purged", 0),
+					purgeSkipped = obj.optBoolean("purge_skipped", false),
+				)
+			}
 		} catch (_: Exception) {
-			false
+			SyncDirResult(ok = false)
 		}
 	}
 

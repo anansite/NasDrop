@@ -1093,9 +1093,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						val tmpFile = File(app.cacheDir, "vthumb_${key.hashCode().toUInt().toString(16)}.tmp")
 						val retriever = android.media.MediaMetadataRetriever()
 						try {
-							val req = okhttp3.Request.Builder().url(url).get().build()
-							val ok = c.metaCall(req).execute().use { resp ->
-								if (!resp.isSuccessful) return@use false
+							// 只取文件头部（faststart 视频的 moov + 首帧数据通常在前面），避免整段下载
+							// 大视频几十 MB 在 20 秒 metaCall 截止内根本下不完，导致缩略图永远补不齐。
+							val req = okhttp3.Request.Builder()
+								.url(url)
+								.header("Range", "bytes=0-4194303")
+								.get()
+								.build()
+							val ok = c.thumbCall(req).execute().use { resp ->
+								// 206=部分内容（理想），200=服务端忽略 Range 返回整段（仍可解码），其余视为失败
+								if (!(resp.code == 206 || resp.isSuccessful)) return@use false
 								val body = resp.body ?: return@use false
 								tmpFile.outputStream().use { out -> body.byteStream().copyTo(out) }
 								tmpFile.length() > 0L
@@ -1156,19 +1163,19 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					}
 				}
 			} catch (e: Exception) {
-				backfillingThumbs.remove(key)
 				Log.w("BrowserViewModel", "App 端补齐缩略图失败 path=$key: ${e.message}")
+			} finally {
+				// 成功或失败都要释放去重标记，否则一旦失败该 key 将永久无法再次补齐
+				backfillingThumbs.remove(key)
 			}
 		}
 	}
 
 	fun markThumbnailFailed(entryPath: String) {
 		val key = entryPath.trim('/')
-		PhotoMetadataStore.get(key)?.let { meta ->
-			if (meta.hasThumbnail || meta.thumbId.isNotBlank()) {
-				PhotoMetadataStore.putMemoryOnly(meta.copy(hasThumbnail = false, thumbId = ""))
-			}
-		}
+		// 不再不可逆地清空 thumbId：清空会让 thumbnailUrlFor 直接返回 null，UI 立刻回退成占位图，
+		// 用户看到的就是"缩略图突然丢了"。保留旧地址继续显示，同时后台补齐新图，
+		// 新 thumbId 上传成功后 URL 变化，UI 按新 URL 自然切换（见各列表的 failedThumbUrl 复位逻辑）。
 		client?.markThumbnailFailed(entryPath)
 		scheduleAppThumbBackfill(key)
 		thumbRevision++
@@ -1823,9 +1830,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						}
 						if (selected.isNotBlank() && selected != "__ALL_FOLDERS__") {
 							try {
-								withContext(Dispatchers.IO) {
-									clientOf(app.prefs.current()).syncServerDir(selected)
-								}
+								// 只从服务端数据库重读这一页，不扫盘：索引由设置页「重建索引」维护
 								loadTimelinePage(dir = selected, reset = true)
 								mediaError = null
 							}
@@ -1835,9 +1840,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 								Log.w("BrowserViewModel", "媒体刷新失败 dir=$selected", e)
 							}
 						} else {
-							withContext(Dispatchers.IO) {
-								clientOf(app.prefs.current()).syncServerDir("Photos")
-							}
 							ensureMediaScanned(force = true)
 							withTimeoutOrNull(20_000L) {
 								mediaScanJob?.join()
@@ -1846,6 +1848,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					} else {
 						if (currentTab == MainTab.Home) {
 							refreshSystemInfo()
+							// 概览纯读数据库快照，不扫盘
+							refreshServerStats(force = true)
 						}
 						doRefresh()
 					}
@@ -2311,6 +2315,72 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	private val albumHasMoreMap = mutableMapOf<String, Boolean>()
 	var timelineLoadingMore by mutableStateOf(false)
 		private set
+	var serverStats by mutableStateOf<WebDavClient.ServerStats?>(null)
+		private set
+	private var lastStatsFetchAt = 0L
+	private var statsJob: Job? = null
+	/** 设置页手动重建服务端索引的执行状态，用于按钮禁用与文案。 */
+	var rebuildingIndex by mutableStateOf(false)
+		private set
+
+	/**
+	 * 数据资产概览数字来自服务端 /api/stats，是一条 SQL 聚合，纯读库、不碰磁盘。
+	 * 独立入口带 2 秒节流 + 在途去重，供首页进入、下拉刷新、元数据变更后调用。
+	 *
+	 * 这里**任何情况下都不扫盘**：App 上传的文件在上传成功时就已写入 photo_metadata，
+	 * 库就是权威来源。服务端索引的重建（sync-dir）属于重操作，只在设置页由用户手动触发。
+	 */
+	fun refreshServerStats(force: Boolean = false) {
+		if (!force && (System.currentTimeMillis() - lastStatsFetchAt < 2_000L || statsJob?.isActive == true)) return
+		statsJob?.cancel()
+		statsJob = viewModelScope.launch {
+			val cfg = app.prefs.current()
+			val st = withContext(Dispatchers.IO) {
+				runCatching { clientOf(cfg).fetchServerStats() }.getOrNull()
+			}
+			if (st != null) {
+				serverStats = st
+				lastStatsFetchAt = System.currentTimeMillis()
+			}
+		}
+	}
+
+	/**
+	 * 重建服务端索引（手动，唯一入口在设置页）。
+	 * 用途只有一个：NAS 上有绕过 App 直接放入的文件（网页上传 / SMB 拷贝 / 别的设备），
+	 * 它们不在 photo_metadata 里，读库读不到，需要扫一次盘把库对齐。
+	 *
+	 * 扫盘完成后本地派生状态一并失效：目录缓存、分页偏移、本地媒体扫描结果、统计快照，
+	 * 否则界面上还是重建前的列表。
+	 */
+	suspend fun rebuildServerIndex(): WebDavClient.SyncDirResult {
+		if (rebuildingIndex) return WebDavClient.SyncDirResult(ok = false)
+		rebuildingIndex = true
+		try {
+			val cfg = app.prefs.current()
+			val result = withContext(Dispatchers.IO) {
+				runCatching { clientOf(cfg).syncServerDir("") }
+					.getOrElse { WebDavClient.SyncDirResult(ok = false) }
+			}
+			if (result.ok) {
+				dirCache.clear()
+				albumPageOffsets.clear()
+				albumHasMoreMap.clear()
+				hasScannedMedia = false
+				mediaDirty = true
+				val st = withContext(Dispatchers.IO) {
+					runCatching { clientOf(cfg).fetchServerStats() }.getOrNull()
+				}
+				if (st != null) {
+					serverStats = st
+					lastStatsFetchAt = System.currentTimeMillis()
+				}
+			}
+			return result
+		} finally {
+			rebuildingIndex = false
+		}
+	}
 
 	fun openAlbum(albumPath: String) {
 		if (selectedAlbumPath != albumPath) {
@@ -2621,6 +2691,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		albumHasMoreMap.clear()
 		allPhotos = emptyList()
 		allVideos = emptyList()
+		// 概览数字是服务端快照，清缓存后旧值不能继续停留
+		serverStats = null
+		lastStatsFetchAt = 0L
 		hasScannedMedia = false
 		mediaDirty = true
 		ensureMediaScanned(force = true)
@@ -2638,9 +2711,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			allVideos = emptyList()
 			allAlbumFolders = emptyList()
 			allMediaFolders = emptyList()
+			serverStats = null
+			lastStatsFetchAt = 0L
 			hasScannedMedia = false
 			open(path)
 			if (currentTab == MainTab.Photos || currentTab == MainTab.Media) ensureMediaScanned(force = true)
+			refreshServerStats(force = true)
 		}
 	}
 
@@ -2659,11 +2735,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		entries = emptyList()
 		allPhotos = emptyList(); allVideos = emptyList()
 		allAlbumFolders = emptyList(); allMediaFolders = emptyList()
+		serverStats = null
+		lastStatsFetchAt = 0L
 		hasScannedMedia = false
 		mediaError = null
 		if (serverChanged) { path = ""; selectedAlbumPath = ""; selectedMediaPath = "" }
 		open(path)
 		if (currentTab == MainTab.Photos || currentTab == MainTab.Media) ensureMediaScanned(force = true)
+		if (currentTab == MainTab.Home) refreshServerStats(force = true)
 	}
 
 	/** 执行一次远端写操作，返回 null 表示成功，否则是错误文案。统一在这里兜住异常。 */
@@ -2790,7 +2869,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 		}
 
-		// 2. 优先走服务端 SQLite 分页拉取第一页（120条，毫秒级首屏，彻底解决单文件夹数千张图卡顿）
+		// 2. 概览统计单独异步拉取，不与分页请求串行等待；数字到达即可显示，无需等整棵目录树扫完
+		refreshServerStats(force = true)
+		// 优先走服务端 SQLite 分页拉取第一页（120条，毫秒级首屏，彻底解决单文件夹数千张图卡顿）
 		val page = withContext(Dispatchers.IO) {
 			clientOf(cfg).fetchServerTimelinePage(limit = 120, offset = 0, dir = "")
 		}
@@ -2815,12 +2896,26 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val defaultAlbum = DavEntry(name = "默认相册", path = "Photos/默认相册", isDir = true, modified = System.currentTimeMillis())
 		albums.add(defaultAlbum)
 
+		// Photos 一层的子目录就是「相册」的主要来源，拿到就先发布一版，
+		// 不必等 movies 等目录的 4 层递归扫完（那是概览「相册」最后才跳数的原因）。
+		var albumsPublished = false
+
 		for (dir in rootEntries.filter { it.isDir && !it.name.startsWith(".") }) {
 			if (page != null && (dir.name.equals("Photos", true) || dir.name == "相册")) {
 				val subDirs = withContext(Dispatchers.IO) {
 					runCatching { clientOf(cfg).list(dir.path) }.getOrDefault(emptyList())
 				}.filter { it.isDir && !it.name.startsWith(".") }
 				albums.addAll(subDirs)
+				if (!albumsPublished) {
+					val quickAlbums = albums.filterNot {
+						it.name.startsWith(".") || it.path.contains(".thumbnails") ||
+							it.name == "默认影集" || it.name == "默认影音" ||
+							it.path == "movies/默认影集" || it.path == "movies/默认影音" ||
+							it.path.endsWith("/默认影集") || it.path.endsWith("/默认影音")
+					}.distinctBy { it.path }
+					allAlbumFolders = sortAlbums(quickAlbums, albumOrder)
+					albumsPublished = true
+				}
 				continue
 			}
 			val sub = scanMediaDirectory(dir.path) ?: continue

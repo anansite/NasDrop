@@ -189,9 +189,13 @@ class UploadService : Service() {
 								lng = exif.longitude,
 								locationName = locationName,
 							)
-							PhotoMetadataStore.put(meta)
-
 							scope.launch {
+								// 只落库一次「带最终 thumbId」的版本。
+								// 旧实现先 put(meta)（thumbId 为空）、再 updateThumbId(thumbId)，两次都在
+								// Dispatchers.IO 线程池上 launch、无顺序保证；空值那次若后写回 SQLite，
+								// thumb_id 就被覆盖成空——jpg 明明已单独存好，元数据却丢了关联键，
+								// 列表因此拿不到直链，表现为「缩略图经常丢失」。
+								var finalMeta = meta
 								runCatching {
 									client.reportMetadata(listOf(meta))
 									LocalThumbs.ensure(this@UploadService, uri, entryPath, isVideo)
@@ -201,11 +205,13 @@ class UploadService : Service() {
 										val thumbDir = ".nasdrop_thumbs"
 										runCatching { client.mkcol(thumbDir) }
 										client.uploadBytes(thumbFile.readBytes(), thumbDir, "$thumbId.jpg")
-										PhotoMetadataStore.updateThumbId(entryPath, thumbId)
-										client.reportMetadata(listOf(meta.copy(hasThumbnail = true, thumbId = thumbId)))
 										Log.i("UploadService", "公共微缩图已上传: $thumbDir/$thumbId.jpg")
+										finalMeta = meta.copy(hasThumbnail = true, thumbId = thumbId)
 									}
 								}
+								// 无论缩略图生成是否成功，只写一次最终版本，杜绝空值覆盖竞态
+								PhotoMetadataStore.put(finalMeta)
+								runCatching { client.reportMetadata(listOf(finalMeta)) }
 							}
 						}
 					} catch (t: Exception) {

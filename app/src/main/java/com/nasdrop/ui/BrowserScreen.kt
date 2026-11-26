@@ -191,9 +191,9 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.unit.IntSize
 import com.nasdrop.PhotoGroup
 import androidx.compose.material.icons.rounded.Home
@@ -3205,7 +3205,10 @@ private fun FileBrowserContent(
 							Spacer(modifier = Modifier.height(2.dp))
 							if (entry.isImage) {
 								val thumbTarget = vm.thumbnailUrlFor(entry.path)
-								var thumbFailed by remember(entry.path) { mutableStateOf(false) }
+								// 按 URL 记录失败：后台补齐成功生成新 thumbId 后 URL 变化，自动复位重试，
+								// 避免一次瞬时 404/超时导致该条目永久不显示缩略图
+								var failedThumbUrl by remember(entry.path) { mutableStateOf<String?>(null) }
+								val thumbFailed = thumbTarget != null && failedThumbUrl == thumbTarget
 								val actualData = if (!thumbFailed) thumbTarget else null
 								if (!actualData.isNullOrBlank()) {
 									Box(
@@ -3218,8 +3221,8 @@ private fun FileBrowserContent(
 										AsyncImage(
 											model = ImageRequest.Builder(LocalContext.current)
 												.data(actualData)
-												.memoryCacheKey("thumb:${entry.path.trim('/')}")
-												.diskCacheKey("thumb:${entry.path.trim('/')}")
+												.memoryCacheKey("thumb:${entry.path.trim('/')}:${actualData.hashCode()}")
+												.diskCacheKey("thumb:${entry.path.trim('/')}:${actualData.hashCode()}")
 												.size(240, 240)
 												.precision(coil.size.Precision.INEXACT)
 												.allowRgb565(true)
@@ -3228,7 +3231,7 @@ private fun FileBrowserContent(
 											contentDescription = entry.name,
 											contentScale = ContentScale.Crop,
 											onError = {
-												thumbFailed = true
+												failedThumbUrl = actualData
 												vm.markThumbnailFailed(entry.path)
 											},
 											modifier = Modifier.fillMaxSize(),
@@ -3317,6 +3320,9 @@ private fun HomeScreenContent(
 	}
 	val recentItems = remember(allMedia) { allMedia.take(12) }
 
+	// 进入首页即刷新服务端概览（方法内置 2 秒节流，重复进入不会造成请求风暴）
+	LaunchedEffect(Unit) { vm.refreshServerStats() }
+
 	PullToRefreshBox(
 		isRefreshing = vm.isRefreshing,
 		onRefresh = { vm.pullRefresh() },
@@ -3370,13 +3376,25 @@ private fun HomeScreenContent(
 							)
 						}
 
+						val st = vm.serverStats
+						val photoCount = st?.photos ?: vm.allPhotos.size
+						val videoCount = st?.videos ?: vm.allVideos.size
+						// 相册数必须与「相册」列表同源（本地扫描的 allAlbumFolders），否则点进去数量对不上：
+						// 服务端 albums 是 DISTINCT dir（会把深层子目录也算一个相册），口径与列表不同。
+						// 扫描未就绪时先用服务端值兜底，避免开局显示 0。
+						val albumCount = vm.allAlbumFolders.size.takeIf { it > 0 } ?: (st?.albums ?: 0)
+						val localMemoCount = remember(vm.allPhotos, vm.allVideos, PhotoMetadataStore.revision) {
+							allMedia.count { it.hasAudio || it.hasMemo }
+						}
+						val memoCount = st?.memories ?: localMemoCount
+
 						Row(
 							modifier = Modifier.fillMaxWidth(),
 							horizontalArrangement = Arrangement.SpaceAround,
 							verticalAlignment = Alignment.CenterVertically,
 						) {
 							HomeStatItem(
-								number = vm.allPhotos.size.toString(),
+								number = photoCount.toString(),
 								label = "照片",
 								onClick = {
 									vm.currentTab = MainTab.Photos
@@ -3386,7 +3404,7 @@ private fun HomeScreenContent(
 							)
 							HomeStatDivider()
 							HomeStatItem(
-								number = vm.allVideos.size.toString(),
+								number = videoCount.toString(),
 								label = "视频",
 								onClick = {
 									vm.currentTab = MainTab.Photos
@@ -3396,7 +3414,7 @@ private fun HomeScreenContent(
 							)
 							HomeStatDivider()
 							HomeStatItem(
-								number = vm.allAlbumFolders.size.toString(),
+								number = albumCount.toString(),
 								label = "相册",
 								onClick = {
 									vm.currentTab = MainTab.Photos
@@ -3405,9 +3423,6 @@ private fun HomeScreenContent(
 								},
 							)
 							HomeStatDivider()
-							val memoCount = remember(vm.allPhotos, vm.allVideos, PhotoMetadataStore.revision) {
-								allMedia.count { it.hasAudio || it.hasMemo }
-							}
 							HomeStatItem(
 								number = memoCount.toString(),
 								label = "伴生记忆",
@@ -3595,15 +3610,16 @@ private fun HomeScreenContent(
 									) {
 										val thumbTarget = urlOf(entry.path)
 										val directTarget = vm.directUrlFor(entry.path)
-										var thumbFailed by remember(entry.path) { mutableStateOf(false) }
+										var failedThumbUrl by remember(entry.path) { mutableStateOf<String?>(null) }
+										val thumbFailed = thumbTarget != null && failedThumbUrl == thumbTarget
 										val actualData = if (!thumbFailed) (thumbTarget ?: directTarget) else directTarget
 
 										if (!actualData.isNullOrBlank()) {
 											AsyncImage(
 												model = ImageRequest.Builder(LocalContext.current)
 													.data(actualData)
-													.memoryCacheKey("media_thumb:${entry.path.trim('/')}")
-													.diskCacheKey("media_thumb:${entry.path.trim('/')}")
+													.memoryCacheKey("media_thumb:${entry.path.trim('/')}:${actualData.hashCode()}")
+													.diskCacheKey("media_thumb:${entry.path.trim('/')}:${actualData.hashCode()}")
 													.size(480, 480)
 													.precision(coil.size.Precision.AUTOMATIC)
 													.allowRgb565(false)
@@ -3612,8 +3628,8 @@ private fun HomeScreenContent(
 												contentDescription = entry.name,
 												contentScale = ContentScale.Crop,
 												onError = {
-													if (!thumbFailed) {
-														thumbFailed = true
+													if (thumbTarget != null && failedThumbUrl != thumbTarget) {
+														failedThumbUrl = thumbTarget
 													} else {
 														vm.markThumbnailFailed(entry.path)
 													}
@@ -4302,21 +4318,22 @@ private fun PhotoTimelineContent(
 											),
 									) {
 										val thumbTarget = urlOf(item.path)
-										var thumbFailed by remember(item.path) { mutableStateOf(false) }
+										var failedThumbUrl by remember(item.path) { mutableStateOf<String?>(null) }
+										val thumbFailed = thumbTarget != null && failedThumbUrl == thumbTarget
 										val actualData = if (!thumbFailed) thumbTarget else null
 										if (!actualData.isNullOrBlank()) {
 											AsyncImage(
 												model = ImageRequest.Builder(LocalContext.current)
 													.data(actualData)
-													.memoryCacheKey("thumb:${item.path.trim('/')}")
-													.diskCacheKey("thumb:${item.path.trim('/')}")
+													.memoryCacheKey("thumb:${item.path.trim('/')}:${actualData.hashCode()}")
+													.diskCacheKey("thumb:${item.path.trim('/')}:${actualData.hashCode()}")
 													.size(240, 240)
 													.precision(coil.size.Precision.INEXACT)
 													.allowRgb565(true)
 													.crossfade(false)
 													.build(),
 												onError = {
-													thumbFailed = true
+													failedThumbUrl = actualData
 													onThumbnailError?.invoke(item.path)
 												},
 												contentDescription = item.name,
@@ -5830,14 +5847,15 @@ private fun VideoCardItem(
 				),
 			contentAlignment = Alignment.Center,
 		) {
-			var thumbFailed by remember(video.path) { mutableStateOf(false) }
 			val thumbUrl = urlOf(video.path)
+			var failedThumbUrl by remember(video.path) { mutableStateOf<String?>(null) }
+			val thumbFailed = thumbUrl != null && failedThumbUrl == thumbUrl
 			if (!thumbFailed && !thumbUrl.isNullOrBlank()) {
 				AsyncImage(
 					model = ImageRequest.Builder(LocalContext.current)
 						.data(thumbUrl)
-						.memoryCacheKey("thumb:${video.path.trim('/')}")
-						.diskCacheKey("thumb:${video.path.trim('/')}")
+						.memoryCacheKey("thumb:${video.path.trim('/')}:${thumbUrl.hashCode()}")
+						.diskCacheKey("thumb:${video.path.trim('/')}:${thumbUrl.hashCode()}")
 						.size(320, 180)
 						.precision(coil.size.Precision.INEXACT)
 						.allowRgb565(true)
@@ -5846,7 +5864,7 @@ private fun VideoCardItem(
 					contentDescription = video.name,
 					contentScale = ContentScale.Crop,
 					onError = {
-						thumbFailed = true
+						failedThumbUrl = thumbUrl
 						onThumbnailError?.invoke(video.path)
 					},
 					modifier = Modifier.fillMaxSize(),
@@ -7700,6 +7718,9 @@ private fun PhotoGroupDetailSheet(
 	var pointerInGrid by remember { mutableStateOf(Offset.Zero) }
 	var isHoveringRemove by remember { mutableStateOf(false) }
 	var removeZoneBoundsInBox by remember { mutableStateOf<Rect?>(null) }
+	// 外层 Box 的坐标系；pointerInGrid 是 LazyVerticalGrid（fillMaxSize，与 Box 原点重合）的局部坐标，
+	// 热区矩形必须用 localPositionOf 换算到同一坐标系，positionInParent 会落到 AnimatedVisibility 包装节点导致错位
+	var containerCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
 	val orderedItems = remember(localOrder, photoMap) {
 		localOrder.map { p -> p to photoMap[p] }
@@ -7833,7 +7854,7 @@ private fun PhotoGroupDetailSheet(
 
 			// 网格容器 + 悬浮拖拽卡片 + 底部移出热区在同一 Box 坐标系下工作（备注全屏展开时隐藏网格让备注占满全屏）
 			if (!memoExpanded) {
-			Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+			Box(modifier = Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { containerCoords = it }) {
 				val viewConfig = androidx.compose.ui.platform.LocalViewConfiguration.current
 				LazyVerticalGrid(
 					state = gridState,
@@ -7894,8 +7915,19 @@ private fun PhotoGroupDetailSheet(
 										val event = awaitPointerEvent()
 										val change = event.changes.firstOrNull { it.id == down.id } ?: break
 										if (!change.pressed) {
-											// 松手提交排序或移出
-											val shouldRemove = isHoveringRemove
+											// 松手瞬间按最终位置再判一次热区，避免最后一次 move 恰好停在
+											// 热区外沿、isHoveringRemove 仍是 false 而漏掉移出
+											val upTopLeft = change.position - fingerInItem
+											val upCenter = Offset(
+												upTopLeft.x + draggedItemSize.width / 2f,
+												upTopLeft.y + draggedItemSize.height / 2f,
+											)
+											val upInRemove = removeZoneBoundsInBox?.contains(upCenter) == true ||
+												(removeZoneBoundsInBox == null && run {
+													val vp = gridState.layoutInfo.viewportSize
+													upCenter.y >= vp.height - with(density) { 92.dp.toPx() } && upCenter.y <= vp.height
+												})
+											val shouldRemove = isHoveringRemove || upInRemove
 											val finalOrder = localOrder
 											draggedPath = null
 											isHoveringRemove = false
@@ -7907,11 +7939,20 @@ private fun PhotoGroupDetailSheet(
 											}
 											break
 										}
-										change.consume()
-										pointerInGrid = change.position
-										draggedTopLeft = pointerInGrid - fingerInItem
-										val inRemove = removeZoneBoundsInBox?.contains(pointerInGrid) == true
-										isHoveringRemove = inRemove
+									change.consume()
+									pointerInGrid = change.position
+									draggedTopLeft = pointerInGrid - fingerInItem
+									// 用拖拽卡片中心判定，更符合视觉；热区未测量完成时用网格底部 92dp 兜底
+									val dragCenter = Offset(
+										draggedTopLeft.x + draggedItemSize.width / 2f,
+										draggedTopLeft.y + draggedItemSize.height / 2f,
+									)
+									val inRemove = removeZoneBoundsInBox?.contains(dragCenter) == true ||
+										(removeZoneBoundsInBox == null && run {
+											val vp = gridState.layoutInfo.viewportSize
+											dragCenter.y >= vp.height - with(density) { 92.dp.toPx() } && dragCenter.y <= vp.height
+										})
+									isHoveringRemove = inRemove
 										if (!inRemove) {
 											val target = gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
 												val keyStr = info.key as? String ?: return@firstOrNull false
@@ -8107,13 +8148,19 @@ private fun PhotoGroupDetailSheet(
 						modifier = Modifier
 							.fillMaxWidth()
 							.onGloballyPositioned { coords ->
-								val pos = coords.positionInParent()
-								removeZoneBoundsInBox = Rect(
-									pos.x,
-									pos.y,
-									pos.x + coords.size.width,
-									pos.y + coords.size.height,
-								)
+								// 用 localPositionOf 把热区原点换算到外层 Box 坐标系，与 pointerInGrid /
+								// draggedTopLeft 同坐标系；positionInParent 得到的是相对 AnimatedVisibility
+								// 包装节点的坐标（≈0,0），会让命中区错位到网格顶部，底部热区永远命中不到。
+								val box = containerCoords
+								if (box != null && box.isAttached && coords.isAttached) {
+									val topLeft = box.localPositionOf(coords, Offset.Zero)
+									removeZoneBoundsInBox = Rect(
+										topLeft.x,
+										topLeft.y,
+										topLeft.x + coords.size.width,
+										topLeft.y + coords.size.height,
+									)
+								}
 							},
 					) {
 						Row(

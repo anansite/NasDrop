@@ -135,7 +135,9 @@ fun FileThumbnail(
 		//    这里只需按普通图片加载即可，无需客户端视频帧解码。
 		entry.isVideo -> {
 			val url = urlOf(entry.path)
-			var isError by remember(entry.path) { mutableStateOf(false) }
+			// 按 URL 记录失败：URL 变化（后台补齐出新 thumbId）即自动复位重试
+			var failedUrl by remember(entry.path) { mutableStateOf<String?>(null) }
+			val isError = url != null && failedUrl == url
 
 			if (!isError && !url.isNullOrBlank()) {
 				Box(
@@ -155,8 +157,8 @@ fun FileThumbnail(
 					AsyncImage(
 						model = ImageRequest.Builder(LocalContext.current)
 							.data(url)
-							.memoryCacheKey("thumb:${entry.path.trim('/')}")
-							.diskCacheKey("thumb:${entry.path.trim('/')}")
+							.memoryCacheKey("thumb:${entry.path.trim('/')}:${url.hashCode()}")
+							.diskCacheKey("thumb:${entry.path.trim('/')}:${url.hashCode()}")
 							.size(240, 240)
 							.precision(coil.size.Precision.INEXACT)
 							.allowRgb565(true)
@@ -165,7 +167,7 @@ fun FileThumbnail(
 						contentDescription = entry.name,
 						contentScale = ContentScale.Crop,
 						onError = {
-							isError = true
+							failedUrl = url
 							onThumbnailError?.invoke(entry.path)
 						},
 						modifier = Modifier.fillMaxSize(),

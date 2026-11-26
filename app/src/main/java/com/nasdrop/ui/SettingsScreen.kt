@@ -784,7 +784,7 @@ fun SettingsScreen(
 									try {
 										vm.clearAllCachesAndResync()
 										calculateCacheSize()
-										Toast.makeText(context, "全部本地缓存已清理并重建索引", Toast.LENGTH_SHORT).show()
+										Toast.makeText(context, "本地缓存已清理，本地索引将重新扫描", Toast.LENGTH_SHORT).show()
 									} catch (e: CancellationException) {
 										throw e
 									} catch (e: Exception) {
@@ -796,6 +796,59 @@ fun SettingsScreen(
 								}
 							}) {
 								Text(if (clearingCache) "清理中…" else "立即清理", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = colors.primary)
+							}
+						},
+					)
+
+					HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.4f), thickness = 0.5.dp)
+
+					// 重建服务端索引：唯一会扫 NAS 磁盘的入口，其余页面一律读数据库
+					val indexDesc = vm.serverStats?.let {
+						if (it.photos + it.videos == 0) {
+							"索引为空 · 若 NAS 上已有文件，点此扫盘建索引"
+						} else {
+							"扫描 NAS 目录与数据库对账 · 现有 ${it.photos} 张照片 / ${it.videos} 个视频"
+						}
+					} ?: "扫描 NAS 目录与数据库对账 · 用于补齐直接放入 NAS 的文件"
+					SettingItemRow(
+						icon = Icons.Rounded.Sync,
+						iconBg = colors.tertiary,
+						title = "重建服务端索引",
+						desc = indexDesc,
+						trailing = {
+							TextButton(
+								enabled = !vm.rebuildingIndex && !clearingCache && !saving,
+								onClick = {
+									scope.launch {
+										try {
+											Toast.makeText(context, "开始重建索引，大容量 NAS 可能需要数分钟", Toast.LENGTH_SHORT).show()
+											val r = vm.rebuildServerIndex()
+											val msg = if (!r.ok) {
+												"重建失败，请检查 NAS 连接"
+											} else {
+												buildString {
+													append("索引已重建 · 扫描 ${r.total} 个文件")
+													if (r.added > 0) append("，新入库 ${r.added} 个")
+													if (r.purged > 0) append("，清理 ${r.purged} 条失效记录")
+													if (r.purgeSkipped) append("（扫描不完整，已跳过清理）")
+												}
+											}
+											Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+										} catch (e: CancellationException) {
+											throw e
+										} catch (e: Exception) {
+											Log.e("SettingsScreen", "重建服务端索引失败", e)
+											Toast.makeText(context, "重建失败，请重试", Toast.LENGTH_SHORT).show()
+										}
+									}
+								},
+							) {
+								Text(
+									if (vm.rebuildingIndex) "重建中…" else "立即重建",
+									fontSize = 12.sp,
+									fontWeight = FontWeight.Bold,
+									color = colors.tertiary,
+								)
 							}
 						},
 					)
