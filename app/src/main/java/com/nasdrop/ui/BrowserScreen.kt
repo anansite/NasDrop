@@ -4947,69 +4947,117 @@ private fun TimelineDateScrubber(
 		}
 	}
 
-	// 跳到哪一年，就只展开那一年的全部月份，其他年份全部折叠；位置与显隐均做丝滑动画
+	// 手风琴式时间轴：滑到哪一年，那一年的月份就展开占满剩余高度，其他年份折叠收起在上下两端；位置与显隐丝滑动画
 	val density = LocalDensity.current
 	val displayFractions = remember(milestones, activeYear, trackHeightPx) {
 		if (milestones.size <= 2) return@remember milestones.associateWith { it.fraction }
 		val trackH = with(density) { (trackHeightPx - 20.dp.toPx()).coerceAtLeast(1f) }
-		val minMonthGapFrac = with(density) { (18.dp.toPx() / trackH).coerceIn(0.04f, 0.16f) }
-		val minYearGapFrac = with(density) { (18.dp.toPx() / trackH).coerceIn(0.03f, 0.14f) }
+		val minYearGapFrac = with(density) { (20.dp.toPx() / trackH).coerceIn(0.035f, 0.12f) }
+		val minMonthGapFrac = with(density) { (18.dp.toPx() / trackH).coerceIn(0.035f, 0.12f) }
 		val placed = mutableListOf<Pair<ScrubberMilestone, Float>>()
 
-		// 1. 强制放入全部年份主干，防重叠微调
-		val allYears = milestones.filter { it.isYear }.sortedBy { it.fraction }
-		val yearFracs = allYears.map { it.fraction }.toMutableList()
-		for (i in 1 until yearFracs.size) {
-			if (yearFracs[i] - yearFracs[i - 1] < minYearGapFrac) {
-				yearFracs[i] = yearFracs[i - 1] + minYearGapFrac
-			}
+		val allYears = milestones.filter { it.isYear }.sortedBy { it.groupIndex }
+		if (allYears.isEmpty()) return@remember milestones.associateWith { it.fraction }
+
+		val activeYearIdx = allYears.indexOfFirst { it.year == activeYear }.takeIf { it >= 0 } ?: 0
+		val topPad = 0.02f
+		val bottomPad = 0.98f
+
+		// 1. 当前年份之前的年份折叠在顶部
+		for (i in 0 until activeYearIdx) {
+			placed.add(allYears[i] to (topPad + i * minYearGapFrac))
 		}
-		if (yearFracs.isNotEmpty() && yearFracs.last() > 0.98f) {
-			yearFracs[yearFracs.lastIndex] = 0.98f
-			for (i in yearFracs.lastIndex - 1 downTo 0) {
-				if (yearFracs[i + 1] - yearFracs[i] < minYearGapFrac) {
-					yearFracs[i] = (yearFracs[i + 1] - minYearGapFrac).coerceAtLeast(0.02f)
-				}
-			}
-		}
-		for (i in allYears.indices) {
-			placed.add(allYears[i] to yearFracs[i])
+		// 2. 当前年份之后的年份折叠在底部
+		val afterCount = allYears.lastIndex - activeYearIdx
+		for (i in (activeYearIdx + 1)..allYears.lastIndex) {
+			val distFromEnd = allYears.lastIndex - i
+			placed.add(allYears[i] to (bottomPad - distFromEnd * minYearGapFrac))
 		}
 
-		// 2. 非年份的纯锚点（如“近期”“更早”）
-		for (m in milestones.filter { !it.isYear && it.year.isEmpty() }) {
-			if (placed.none { kotlin.math.abs(it.second - m.fraction) < minMonthGapFrac }) {
-				placed.add(m to m.fraction)
-			}
-		}
+		// 3. 当前年份及其全部月份展开占满中间区域
+		val zoneStart = (topPad + activeYearIdx * minYearGapFrac).coerceAtMost(0.85f)
+		val zoneEnd = (bottomPad - afterCount * minYearGapFrac).coerceAtLeast(zoneStart + minYearGapFrac)
+		val activeYearItem = allYears[activeYearIdx]
+		val activeMonths = milestones
+			.filter { it.year == activeYearItem.year && !it.isYear }
+			.sortedBy { it.groupIndex }
 
-		// 3. 展开当前所在年份的全部分月（不限数量），其余年份月份全部折叠；碰撞时微调到最近空隙
-		if (activeYear.isNotEmpty()) {
-			val activeYearMonths = milestones
-				.filter { it.year == activeYear && !it.isYear }
-				.sortedBy { it.fraction }
-			for (m in activeYearMonths) {
-				if (placed.none { kotlin.math.abs(it.second - m.fraction) < minMonthGapFrac }) {
-					placed.add(m to m.fraction)
-				} else {
-					var nudgedFrac: Float? = null
-					for (step in 1..12) {
-						val up = (m.fraction - step * minMonthGapFrac).coerceAtLeast(0.02f)
-						if (placed.none { kotlin.math.abs(it.second - up) < minMonthGapFrac }) {
-							nudgedFrac = up
-							break
-						}
-						val down = (m.fraction + step * minMonthGapFrac).coerceAtMost(0.98f)
-						if (placed.none { kotlin.math.abs(it.second - down) < minMonthGapFrac }) {
-							nudgedFrac = down
-							break
-						}
-					}
-					placed.add(m to (nudgedFrac ?: m.fraction))
+		placed.add(activeYearItem to zoneStart)
+		if (activeMonths.isNotEmpty()) {
+			val monthStart = (zoneStart + minMonthGapFrac).coerceAtMost(zoneEnd)
+			val span = (zoneEnd - monthStart).coerceAtLeast(0f)
+			if (activeMonths.size == 1) {
+				placed.add(activeMonths.first() to ((monthStart + zoneEnd) * 0.5f))
+			} else {
+				for (i in activeMonths.indices) {
+					val f = monthStart + span * (i.toFloat() / (activeMonths.size - 1))
+					placed.add(activeMonths[i] to f)
 				}
 			}
 		}
 		placed.toMap()
+	}
+
+	val sortedAnchors = remember(displayFractions, groups.size) {
+		val list = displayFractions.entries
+			.map { it.value to it.key.groupIndex }
+			.sortedBy { it.first }
+		if (list.isEmpty()) listOf(0f to 0, 1f to (groups.size - 1).coerceAtLeast(0)) else list
+	}
+
+	fun fractionToGroup(f: Float): Int {
+		if (groups.size <= 1) return 0
+		val clamped = f.coerceIn(0f, 1f)
+		val first = sortedAnchors.first()
+		if (clamped <= first.first) {
+			return if (first.first <= 0.001f) first.second
+			else ((clamped / first.first) * first.second).roundToInt().coerceIn(0, groups.lastIndex)
+		}
+		val last = sortedAnchors.last()
+		if (clamped >= last.first) {
+			return if (last.first >= 0.999f) last.second
+			else {
+				val t = (clamped - last.first) / (1f - last.first)
+				(last.second + t * (groups.lastIndex - last.second)).roundToInt().coerceIn(0, groups.lastIndex)
+			}
+		}
+		for (i in 0 until sortedAnchors.lastIndex) {
+			val (f0, g0) = sortedAnchors[i]
+			val (f1, g1) = sortedAnchors[i + 1]
+			if (clamped in f0..f1) {
+				val span = (f1 - f0).coerceAtLeast(0.0001f)
+				val t = (clamped - f0) / span
+				return (g0 + t * (g1 - g0)).roundToInt().coerceIn(0, groups.lastIndex)
+			}
+		}
+		return groups.lastIndex
+	}
+
+	fun groupToFraction(idx: Int): Float {
+		if (groups.size <= 1) return 0f
+		val byGroup = sortedAnchors.sortedBy { it.second }
+		val first = byGroup.first()
+		if (idx <= first.second) {
+			return if (first.second == 0) first.first
+			else (idx.toFloat() / first.second) * first.first
+		}
+		val last = byGroup.last()
+		if (idx >= last.second) {
+			return if (last.second >= groups.lastIndex) last.first
+			else {
+				val t = (idx - last.second).toFloat() / (groups.lastIndex - last.second).coerceAtLeast(1)
+				last.first + t * (1f - last.first)
+			}
+		}
+		for (i in 0 until byGroup.lastIndex) {
+			val (f0, g0) = byGroup[i]
+			val (f1, g1) = byGroup[i + 1]
+			if (idx in g0..g1) {
+				val span = (g1 - g0).coerceAtLeast(1)
+				return f0 + ((idx - g0).toFloat() / span) * (f1 - f0)
+			}
+		}
+		return 1f
 	}
 
 	val currentSelectedIdx = if (isDragging) activeGroupIdx else visibleGroupIdx
@@ -5021,7 +5069,7 @@ private fun TimelineDateScrubber(
 			.onSizeChanged { size ->
 				if (size.height > 0) trackHeightPx = size.height.toFloat()
 			}
-			.pointerInput(groups) {
+			.pointerInput(groups, sortedAnchors) {
 				awaitEachGesture {
 					val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
 					down.consume()
@@ -5029,7 +5077,7 @@ private fun TimelineDateScrubber(
 					var currentY = down.position.y
 					val f0 = (currentY / trackHeightPx).coerceIn(0f, 1f)
 					dragFraction = f0
-					val target0 = (f0 * (groups.size - 1)).roundToInt().coerceIn(0, groups.size - 1)
+					val target0 = fractionToGroup(f0)
 					activeGroupIdx = target0
 					onScrubStateChanged(true, f0, groups[target0], trackHeightPx)
 					haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -5044,7 +5092,7 @@ private fun TimelineDateScrubber(
 						currentY = change.position.y
 						val f = (currentY / trackHeightPx).coerceIn(0f, 1f)
 						dragFraction = f
-						val target = (f * (groups.size - 1)).roundToInt().coerceIn(0, groups.size - 1)
+						val target = fractionToGroup(f)
 						if (target != activeGroupIdx) {
 							activeGroupIdx = target
 							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -5141,7 +5189,11 @@ private fun TimelineDateScrubber(
 			}
 
 			// 随当前位置滑动的圆润指示胶囊
-			val targetFraction = if (isDragging) dragFraction else scrollProgress
+			val targetFraction = if (isDragging) dragFraction else {
+				if (!state.canScrollBackward) 0f
+				else if (!state.canScrollForward && state.canScrollBackward) 1f
+				else groupToFraction(visibleGroupIdx)
+			}
 			val animatedFraction by animateFloatAsState(
 				targetValue = targetFraction.coerceIn(0f, 1f),
 				animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
