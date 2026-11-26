@@ -5036,7 +5036,7 @@ private fun TimelineDateScrubber(
 			placed.add(allYears[i] to (bottomPad - distFromEnd * minYearGapFrac))
 		}
 
-		// 3. 当前年份及其全部月份展开占满中间区域
+		// 3. 当前年份的月份展开在上方，年份标签放在该年最下方（如 11月..1月 → 26年）
 		val zoneStart = (topPad + activeYearIdx * minYearGapFrac).coerceAtMost(0.85f)
 		val zoneEnd = (bottomPad - afterCount * minYearGapFrac).coerceAtLeast(zoneStart + minYearGapFrac)
 		val activeYearItem = allYears[activeYearIdx]
@@ -5044,19 +5044,19 @@ private fun TimelineDateScrubber(
 			.filter { it.year == activeYearItem.year && !it.isYear }
 			.sortedBy { it.groupIndex }
 
-		placed.add(activeYearItem to zoneStart)
 		if (activeMonths.isNotEmpty()) {
-			val monthStart = (zoneStart + minMonthGapFrac).coerceAtMost(zoneEnd)
-			val span = (zoneEnd - monthStart).coerceAtLeast(0f)
+			val monthEnd = (zoneEnd - minMonthGapFrac).coerceAtLeast(zoneStart)
+			val span = (monthEnd - zoneStart).coerceAtLeast(0f)
 			if (activeMonths.size == 1) {
-				placed.add(activeMonths.first() to ((monthStart + zoneEnd) * 0.5f))
+				placed.add(activeMonths.first() to ((zoneStart + monthEnd) * 0.5f))
 			} else {
 				for (i in activeMonths.indices) {
-					val f = monthStart + span * (i.toFloat() / (activeMonths.size - 1))
+					val f = zoneStart + span * (i.toFloat() / (activeMonths.size - 1))
 					placed.add(activeMonths[i] to f)
 				}
 			}
 		}
+		placed.add(activeYearItem to zoneEnd)
 		placed.toMap()
 	}
 
@@ -5066,16 +5066,17 @@ private fun TimelineDateScrubber(
 			.sortedBy { it.first }
 		if (list.isEmpty()) listOf(0f to 0, 1f to (groups.size - 1).coerceAtLeast(0)) else list
 	}
+	val currentSortedAnchors by rememberUpdatedState(sortedAnchors)
 
-	fun fractionToGroup(f: Float): Int {
+	fun mapFractionToGroup(f: Float, anchors: List<Pair<Float, Int>>): Int {
 		if (groups.size <= 1) return 0
 		val clamped = f.coerceIn(0f, 1f)
-		val first = sortedAnchors.first()
+		val first = anchors.first()
 		if (clamped <= first.first) {
 			return if (first.first <= 0.001f) first.second
 			else ((clamped / first.first) * first.second).roundToInt().coerceIn(0, groups.lastIndex)
 		}
-		val last = sortedAnchors.last()
+		val last = anchors.last()
 		if (clamped >= last.first) {
 			return if (last.first >= 0.999f) last.second
 			else {
@@ -5083,9 +5084,9 @@ private fun TimelineDateScrubber(
 				(last.second + t * (groups.lastIndex - last.second)).roundToInt().coerceIn(0, groups.lastIndex)
 			}
 		}
-		for (i in 0 until sortedAnchors.lastIndex) {
-			val (f0, g0) = sortedAnchors[i]
-			val (f1, g1) = sortedAnchors[i + 1]
+		for (i in 0 until anchors.lastIndex) {
+			val (f0, g0) = anchors[i]
+			val (f1, g1) = anchors[i + 1]
 			if (clamped in f0..f1) {
 				val span = (f1 - f0).coerceAtLeast(0.0001f)
 				val t = (clamped - f0) / span
@@ -5131,15 +5132,17 @@ private fun TimelineDateScrubber(
 			.onSizeChanged { size ->
 				if (size.height > 0) trackHeightPx = size.height.toFloat()
 			}
-			.pointerInput(groups, sortedAnchors) {
+			.pointerInput(groups) {
 				awaitEachGesture {
 					val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
 					down.consume()
+					// 按下瞬间冻结本次拖动的映射锚点，防止年份展开动画重排锚点引起“上下横跳”
+					val anchorsOnDown = currentSortedAnchors
 					isDragging = true
 					var currentY = down.position.y
 					val f0 = (currentY / trackHeightPx).coerceIn(0f, 1f)
 					dragFraction = f0
-					val target0 = fractionToGroup(f0)
+					val target0 = mapFractionToGroup(f0, anchorsOnDown)
 					activeGroupIdx = target0
 					onScrubStateChanged(true, f0, groups[target0], trackHeightPx)
 					haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -5154,7 +5157,7 @@ private fun TimelineDateScrubber(
 						currentY = change.position.y
 						val f = (currentY / trackHeightPx).coerceIn(0f, 1f)
 						dragFraction = f
-						val target = fractionToGroup(f)
+						val target = mapFractionToGroup(f, anchorsOnDown)
 						if (target != activeGroupIdx) {
 							activeGroupIdx = target
 							haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
