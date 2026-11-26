@@ -277,6 +277,7 @@ object PhotoMetadataStore {
 			takenAt = PhotoTimeParser.parseFromFilename(newName) ?: System.currentTimeMillis()
 		)
 		cache[newKey] = updated
+		notifyUpdated()
 
 		ioScope.launch {
 			try {

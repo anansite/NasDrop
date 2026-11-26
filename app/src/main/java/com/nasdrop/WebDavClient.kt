@@ -1003,7 +1003,25 @@ class WebDavClient(
 			.header("Overwrite", "T")
 			.build()
 		metaCall(req).execute().use {
-			if (!it.isSuccessful) throw DavException(it.code, "移动失败: HTTP ${it.code}")
+			if (it.isSuccessful) return
+			// 若目标父目录尚未在磁盘创建（如快捷「创建并移入」并发），补建父目录后重试一次 MOVE
+			if (it.code == 404 || it.code == 409) {
+				val parent = to.trim('/').substringBeforeLast('/', "")
+				if (parent.isNotEmpty()) {
+					runCatching { mkcol(parent) }
+					val retryReq = Request.Builder()
+						.url(urlFor(from))
+						.method("MOVE", null)
+						.header("Destination", destination)
+						.header("Overwrite", "T")
+						.build()
+					metaCall(retryReq).execute().use { retryResp ->
+						if (retryResp.isSuccessful) return
+						throw DavException(retryResp.code, "移动失败: HTTP ${retryResp.code}")
+					}
+				}
+			}
+			throw DavException(it.code, "移动失败: HTTP ${it.code}")
 		}
 	}
 
