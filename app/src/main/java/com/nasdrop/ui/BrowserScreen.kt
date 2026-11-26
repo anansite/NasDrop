@@ -3860,8 +3860,25 @@ private fun PhotoTimelineContent(
 	}
 
 	Column(modifier = Modifier.fillMaxSize()) {
+		val albumRowState = androidx.compose.foundation.lazy.rememberLazyListState()
+		val swipeDensity = LocalDensity.current
+		val currentSelectedAlbum by rememberUpdatedState(selectedAlbumPath)
+		val currentIsMulti by rememberUpdatedState(isMulti)
+		LaunchedEffect(selectedAlbumPath, displayAlbums) {
+			if (selectedAlbumPath.isNotBlank() && selectedAlbumPath != "__ALL_FOLDERS__") {
+				val idx = displayAlbums.indexOfFirst { it.path == selectedAlbumPath }
+				if (idx >= 0) {
+					// item 0 是「相册/时光轴」双视图分段胶囊，子相册从索引 1 开始
+					runCatching { albumRowState.animateScrollToItem(idx + 1) }
+				}
+			} else if (selectedAlbumPath.isBlank()) {
+				runCatching { albumRowState.animateScrollToItem(0) }
+			}
+		}
+
 		// 1. 顶部子相册分类横滑条（紧凑 28dp 统一高度胶囊）
 		LazyRow(
+			state = albumRowState,
 			contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
 			horizontalArrangement = Arrangement.spacedBy(6.dp),
 			verticalAlignment = Alignment.CenterVertically,
@@ -4220,11 +4237,56 @@ private fun PhotoTimelineContent(
 				}
 			}
 
-			// 2. 照片内容展示（外层包裹 PullToRefreshBox，确保空相册同样支持下拉刷新）
+			// 2. 照片内容展示（外层包裹 PullToRefreshBox，确保空相册同样支持下拉刷新；支持左右滑动切换相册）
 			PullToRefreshBox(
 				isRefreshing = isRefreshing,
 				onRefresh = onRefresh,
-				modifier = Modifier.fillMaxSize(),
+				modifier = Modifier
+					.fillMaxSize()
+					.pointerInput(displayAlbums) {
+						val thresholdPx = with(swipeDensity) { 68.dp.toPx() }
+						val touchSlop = viewConfiguration.touchSlop
+						val edgeGuardPx = with(swipeDensity) { 46.dp.toPx() }
+						awaitEachGesture {
+							val down = awaitFirstDown(requireUnconsumed = false)
+							if (currentIsMulti) return@awaitEachGesture
+							if (down.position.x > size.width - edgeGuardPx) return@awaitEachGesture
+							var totalDx = 0f
+							var totalDy = 0f
+							var horizontalLocked = false
+							var verticalLocked = false
+							while (true) {
+								val event = awaitPointerEvent()
+								val change = event.changes.firstOrNull { it.id == down.id } ?: break
+								if (!change.pressed) {
+									if (horizontalLocked && kotlin.math.abs(totalDx) >= thresholdPx) {
+										val tabs = listOf("") + currentDisplayAlbums.map { it.path }
+										val cur = if (currentSelectedAlbum == "__ALL_FOLDERS__") "" else currentSelectedAlbum
+										val curIdx = tabs.indexOf(cur).takeIf { it >= 0 } ?: 0
+										val nextIdx = if (totalDx < 0f) curIdx + 1 else curIdx - 1
+										if (nextIdx in tabs.indices) {
+											haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+											onSelectAlbum(tabs[nextIdx])
+										}
+									}
+									break
+								}
+								val delta = change.position - change.previousPosition
+								totalDx += delta.x
+								totalDy += delta.y
+								if (!horizontalLocked && !verticalLocked) {
+									if (kotlin.math.abs(totalDx) > touchSlop && kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy) * 1.5f) {
+										horizontalLocked = true
+										change.consume()
+									} else if (kotlin.math.abs(totalDy) > touchSlop) {
+										verticalLocked = true
+									}
+								} else if (horizontalLocked) {
+									change.consume()
+								}
+							}
+						}
+					},
 			) {
 				if (groups.isEmpty()) {
 					Box(
