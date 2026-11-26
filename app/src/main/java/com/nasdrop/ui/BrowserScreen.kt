@@ -3797,8 +3797,8 @@ private fun PhotoTimelineContent(
 		val collapsed = HashSet<String>()
 		val albumGroups = photoGroups.filter { pg ->
 			val gDir = pg.albumDir.trim('/')
-			val sameDir = gDir == cleanAlbum || (gDir.isBlank() && pg.items.all { it.substringBeforeLast('/', "") == cleanAlbum })
-			sameDir && pg.items.all { it.substringBeforeLast('/', "") == cleanAlbum }
+			if (gDir.isNotBlank()) gDir == cleanAlbum
+			else pg.items.any { it.substringBeforeLast('/', "") == cleanAlbum }
 		}
 		albumGroups.forEach { pg ->
 			val first = pg.items.firstOrNull { visibleSet.contains(it) }
@@ -3818,7 +3818,9 @@ private fun PhotoTimelineContent(
 	}
 	val displayAlbums = remember(allAlbums) {
 		val visible = allAlbums.filterNot {
-			it.name.startsWith(".") || it.path.contains(".thumbnails") ||
+			val p = it.path.trim('/')
+			p == "Photos" || it.name.equals("Photos", ignoreCase = true) ||
+				it.name.startsWith(".") || it.path.contains(".thumbnails") ||
 				it.name == "默认影集" || it.name == "默认影音" ||
 				it.path == "movies/默认影集" || it.path == "movies/默认影音" ||
 				it.path.endsWith("/默认影集") || it.path.endsWith("/默认影音")
@@ -4869,11 +4871,12 @@ private fun TimelineDateScrubber(
 					val y = parts.getOrNull(0) ?: ""
 					val m = parts.getOrNull(1)?.toIntOrNull()?.toString() ?: parts.getOrNull(1) ?: ""
 					if (y.isNotEmpty()) {
-						if (i == yearBottomIndices[y]) {
-							result.add(ScrubberMilestone(i, "${y.takeLast(2)}年", frac, year = y, isYear = true))
-						} else if (m.isNotEmpty() && "$y-$m" != lastMonthKey) {
+						if (m.isNotEmpty() && "$y-$m" != lastMonthKey) {
 							lastMonthKey = "$y-$m"
 							result.add(ScrubberMilestone(i, "${m}月", frac, year = y, isYear = false))
+						}
+						if (i == yearBottomIndices[y]) {
+							result.add(ScrubberMilestone(i, "${y.takeLast(2)}年", frac, year = y, isYear = true))
 						}
 					}
 				}
@@ -4964,16 +4967,36 @@ private fun TimelineDateScrubber(
 		val lastNonYear = milestones.lastOrNull { !it.isYear }
 		if (lastNonYear != null && lastNonYear != firstNonYear) tryAddMonthOrAnchor(lastNonYear)
 
-		// 3. 自动展开当前滑动/浏览所在年份的邻近月份（离当前焦点越近优先级越高）
+		// 3. 自动展开当前滑动/浏览所在年份的邻近月份（离当前焦点越近优先级越高）；
+		//    若原始位置紧邻年份刻度，则向最近空隙微调偏移，确保滑到对应年份时必定展开月份
 		if (activeYear.isNotEmpty()) {
 			val activeYearMonths = milestones
 				.filter { it.year == activeYear && !it.isYear }
 				.sortedBy { kotlin.math.abs(it.groupIndex - currentGroupIdx) }
-			val maxExpand = if (isDragging) 4 else 2
+			val maxExpand = if (isDragging) 6 else 3
 			var expandedCount = 0
 			for (m in activeYearMonths) {
-				if (expandedCount < maxExpand && tryAddMonthOrAnchor(m)) {
+				if (expandedCount >= maxExpand) break
+				if (tryAddMonthOrAnchor(m)) {
 					expandedCount++
+				} else {
+					var nudgedFrac: Float? = null
+					for (step in 1..6) {
+						val up = (m.fraction - step * minMonthGapFrac).coerceAtLeast(0.02f)
+						if (placed.none { kotlin.math.abs(it.fraction - up) < minMonthGapFrac }) {
+							nudgedFrac = up
+							break
+						}
+						val down = (m.fraction + step * minMonthGapFrac).coerceAtMost(0.98f)
+						if (placed.none { kotlin.math.abs(it.fraction - down) < minMonthGapFrac }) {
+							nudgedFrac = down
+							break
+						}
+					}
+					if (nudgedFrac != null) {
+						placed.add(m.copy(fraction = nudgedFrac))
+						expandedCount++
+					}
 				}
 			}
 		}
@@ -6810,8 +6833,8 @@ private fun MoveFolderSheet(
 		}
 	}
 	val rootItems = filtered.filter { it.isEmpty() }
-	val albumItems = filtered.filter { it == "Photos" || it.startsWith("Photos/") }
-	val mediaItems = filtered.filter { it == "movies" || it.startsWith("movies/") }
+	val albumItems = filtered.filter { it.startsWith("Photos/") }
+	val mediaItems = filtered.filter { it.startsWith("movies/") }
 	val otherItems = filtered.filter {
 		it.isNotEmpty() && it != "Photos" && !it.startsWith("Photos/") && it != "movies" && !it.startsWith("movies/")
 	}
