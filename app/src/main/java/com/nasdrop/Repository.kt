@@ -178,11 +178,14 @@ class Repository(private val context: Context) {
 			.build()
 	}
 
-	/** 仅清理可再生成的缩略图，保留进行中的分享文件和更新安装包。调用方须在 IO 等待完成。 */
+	/** 彻底清理全部本地可再生成缓存（图片、缩略图、视频、语音及本地元数据索引）。调用方须在 IO 等待完成。 */
 	fun clearImageCache() {
 		imageLoader.memoryCache?.clear()
 		imageLoader.diskCache?.clear()
 		LocalThumbs.clear(context)
+		runCatching { context.cacheDir.resolve("video_cache").deleteRecursively() }
+		runCatching { context.cacheDir.resolve("audio_cache").deleteRecursively() }
+		PhotoMetadataStore.clearAll()
 	}
 
 	fun http(): OkHttpClient = okHttp

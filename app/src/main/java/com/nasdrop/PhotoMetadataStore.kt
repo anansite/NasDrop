@@ -377,6 +377,17 @@ object PhotoMetadataStore {
 		return purged
 	}
 
+	/** 彻底清空本地内存与 SQLite 元数据缓存（用于手动全量清理缓存后重建索引） */
+	fun clearAll() {
+		cache.clear()
+		notifyUpdated()
+		try {
+			dbHelper?.writableDatabase?.delete(TABLE_NAME, null, null)
+		} catch (e: Exception) {
+			Log.e(TAG, "清空本地元数据表失败", e)
+		}
+	}
+
 	/**
 	 * 更新照片伴随录音信息（audioPath 为 null 时代表删除伴随录音）。
 	 * 纯文本路径与时长毫秒，绝对不存录音文件二进制。

@@ -2612,6 +2612,20 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch { app.prefs.setLastDir(dir) }
 	}
 
+	suspend fun clearAllCachesAndResync() {
+		withContext(Dispatchers.IO) {
+			app.repo.clearImageCache()
+		}
+		dirCache.clear()
+		albumPageOffsets.clear()
+		albumHasMoreMap.clear()
+		allPhotos = emptyList()
+		allVideos = emptyList()
+		hasScannedMedia = false
+		mediaDirty = true
+		ensureMediaScanned(force = true)
+	}
+
 	fun reloadSettings() {
 		viewModelScope.launch {
 			cancelUploadPreparation()

@@ -92,7 +92,7 @@ fun SettingsScreen(
 	fun calculateCacheSize() {
 		scope.launch {
 			val size = withContext(Dispatchers.IO) {
-				listOf("image_cache", "local_thumbs").sumOf { dir ->
+				listOf("image_cache", "local_thumbs", "video_cache", "audio_cache").sumOf { dir ->
 					context.cacheDir.resolve(dir).walkTopDown().filter { it.isFile }.sumOf { it.length() }
 				}
 			}
@@ -756,7 +756,7 @@ fun SettingsScreen(
 			val paletteTitle = ThemePalette.entries.firstOrNull { it.id.equals(currentPalette, ignoreCase = true) }?.title ?: "经典蓝"
 			SettingsEntryCard(
 				title = "本地离线与外观偏好",
-				summary = "缩略图缓存 $cacheSizeStr · $paletteTitle",
+				summary = "本地缓存 $cacheSizeStr · $paletteTitle",
 				icon = Icons.Rounded.FolderSpecial,
 				iconTint = colors.primary,
 				isExpanded = preferenceExpanded,
@@ -771,24 +771,24 @@ fun SettingsScreen(
 				},
 			) {
 				Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-					// 清理缩略图
+					// 清理全部本地缓存
 					SettingItemRow(
 						icon = Icons.Rounded.CleaningServices,
 						iconBg = colors.primary,
-						title = "清理本地缩略图缓存",
-						desc = "当前已占用 $cacheSizeStr",
+						title = "清理全部本地缓存",
+						desc = "图片/视频/语音缓存及本地索引 · 已占 $cacheSizeStr",
 						trailing = {
 							TextButton(enabled = !clearingCache && !saving, onClick = {
 								clearingCache = true
 								scope.launch {
 									try {
-										withContext(Dispatchers.IO) { app.repo.clearImageCache() }
+										vm.clearAllCachesAndResync()
 										calculateCacheSize()
-										Toast.makeText(context, "缩略图缓存已清理", Toast.LENGTH_SHORT).show()
+										Toast.makeText(context, "全部本地缓存已清理并重建索引", Toast.LENGTH_SHORT).show()
 									} catch (e: CancellationException) {
 										throw e
 									} catch (e: Exception) {
-										Log.e("SettingsScreen", "缩略图缓存清理失败", e)
+										Log.e("SettingsScreen", "本地缓存清理失败", e)
 										Toast.makeText(context, "清理失败，请重试", Toast.LENGTH_SHORT).show()
 									} finally {
 										clearingCache = false

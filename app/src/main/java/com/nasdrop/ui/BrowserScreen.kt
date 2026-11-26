@@ -83,6 +83,7 @@ import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudDownload
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.DateRange
@@ -7758,7 +7759,11 @@ private fun PhotoGroupDetailSheet(
 				}
 			}
 
-			// 集锦备注卡片（绿色强调边框 + 点击可改名/编辑备注）
+			// 集锦备注卡片（默认最高5行；超出显示下拉箭头，展开后占满全屏且支持滚动与折叠）
+			var memoExpanded by remember(group.id) { mutableStateOf(false) }
+			var memoOverflow by remember(group.id, group.memo) { mutableStateOf(false) }
+			androidx.activity.compose.BackHandler(enabled = memoExpanded) { memoExpanded = false }
+
 			Surface(
 				onClick = { showEditMetaDialog = true },
 				shape = RoundedCornerShape(14.dp),
@@ -7766,25 +7771,68 @@ private fun PhotoGroupDetailSheet(
 				border = BorderStroke(1.dp, Color(0xFF00897B).copy(alpha = 0.28f)),
 				modifier = Modifier
 					.fillMaxWidth()
+					.then(if (memoExpanded) Modifier.weight(1f) else Modifier)
 					.padding(horizontal = 14.dp, vertical = 4.dp),
 			) {
-				Row(
-					modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(8.dp),
-				) {
-					Icon(Icons.Rounded.Edit, contentDescription = null, tint = Color(0xFF00897B), modifier = Modifier.size(16.dp))
-					Text(
-						text = group.memo.ifBlank { "集锦备注（点击可修改名称或添加备注）" },
-						fontSize = 13.sp,
-						color = if (group.memo.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-						maxLines = 3,
-						overflow = TextOverflow.Ellipsis,
-					)
+				Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+					Row(
+						modifier = if (memoExpanded) Modifier.weight(1f).fillMaxWidth() else Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.Top,
+						horizontalArrangement = Arrangement.spacedBy(8.dp),
+					) {
+						Icon(
+							Icons.Rounded.Edit,
+							contentDescription = null,
+							tint = Color(0xFF00897B),
+							modifier = Modifier.padding(top = 2.dp).size(16.dp),
+						)
+						Box(
+							modifier = if (memoExpanded) Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()) else Modifier.weight(1f),
+						) {
+							Text(
+								text = group.memo.ifBlank { "集锦备注（点击可修改名称或添加备注）" },
+								fontSize = 13.sp,
+								lineHeight = 19.sp,
+								color = if (group.memo.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+								maxLines = if (memoExpanded) Int.MAX_VALUE else 5,
+								overflow = if (memoExpanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+								onTextLayout = { res ->
+									if (!memoExpanded) memoOverflow = res.hasVisualOverflow
+								},
+							)
+						}
+					}
+					if (memoOverflow || memoExpanded) {
+						Row(
+							modifier = Modifier
+								.fillMaxWidth()
+								.padding(top = 6.dp)
+								.clip(RoundedCornerShape(8.dp))
+								.clickable { memoExpanded = !memoExpanded }
+								.padding(vertical = 4.dp),
+							horizontalArrangement = Arrangement.Center,
+							verticalAlignment = Alignment.CenterVertically,
+						) {
+							Text(
+								text = if (memoExpanded) "收起备注" else "展开全部",
+								fontSize = 12.sp,
+								fontWeight = FontWeight.SemiBold,
+								color = Color(0xFF00897B),
+							)
+							Spacer(Modifier.width(2.dp))
+							Icon(
+								imageVector = if (memoExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+								contentDescription = null,
+								tint = Color(0xFF00897B),
+								modifier = Modifier.size(16.dp),
+							)
+						}
+					}
 				}
 			}
 
-			// 网格容器 + 悬浮拖拽卡片 + 底部移出热区在同一 Box 坐标系下工作
+			// 网格容器 + 悬浮拖拽卡片 + 底部移出热区在同一 Box 坐标系下工作（备注全屏展开时隐藏网格让备注占满全屏）
+			if (!memoExpanded) {
 			Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
 				val viewConfig = androidx.compose.ui.platform.LocalViewConfiguration.current
 				LazyVerticalGrid(
@@ -8089,6 +8137,7 @@ private fun PhotoGroupDetailSheet(
 						}
 					}
 				}
+			}
 			}
 		}
 	}
