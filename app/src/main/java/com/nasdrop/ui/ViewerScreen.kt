@@ -2762,7 +2762,12 @@ fun VideoPlayer(
 												.clickable {
 													if (!url.isNullOrBlank()) {
 														castScope.launch {
-															dlnaManager.cast(device, url, entry.name)
+															player.pause()
+															isPlaying = false
+															val res = dlnaManager.cast(device, url, entry.name)
+															res.onFailure { err ->
+																Toast.makeText(context, err.message ?: "投屏失败", Toast.LENGTH_SHORT).show()
+															}
 														}
 													} else {
 														Toast.makeText(context, "无法获取视频播放直链", Toast.LENGTH_SHORT).show()
