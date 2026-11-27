@@ -205,6 +205,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/** 当前打开的「那年今日」回忆详情（用于从回忆详情放大照片时按展示顺序左右滑动） */
 	var activeMemoryYearGroup by mutableStateOf<MemoryYearGroup?>(null)
 
+	/** 具体相册内是否合并折叠集锦 */
+	var showCollectionsInAlbum by mutableStateOf(true)
+
 	/** 当用户从串联组内点击「+ 追加 -> 新上传照片」时记录目标组 ID，上传完成自动入组 */
 	var pendingAppendGroupId by mutableStateOf<String?>(null)
 
@@ -1430,31 +1433,49 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/** 记录进入大图查看器时的初始图片，退出时若未翻页则保持原位置绝对不动 */
 	var viewerInitialEntry: DavEntry? = null
 
-	/** 看图器退出且翻页到新图片时，平滑对齐当前浏览的照片 */
+	/** 看图器退出且翻页到新图片时，对齐当前浏览的照片位置（仅当目标不在当前可视区域内时定位，避免同屏微调引发跳转） */
 	fun syncViewerPosition(entry: DavEntry) {
+		if (activePhotoGroupId != null || activeMemoryYearGroup != null) return
 		viewModelScope.launch {
-			kotlinx.coroutines.delay(60)
-			if (currentTab == MainTab.Photos) {
-				var targetIndex = 0
-				for (g in photoTimelineGroups) {
-					targetIndex++ // 标题项占 1 个 span
-					val itemIdx = g.items.indexOfFirst { it.path == entry.path }
-					if (itemIdx != -1) {
-						targetIndex += itemIdx
-						val scrollPos = (targetIndex - 3).coerceAtLeast(0)
-						photoGridState.scrollToItem(scrollPos)
-						break
-					} else {
-						targetIndex += g.items.size
-					}
+			if (currentTab == MainTab.Photos && selectedAlbumPath != "__ALL_FOLDERS__") {
+				val target = findTimelineGridScrollTarget(
+					groups = photoTimelineGroups,
+					photoGroups = photoGroups,
+					selectedAlbumPath = selectedAlbumPath,
+					showCollectionsInAlbum = showCollectionsInAlbum,
+					targetPath = entry.path,
+				) ?: return@launch
+				val layout = photoGridState.layoutInfo
+				val bottomDockGuard = (layout.viewportSize.height / 8).coerceAtLeast(80)
+				val visible = layout.visibleItemsInfo.firstOrNull { it.key == target.itemKey }
+				val alreadyComfortablyVisible = visible != null &&
+					visible.offset.y >= 0 &&
+					(visible.offset.y + visible.size.height) <= (layout.viewportEndOffset - bottomDockGuard)
+				if (!alreadyComfortablyVisible) {
+					val scrollPos = (target.gridIndex - 3).coerceAtLeast(0)
+					photoGridState.scrollToItem(scrollPos)
 				}
 			} else if (currentTab == MainTab.Files) {
 				val idx = filteredEntries.indexOfFirst { it.path == entry.path }
-				if (idx != -1) {
-					when (viewMode) {
-						ViewMode.Cards -> fileListState.scrollToItem((idx - 1).coerceAtLeast(0))
-						ViewMode.Compact -> fileCompactState.scrollToItem((idx - 2).coerceAtLeast(0))
-						ViewMode.Grid -> fileGridState.scrollToItem((idx - 3).coerceAtLeast(0))
+				if (idx == -1) return@launch
+				when (viewMode) {
+					ViewMode.Cards -> {
+						val layout = fileListState.layoutInfo
+						val v = layout.visibleItemsInfo.firstOrNull { it.key == entry.path }
+						val visible = v != null && v.offset >= 0 && (v.offset + v.size) <= (layout.viewportEndOffset - 120)
+						if (!visible) fileListState.scrollToItem((idx - 1).coerceAtLeast(0))
+					}
+					ViewMode.Compact -> {
+						val layout = fileCompactState.layoutInfo
+						val v = layout.visibleItemsInfo.firstOrNull { it.key == entry.path }
+						val visible = v != null && v.offset >= 0 && (v.offset + v.size) <= (layout.viewportEndOffset - 120)
+						if (!visible) fileCompactState.scrollToItem((idx - 2).coerceAtLeast(0))
+					}
+					ViewMode.Grid -> {
+						val layout = fileGridState.layoutInfo
+						val v = layout.visibleItemsInfo.firstOrNull { it.key == entry.path }
+						val visible = v != null && v.offset.y >= 0 && (v.offset.y + v.size.height) <= (layout.viewportEndOffset - 120)
+						if (!visible) fileGridState.scrollToItem((idx - 2).coerceAtLeast(0))
 					}
 				}
 			}
@@ -3756,4 +3777,89 @@ internal fun resolveViewerImageAlbum(
 	}
 	val idx = list.indexOfFirst { it.path == entry.path }.coerceAtLeast(0)
 	return Pair(if (list.isEmpty()) listOf(entry) else list, idx)
+}
+
+internal data class TimelineGridSyncTarget(
+	val itemKey: String,
+	val gridIndex: Int,
+)
+
+internal fun collapseTimelinePhotoGroups(
+	photoGroups: List<PhotoGroup>,
+	currentItems: List<DavEntry>,
+	selectedAlbumPath: String,
+	showCollectionsInAlbum: Boolean,
+): Pair<Map<String, PhotoGroup>, Set<String>> {
+	if (selectedAlbumPath.isBlank() || selectedAlbumPath == "__ALL_FOLDERS__" || !showCollectionsInAlbum) {
+		return Pair(emptyMap(), emptySet())
+	}
+	val cleanAlbum = selectedAlbumPath.trim('/')
+	val visibleSet = currentItems.mapTo(HashSet()) { it.path }
+	val byFirst = HashMap<String, PhotoGroup>()
+	val collapsed = HashSet<String>()
+	val albumGroups = photoGroups.filter { pg ->
+		val gDir = pg.albumDir.trim('/')
+		if (gDir.isNotBlank()) gDir == cleanAlbum
+		else pg.items.any { it.substringBeforeLast('/', "") == cleanAlbum }
+	}
+	val coverByGroupId = HashMap<String, String>()
+	albumGroups.forEach { pg ->
+		val first = pg.items.firstOrNull { visibleSet.contains(it) }
+		if (first != null) {
+			coverByGroupId[pg.id] = first
+			if (!byFirst.containsKey(first)) {
+				byFirst[first] = pg
+			}
+		}
+	}
+	albumGroups.forEach { pg ->
+		val first = coverByGroupId[pg.id]
+		pg.items.forEach { p ->
+			if (p != first && !byFirst.containsKey(p)) {
+				collapsed.add(p)
+			}
+		}
+	}
+	return Pair(byFirst, collapsed)
+}
+
+internal fun findTimelineGridScrollTarget(
+	groups: List<TimelineGroup>,
+	photoGroups: List<PhotoGroup>,
+	selectedAlbumPath: String,
+	showCollectionsInAlbum: Boolean,
+	targetPath: String,
+): TimelineGridSyncTarget? {
+	val allItems = groups.flatMap { it.items }
+	val (byFirst, collapsed) = collapseTimelinePhotoGroups(
+		photoGroups = photoGroups,
+		currentItems = allItems,
+		selectedAlbumPath = selectedAlbumPath,
+		showCollectionsInAlbum = showCollectionsInAlbum,
+	)
+	val resolvedPath = if (collapsed.contains(targetPath)) {
+		val cleanAlbum = selectedAlbumPath.trim('/')
+		val visibleSet = allItems.mapTo(HashSet()) { it.path }
+		val ownerGroup = photoGroups.firstOrNull { pg ->
+			val gDir = pg.albumDir.trim('/')
+			val dirMatch = if (gDir.isNotBlank()) gDir == cleanAlbum else pg.items.any { it.substringBeforeLast('/', "") == cleanAlbum }
+			dirMatch && targetPath in pg.items
+		}
+		ownerGroup?.items?.firstOrNull { it in visibleSet && byFirst[it]?.id == ownerGroup.id } ?: targetPath
+	} else {
+		targetPath
+	}
+
+	var targetIndex = 0
+	for (g in groups) {
+		val visibleItems = g.items.filterNot { collapsed.contains(it.path) }
+		if (visibleItems.isEmpty()) continue
+		targetIndex++ // 日期分组标题占 1 个 span
+		val itemIdx = visibleItems.indexOfFirst { it.path == resolvedPath }
+		if (itemIdx != -1) {
+			return TimelineGridSyncTarget(itemKey = resolvedPath, gridIndex = targetIndex + itemIdx)
+		}
+		targetIndex += visibleItems.size
+	}
+	return null
 }

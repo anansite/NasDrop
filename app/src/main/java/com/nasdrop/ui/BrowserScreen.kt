@@ -591,6 +591,8 @@ fun BrowserScreen(
 								allPhotos = vm.allPhotos,
 								memoryYearGroups = vm.memoryYearGroups,
 								selectedAlbumPath = vm.selectedAlbumPath,
+								showCollectionsInAlbum = vm.showCollectionsInAlbum,
+								onToggleShowCollections = { vm.showCollectionsInAlbum = !vm.showCollectionsInAlbum },
 								folderIcons = vm.folderIcons,
 								mediaFilterType = vm.mediaFilterType,
 								onClearFilter = { vm.mediaFilterType = MediaFilterType.All },
@@ -3778,6 +3780,8 @@ private fun PhotoTimelineContent(
 	allPhotos: List<DavEntry> = emptyList(),
 	memoryYearGroups: List<com.nasdrop.MemoryYearGroup> = emptyList(),
 	selectedAlbumPath: String,
+	showCollectionsInAlbum: Boolean = true,
+	onToggleShowCollections: () -> Unit = {},
 	folderIcons: Map<String, String> = emptyMap(),
 	mediaFilterType: MediaFilterType = MediaFilterType.All,
 	onClearFilter: () -> Unit = {},
@@ -3806,36 +3810,13 @@ private fun PhotoTimelineContent(
 	onOpenVideo: (DavEntry) -> Unit = {},
 ) {
 	val currentPhotos = remember(groups) { groups.flatMap { it.items } }
-	var showCollectionsInAlbum by rememberSaveable { mutableStateOf(true) }
 	val (groupByFirstPath, collapsedNonFirstPaths) = remember(photoGroups, currentPhotos, selectedAlbumPath, showCollectionsInAlbum) {
-		// 时光轴上不显示集锦；仅在具体相册内且勾选「显示集锦」时才折叠展示集锦，否则全部展开为普通照片
-		if (selectedAlbumPath.isBlank() || selectedAlbumPath == "__ALL_FOLDERS__" || !showCollectionsInAlbum) {
-			return@remember Pair(emptyMap<String, PhotoGroup>(), emptySet<String>())
-		}
-		val cleanAlbum = selectedAlbumPath.trim('/')
-		val visibleSet = currentPhotos.mapTo(HashSet()) { it.path }
-		val byFirst = HashMap<String, PhotoGroup>()
-		val collapsed = HashSet<String>()
-		val albumGroups = photoGroups.filter { pg ->
-			val gDir = pg.albumDir.trim('/')
-			if (gDir.isNotBlank()) gDir == cleanAlbum
-			else pg.items.any { it.substringBeforeLast('/', "") == cleanAlbum }
-		}
-		albumGroups.forEach { pg ->
-			val first = pg.items.firstOrNull { visibleSet.contains(it) }
-			if (first != null && !byFirst.containsKey(first)) {
-				byFirst[first] = pg
-			}
-		}
-		albumGroups.forEach { pg ->
-			val first = pg.items.firstOrNull { visibleSet.contains(it) }
-			pg.items.forEach { p ->
-				if (p != first && !byFirst.containsKey(p)) {
-					collapsed.add(p)
-				}
-			}
-		}
-		Pair(byFirst, collapsed)
+		com.nasdrop.collapseTimelinePhotoGroups(
+			photoGroups = photoGroups,
+			currentItems = currentPhotos,
+			selectedAlbumPath = selectedAlbumPath,
+			showCollectionsInAlbum = showCollectionsInAlbum,
+		)
 	}
 	val displayAlbums = remember(allAlbums) {
 		val visible = allAlbums.filterNot {
@@ -4214,7 +4195,7 @@ private fun PhotoTimelineContent(
 					)
 					Spacer(Modifier.weight(1f))
 					Surface(
-						onClick = { showCollectionsInAlbum = !showCollectionsInAlbum },
+						onClick = onToggleShowCollections,
 						shape = RoundedCornerShape(14.dp),
 						color = if (showCollectionsInAlbum) Color(0xFF00897B).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
 						border = BorderStroke(

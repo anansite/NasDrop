@@ -92,6 +92,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -225,9 +226,13 @@ fun ImageViewer(
 		imageList.size
 	}
 	val current = imageList.getOrNull(pager.currentPage.coerceIn(0, imageList.lastIndex))
+	val latestOnBack by rememberUpdatedState(onBack)
+	val currentEntrySnapshot: () -> DavEntry? = {
+		imageList.getOrNull(pager.currentPage.coerceIn(0, imageList.lastIndex)) ?: current
+	}
 
 	BackHandler {
-		onBack(current)
+		latestOnBack(currentEntrySnapshot())
 	}
 
 	if (current == null) {
@@ -356,7 +361,7 @@ fun ImageViewer(
 						isCurrentZoomed = zoomed
 					}
 				},
-				onDismiss = { onBack(current) },
+				onDismiss = { latestOnBack(currentEntrySnapshot()) },
 			)
 		}
 
@@ -386,7 +391,7 @@ fun ImageViewer(
 					}
 				},
 				navigationIcon = {
-					IconButton(onClick = { onBack(current) }) {
+					IconButton(onClick = { latestOnBack(currentEntrySnapshot()) }) {
 						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回")
 					}
 				},
@@ -1217,6 +1222,7 @@ private fun ZoomableImage(
 	)
 	var lastTapTime by remember { mutableLongStateOf(0L) }
 	val context = LocalContext.current
+	val latestOnDismiss by rememberUpdatedState(onDismiss)
 
 	// 点开默认立即拉取原图；原图就绪前以缩略图垫底秒开展示，并附带轻巧加载指示
 	var activeUrl by remember(url) { mutableStateOf(url) }
@@ -1302,7 +1308,7 @@ private fun ZoomableImage(
 					detectVerticalDragGestures(
 						onDragEnd = {
 							if (dismissOffsetY > 160f) {
-								onDismiss()
+								latestOnDismiss()
 							} else {
 								dismissOffsetY = 0f
 							}

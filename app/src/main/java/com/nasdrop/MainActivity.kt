@@ -174,7 +174,6 @@ class MainActivity : ComponentActivity() {
 					}
 
 					is Route.Images -> {
-						BackHandler { route = Route.Browser }
 						ImageViewer(
 							images = r.list,
 							startIndex = r.index,
