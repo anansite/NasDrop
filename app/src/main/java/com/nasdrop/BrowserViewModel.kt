@@ -38,6 +38,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 enum class MainTab {
@@ -633,6 +634,16 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						}
 					}
 				}
+				for (batchId in watchedLocalCleanupBatchIds.toList()) {
+					val batchTasks = owned.filter { it.batchId == batchId }
+					if (batchTasks.isNotEmpty() && batchTasks.all { it.done && it.postProcessed }) {
+						watchedLocalCleanupBatchIds.remove(batchId)
+						val succeeded = batchTasks.filter { it.error == null && !it.cancelled }
+						if (succeeded.isNotEmpty()) {
+							offerLocalCleanupIfDeletable(succeeded)
+						}
+					}
+				}
 			}
 		}
 
@@ -671,6 +682,13 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	var checkingUploadDestination by mutableStateOf(false)
 		private set
+	var checkingUploadMessage by mutableStateOf("")
+		private set
+	var checkingUploadProgress by mutableStateOf<Float?>(null)
+		private set
+	var pendingLocalCleanupCandidates by mutableStateOf<List<LocalCleanupCandidate>>(emptyList())
+		private set
+	private val watchedLocalCleanupBatchIds = mutableSetOf<String>()
 	var pendingUploadOverwriteNames by mutableStateOf<List<String>>(emptyList())
 		private set
 	var pendingUploadConflicts by mutableStateOf<List<UploadConflictItem>>(emptyList())
@@ -725,12 +743,19 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		if (checkingUploadDestination || pendingUpload != null) { toast("请先完成当前上传确认"); return }
 		val version = ++preparationVersion
 		checkingUploadDestination = true
+		checkingUploadMessage = "正在读取所选 ${request.uris.size} 个文件…"
+		checkingUploadProgress = null
 		uploadPreparation = viewModelScope.launch {
 			try {
 				val conflicts = withContext(Dispatchers.IO) {
 					request.uris.forEach { uri ->
 						app.contentResolver.openAssetFileDescriptor(uri, "r")?.close()
 							?: error("无法读取所选文件，请重新选择")
+					}
+					withContext(Dispatchers.Main) {
+						if (preparationVersion == version) {
+							checkingUploadMessage = "正在检查目标目录并比对同名文件…"
+						}
 					}
 					val settings = app.prefs.current()
 					val client = clientOf(settings)
@@ -783,6 +808,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					}
 
 					if (hashChecks.isNotEmpty()) {
+						val totalHashes = hashChecks.size
+						val completedHashes = AtomicInteger(0)
+						withContext(Dispatchers.Main) {
+							if (preparationVersion == version) {
+								checkingUploadMessage = "正在校验文件指纹 (0/$totalHashes)…"
+								checkingUploadProgress = 0f
+							}
+						}
 						val hashSem = Semaphore(4)
 						val checked = coroutineScope {
 							hashChecks.map { hc ->
@@ -790,6 +823,13 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 									hashSem.withPermit {
 										val localHash = computeLocalSha256(hc.uri)
 										val remoteHash = client.fetchRemoteFileHash(hc.remote.path)
+										val doneNow = completedHashes.incrementAndGet()
+										withContext(Dispatchers.Main) {
+											if (preparationVersion == version) {
+												checkingUploadMessage = "正在校验文件指纹 ($doneNow/$totalHashes)…"
+												checkingUploadProgress = doneNow.toFloat() / totalHashes.toFloat()
+											}
+										}
 										val kind = if (localHash != null && remoteHash != null) {
 											if (localHash.equals(remoteHash, ignoreCase = true)) UploadConflictKind.IDENTICAL
 											else UploadConflictKind.DIFFERENT_CONTENT
@@ -817,7 +857,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				Log.w("BrowserViewModel", "上传准备失败 dir=${request.directory} count=${request.uris.size}", e)
 				toast(if (e is SecurityException) "读取权限已失效，请重新选择文件" else e.message ?: "无法检查上传位置，请重试")
 			} finally {
-				if (preparationVersion == version) checkingUploadDestination = false
+				if (preparationVersion == version) {
+					checkingUploadDestination = false
+					checkingUploadMessage = ""
+					checkingUploadProgress = null
+				}
 			}
 		}
 	}
@@ -827,6 +871,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		preparationVersion++
 		uploadPreparation?.cancel()
 		checkingUploadDestination = false
+		checkingUploadMessage = ""
+		checkingUploadProgress = null
 	}
 
 	/** 智能处理同名冲突：跳过完全相同文件，对不同内容或同批重名文件自动重命名后上传。 */
@@ -877,11 +923,37 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	private fun launchUploads(request: PendingUpload, nameOverrides: Map<String, String> = emptyMap()) {
 		runCatching { UploadService.start(app, request.uris, request.directory, nameOverrides) }
-			.onSuccess { id -> request.onStarted(id) }
+			.onSuccess { id ->
+				watchedLocalCleanupBatchIds.add(id)
+				request.onStarted(id)
+			}
 			.onFailure { error ->
 				Log.w("BrowserViewModel", "无法启动上传服务 dir=${request.directory}", error)
 				toast("无法开始上传：${error.message}")
 			}
+	}
+
+	private fun offerLocalCleanupIfDeletable(succeeded: List<UploadTask>) {
+		val candidates = succeeded
+			.distinctBy { it.uri }
+			.map { LocalCleanupCandidate(uriString = it.uri, name = it.name, sizeBytes = it.total.coerceAtLeast(0L)) }
+		if (candidates.isEmpty()) return
+		viewModelScope.launch(Dispatchers.IO) {
+			val plan = buildLocalCleanupPlan(app, candidates)
+			if (plan.deletableCount <= 0) return@launch
+			withContext(Dispatchers.Main) {
+				pendingLocalCleanupCandidates = (pendingLocalCleanupCandidates + candidates).distinctBy { it.uriString }
+			}
+		}
+	}
+
+	fun dismissLocalCleanup() {
+		pendingLocalCleanupCandidates = emptyList()
+	}
+
+	fun finishLocalCleanup(message: String?) {
+		pendingLocalCleanupCandidates = emptyList()
+		if (!message.isNullOrBlank()) toast(message)
 	}
 
 	fun consumeMessage(): String? {

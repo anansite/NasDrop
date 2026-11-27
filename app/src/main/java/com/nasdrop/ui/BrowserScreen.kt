@@ -6,6 +6,7 @@ import android.widget.Toast
 import android.net.Uri
 import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -822,8 +823,8 @@ fun BrowserScreen(
 }
 
 	// ==================== 抽屉与对话框组件 ====================
-	// 确认窗口只在发现同名冲突时弹出，支持智能跳过相同文件 / 自动重命名不同文件 / 覆盖上传
-	UploadConflictDialog(vm)
+	// 涵盖上传前置校验动画、同名冲突确认、上传完成本地清理询问
+	UploadFlowDialogs(vm)
 
 	if (vm.activeMemoryYearGroup != null) {
 		MemoryDetailModalSheet(
@@ -6986,6 +6987,196 @@ fun UploadConflictDialog(vm: BrowserViewModel) {
 		},
 		dismissButton = {
 			TextButton(onClick = { vm.dismissUploadOverwrite() }) { Text("取消") }
+		},
+	)
+}
+
+/** 统一编排上传前置校验动画、同名冲突弹窗与上传后本地空间清理弹窗。 */
+@Composable
+fun UploadFlowDialogs(vm: BrowserViewModel) {
+	UploadPreparationDialog(vm)
+	UploadConflictDialog(vm)
+	UploadLocalCleanupDialog(vm)
+}
+
+/** 上传前置校验加载提示：选完照片后立即显现，避免远端目录检查与指纹校验期间出现“无反馈”空白。 */
+@Composable
+fun UploadPreparationDialog(vm: BrowserViewModel) {
+	if (!vm.checkingUploadDestination) return
+	val progress = vm.checkingUploadProgress
+	AlertDialog(
+		onDismissRequest = { vm.cancelUploadPreparation() },
+		icon = {
+			if (progress != null) {
+				CircularProgressIndicator(
+					progress = { progress },
+					modifier = Modifier.size(36.dp),
+					strokeWidth = 3.5.dp,
+				)
+			} else {
+				CircularProgressIndicator(
+					modifier = Modifier.size(36.dp),
+					strokeWidth = 3.5.dp,
+				)
+			}
+		},
+		title = { Text("正在校验文件", fontWeight = FontWeight.Bold) },
+		text = {
+			Column(
+				horizontalAlignment = Alignment.CenterHorizontally,
+				verticalArrangement = Arrangement.spacedBy(6.dp),
+				modifier = Modifier.fillMaxWidth(),
+			) {
+				Text(
+					text = vm.checkingUploadMessage.ifBlank { "正在检查目标目录并比对文件指纹，请稍候…" },
+					style = MaterialTheme.typography.bodyMedium,
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+				)
+				Text(
+					text = "自动识别重复照片并防止误覆盖",
+					style = MaterialTheme.typography.labelSmall,
+					color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+				)
+			}
+		},
+		confirmButton = {},
+		dismissButton = {
+			TextButton(onClick = { vm.cancelUploadPreparation() }) {
+				Text("取消")
+			}
+		},
+	)
+}
+
+/** 上传完成后提示用户是否清理手机端原文件，释放本地存储空间。 */
+@Composable
+fun UploadLocalCleanupDialog(vm: BrowserViewModel) {
+	val candidates = vm.pendingLocalCleanupCandidates
+	if (candidates.isEmpty()) return
+
+	val context = LocalContext.current
+	val scope = rememberCoroutineScope()
+	var isDeleting by remember { mutableStateOf(false) }
+	var directDeletedCount by remember { mutableIntStateOf(0) }
+	var failedCount by remember { mutableIntStateOf(0) }
+	var pendingMediaCount by remember { mutableIntStateOf(0) }
+	var queuedSenders by remember { mutableStateOf<List<android.content.IntentSender>>(emptyList()) }
+	var approvedSenders by remember { mutableIntStateOf(0) }
+	var cancelledAnySender by remember { mutableStateOf(false) }
+	var singlePerSenderMedia by remember { mutableStateOf(false) }
+
+	lateinit var launchNextSenderOrFinish: () -> Unit
+	val deleteLauncher = rememberLauncherForActivityResult(
+		contract = ActivityResultContracts.StartIntentSenderForResult(),
+	) { result ->
+		val ok = result.resultCode == android.app.Activity.RESULT_OK
+		if (ok) {
+			approvedSenders += if (singlePerSenderMedia) 1 else pendingMediaCount
+		} else {
+			cancelledAnySender = true
+		}
+		launchNextSenderOrFinish()
+	}
+
+	launchNextSenderOrFinish = {
+		val remaining = queuedSenders
+		if (remaining.isNotEmpty()) {
+			val next = remaining.first()
+			queuedSenders = remaining.drop(1)
+			runCatching {
+				deleteLauncher.launch(IntentSenderRequest.Builder(next).build())
+			}.onFailure {
+				failedCount += if (singlePerSenderMedia) 1 else pendingMediaCount
+				launchNextSenderOrFinish()
+			}
+		} else {
+			isDeleting = false
+			val msg = com.nasdrop.formatLocalCleanupResultMessage(
+				deletedCount = directDeletedCount + approvedSenders,
+				failedCount = failedCount,
+				userCancelledSystemPrompt = cancelledAnySender && (pendingMediaCount > approvedSenders),
+			)
+			vm.finishLocalCleanup(msg)
+		}
+	}
+
+	val totalBytes = remember(candidates) { candidates.sumOf { it.sizeBytes.coerceAtLeast(0L) } }
+
+	AlertDialog(
+		onDismissRequest = { if (!isDeleting) vm.dismissLocalCleanup() },
+		icon = {
+			Icon(
+				Icons.Rounded.Delete,
+				contentDescription = null,
+				tint = MaterialTheme.colorScheme.primary,
+				modifier = Modifier.size(30.dp),
+			)
+		},
+		title = { Text("上传完成，清理本地文件？", fontWeight = FontWeight.Bold) },
+		text = {
+			Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+				val sizeNote = if (totalBytes > 0L) "（可释放 ${formatSize(totalBytes)}）" else ""
+				Text(
+					text = "已安全备份 ${candidates.size} 个文件到 NAS$sizeNote。是否同时删除手机上的原文件？",
+					style = MaterialTheme.typography.bodyMedium,
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+				)
+				candidates.take(3).forEach { item ->
+					Text(
+						text = "• ${item.name}",
+						fontSize = 12.sp,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+						color = MaterialTheme.colorScheme.onSurface,
+					)
+				}
+				if (candidates.size > 3) {
+					Text(
+						text = "等共 ${candidates.size} 个文件",
+						fontSize = 11.5.sp,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+					)
+				}
+				if (isDeleting) {
+					Row(
+						modifier = Modifier.padding(top = 6.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(8.dp),
+					) {
+						CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+						Text("正在清理本地文件…", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+					}
+				}
+			}
+		},
+		confirmButton = {
+			Button(
+				enabled = !isDeleting,
+				onClick = {
+					isDeleting = true
+					scope.launch {
+						val plan = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+							com.nasdrop.buildLocalCleanupPlan(context, candidates)
+						}
+						val exec = com.nasdrop.executeLocalDeletePlan(context, plan)
+						directDeletedCount = exec.directDeleted
+						failedCount = exec.failedCount
+						pendingMediaCount = exec.pendingMediaCount
+						approvedSenders = 0
+						cancelledAnySender = false
+						singlePerSenderMedia = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R
+						queuedSenders = exec.intentSenders
+						launchNextSenderOrFinish()
+					}
+				},
+			) {
+				Text("删除本地文件")
+			}
+		},
+		dismissButton = {
+			TextButton(enabled = !isDeleting, onClick = { vm.dismissLocalCleanup() }) {
+				Text("保留文件")
+			}
 		},
 	)
 }

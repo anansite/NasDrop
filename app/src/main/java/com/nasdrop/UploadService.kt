@@ -118,6 +118,7 @@ class UploadService : Service() {
 			tasks.forEach { task ->
 				Uploads.update(task.id) { it.copy(done = true, error = t.message ?: "连接失败") }
 			}
+			Uploads.markPostProcessed(tasks.map { it.id })
 			finishBatch(tasks, batchId)
 			return
 		}
@@ -146,7 +147,7 @@ class UploadService : Service() {
 					// 本地缩略图与上传并行跑：等字节传完时它早就好了，
 					// 于是"传完那一刻"列表里就是真图，而不是一片灰（视频连图都没有）。
 					// 万一它晚到，LocalThumbs.revision 自增会触发列表重组自动换上。
-					scope.launch {
+					thumbJobs += scope.launch {
 						runCatching {
 							if (isVideo || isImage) {
 								LocalThumbs.ensure(this@UploadService, uri, entryPath, isVideo)
@@ -246,7 +247,10 @@ class UploadService : Service() {
 		finishBatch(tasks, batchId, stopService = pendingThumbs.isEmpty())
 		if (pendingThumbs.isNotEmpty()) {
 			pendingThumbs.joinAll()
+			Uploads.markPostProcessed(tasks.map { it.id })
 			Handler(Looper.getMainLooper()).post { releaseBatch() }
+		} else {
+			Uploads.markPostProcessed(tasks.map { it.id })
 		}
 	}
 

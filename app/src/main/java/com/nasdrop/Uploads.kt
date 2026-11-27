@@ -30,6 +30,7 @@ data class UploadTask(
 	val listingActive: Boolean = true,
 	val dismissed: Boolean = false,
 	val cancelled: Boolean = false,
+	val postProcessed: Boolean = false,
 	val writeOrder: Long = 0L,
 	val ownerKey: String = "",
 ) {
@@ -133,6 +134,13 @@ object Uploads {
 			val path = listOf(task.dir, task.name).filter { it.isNotEmpty() }.joinToString("/")
 			if (paths.any { path == it || path.startsWith("$it/") }) task.copy(listingActive = false) else task
 		}
+	}
+
+	@Synchronized
+	fun markPostProcessed(ids: Collection<String>) {
+		if (ids.isEmpty()) return
+		val idSet = ids.toSet()
+		_tasks.value = _tasks.value.map { if (it.id in idSet) it.copy(postProcessed = true) else it }
 	}
 
 	fun running(): Boolean = _tasks.value.any { !it.done }

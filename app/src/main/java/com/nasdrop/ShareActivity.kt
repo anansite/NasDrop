@@ -20,7 +20,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.nasdrop.ui.BrowserMode
 import com.nasdrop.ui.BrowserScreen
 import com.nasdrop.ui.NasDropTheme
-import com.nasdrop.ui.UploadConflictDialog
+import com.nasdrop.ui.UploadFlowDialogs
 import com.nasdrop.ui.UploadProgressScreen
 import com.nasdrop.ui.SettingsScreen
 
@@ -80,6 +80,13 @@ class ShareActivity : ComponentActivity() {
 					uploadSession = Uploads.sessionId
 				}
 			}
+			val pendingMessage = vm.uiMessage
+			LaunchedEffect(pendingMessage) {
+				if (pendingMessage != null) {
+					android.widget.Toast.makeText(this@ShareActivity, pendingMessage, android.widget.Toast.LENGTH_SHORT).show()
+					vm.consumeMessage()
+				}
+			}
 
 			// 拦截返回键：如果已进入子目录，按返回键优先返回上级目录；在根目录时再退出
 			BackHandler {
@@ -131,7 +138,7 @@ class ShareActivity : ComponentActivity() {
 					},
 				)
 			}
-			UploadConflictDialog(vm)
+			UploadFlowDialogs(vm)
 		}
 	}
 
