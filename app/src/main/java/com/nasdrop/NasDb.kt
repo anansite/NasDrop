@@ -186,7 +186,8 @@ class NasDb private constructor(context: Context) : SQLiteOpenHelper(
 		val p = dirPath.trim('/')
 		if (p.isEmpty()) return
 		try {
-			writableDatabase.delete(TABLE_FOLDER_ICONS, "$COL_PATH = ? OR $COL_PATH LIKE ?", arrayOf(p, "$p/%"))
+			val esc = p.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+			writableDatabase.delete(TABLE_FOLDER_ICONS, "$COL_PATH = ? OR $COL_PATH LIKE ? ESCAPE '\\'", arrayOf(p, "$esc/%"))
 		} catch (e: Exception) {
 			android.util.Log.w("NasDb", "Failed to clear icons for dir $dirPath: ${e.message}")
 		}

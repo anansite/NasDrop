@@ -476,14 +476,18 @@ class WebDavClient(
 		val p = item.optString("path", "").trim('/')
 		if (p.isEmpty()) return null
 		val cur = PhotoMetadataStore.get(p)
-		val thumbId = item.optString("thumb_id", "").ifBlank { cur?.thumbId ?: "" }
-		val voiceId = item.optString("voice_id", "").ifBlank { cur?.voiceId ?: "" }
-		val voiceDur = item.optLong("voice_duration_ms", 0L).takeIf { it > 0L } ?: (cur?.audioDurationMs ?: 0L)
-		val memo = item.optString("memo", "").ifBlank { null } ?: cur?.memo
-		val lat = item.optDouble("lat", 0.0).takeIf { it != 0.0 } ?: (cur?.lat ?: 0.0)
-		val lng = item.optDouble("lng", 0.0).takeIf { it != 0.0 } ?: (cur?.lng ?: 0.0)
-		val locName = item.optString("location_name", "").ifBlank { cur?.locationName ?: "" }
-		val audioPath = voiceId.takeIf { it.isNotBlank() }?.let { ".nasdrop_voices/$it.m4a" } ?: cur?.audioPath
+		val thumbId = if (item.has("thumb_id")) item.optString("thumb_id", "") else cur?.thumbId ?: ""
+		val voiceId = if (item.has("voice_id")) item.optString("voice_id", "") else cur?.voiceId ?: ""
+		val voiceDur = if (item.has("voice_duration_ms")) item.optLong("voice_duration_ms", 0L) else (cur?.audioDurationMs ?: 0L)
+		val memo = if (item.has("memo")) item.optString("memo", "").ifBlank { null } else cur?.memo
+		val lat = if (item.has("lat")) item.optDouble("lat", 0.0) else (cur?.lat ?: 0.0)
+		val lng = if (item.has("lng")) item.optDouble("lng", 0.0) else (cur?.lng ?: 0.0)
+		val locName = if (item.has("location_name")) item.optString("location_name", "") else (cur?.locationName ?: "")
+		val audioPath = if (item.has("voice_id")) {
+			voiceId.takeIf { it.isNotBlank() }?.let { ".nasdrop_voices/$it.m4a" }
+		} else {
+			cur?.audioPath
+		}
 		val hasThumb = item.optBoolean("has_thumb", cur?.hasThumbnail == true) || thumbId.isNotBlank()
 		val dir = item.optString("dir", "").ifBlank { if (p.contains('/')) p.substringBeforeLast('/') else "" }
 		return PhotoMetadata(

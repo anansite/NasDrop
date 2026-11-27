@@ -70,14 +70,15 @@ object UpdateManager {
 						.header("Accept", "application/vnd.github.v3+json")
 						.header("User-Agent", "NasDrop-Android-App")
 						.build()
-					val response = http.newCall(request).execute()
-					Log.i("UpdateManager", "API ${url.take(40)} -> ${response.code}")
-					if (response.isSuccessful) {
-						response.body?.string()?.let {
-							if (it.startsWith("{") && it.contains("tag_name")) { jsonStr = it }
+					http.newCall(request).execute().use { response ->
+						Log.i("UpdateManager", "API ${url.take(40)} -> ${response.code}")
+						if (response.isSuccessful) {
+							response.body?.string()?.let {
+								if (it.startsWith("{") && it.contains("tag_name")) { jsonStr = it }
+							}
 						}
-						if (jsonStr != null) break
 					}
+					if (jsonStr != null) break
 				} catch (e: Exception) {
 					Log.w("UpdateManager", "API candidate failed: ${e.message}")
 				}
@@ -225,40 +226,43 @@ object UpdateManager {
 						.url(url)
 						.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NasDrop")
 						.build()
-					val resp = downloadHttp.newCall(req).execute()
-					if (!resp.isSuccessful) {
-						if (attempt < 2) {
-							kotlinx.coroutines.delay(1500)
-							continue
+					var retryNeeded = false
+					downloadHttp.newCall(req).execute().use { resp ->
+						if (!resp.isSuccessful) {
+							retryNeeded = true
+							return@use
 						}
-						continue
-					}
-					val body = resp.body ?: continue
-					val total = body.contentLength()
+						val body = resp.body ?: return@use
+						val total = body.contentLength()
 
-					body.byteStream().use { input ->
-						FileOutputStream(destFile).use { output ->
-							val buffer = ByteArray(128 * 1024)
-							var read: Int
-							var downloaded = 0L
-							var lastTime = System.currentTimeMillis()
-							var lastDownloaded = 0L
+						body.byteStream().use { input ->
+							FileOutputStream(destFile).use { output ->
+								val buffer = ByteArray(128 * 1024)
+								var read: Int
+								var downloaded = 0L
+								var lastTime = System.currentTimeMillis()
+								var lastDownloaded = 0L
 
-							while (input.read(buffer).also { read = it } != -1) {
-								output.write(buffer, 0, read)
-								downloaded += read
+								while (input.read(buffer).also { read = it } != -1) {
+									output.write(buffer, 0, read)
+									downloaded += read
 
-								val now = System.currentTimeMillis()
-								val dt = now - lastTime
-								if (dt >= 200 || (total > 0 && downloaded >= total)) {
-									val speed = if (dt > 0) ((downloaded - lastDownloaded) * 1000) / dt else 0L
-									lastTime = now
-									lastDownloaded = downloaded
-									onProgress(downloaded, total, speed)
+									val now = System.currentTimeMillis()
+									val dt = now - lastTime
+									if (dt >= 200 || (total > 0 && downloaded >= total)) {
+										val speed = if (dt > 0) ((downloaded - lastDownloaded) * 1000) / dt else 0L
+										lastTime = now
+										lastDownloaded = downloaded
+										onProgress(downloaded, total, speed)
+									}
 								}
+								onProgress(downloaded, total, 0L)
 							}
-							onProgress(downloaded, total, 0L)
 						}
+					}
+					if (retryNeeded) {
+						if (attempt < 2) kotlinx.coroutines.delay(1500)
+						continue
 					}
 					if (destFile.exists() && destFile.length() > 1024 * 1024) {
 						return@withContext destFile

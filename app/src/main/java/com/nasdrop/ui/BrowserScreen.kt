@@ -937,7 +937,7 @@ fun BrowserScreen(
 			onLocate = { entry, album ->
 				showRandomPhotoGame = false
 				vm.currentTab = MainTab.Photos
-				vm.selectedAlbumPath = album?.path ?: ""
+				vm.openAlbum(album?.path ?: "")
 				onOpenImage(entry)
 				Toast.makeText(context, "已在「${album?.name ?: "全部照片"}」中定位该照片", Toast.LENGTH_SHORT).show()
 			},
@@ -3416,7 +3416,7 @@ private fun HomeScreenContent(
 								label = "照片",
 								onClick = {
 									vm.currentTab = MainTab.Photos
-									vm.selectedAlbumPath = ""
+									vm.openAlbum("")
 									vm.mediaFilterType = MediaFilterType.PhotosOnly
 								},
 							)
@@ -3426,7 +3426,7 @@ private fun HomeScreenContent(
 								label = "视频",
 								onClick = {
 									vm.currentTab = MainTab.Photos
-									vm.selectedAlbumPath = ""
+									vm.openAlbum("")
 									vm.mediaFilterType = MediaFilterType.VideosOnly
 								},
 							)
@@ -3436,7 +3436,7 @@ private fun HomeScreenContent(
 								label = "相册",
 								onClick = {
 									vm.currentTab = MainTab.Photos
-									vm.selectedAlbumPath = "__ALL_FOLDERS__"
+									vm.openAlbum("__ALL_FOLDERS__")
 									vm.mediaFilterType = MediaFilterType.All
 								},
 							)
@@ -3446,7 +3446,7 @@ private fun HomeScreenContent(
 								label = "伴生记忆",
 								onClick = {
 									vm.currentTab = MainTab.Photos
-									vm.selectedAlbumPath = ""
+									vm.openAlbum("")
 									vm.mediaFilterType = MediaFilterType.WithAudioMemo
 								},
 							)
@@ -3595,8 +3595,9 @@ private fun HomeScreenContent(
 								color = MaterialTheme.colorScheme.onSurface,
 							)
 						}
-						TextButton(onClick = { vm.currentTab = MainTab.Photos }) {
-							Text("查看全部 (${allMedia.size})", fontSize = 13.sp)
+						TextButton(onClick = { vm.currentTab = MainTab.Photos; vm.openAlbum("") }) {
+							val totalCount = vm.serverStats?.let { it.photos + it.videos }?.takeIf { it > 0 } ?: allMedia.size
+							Text("查看全部 ($totalCount)", fontSize = 13.sp)
 						}
 					}
 				}

@@ -245,8 +245,8 @@ fun ImageViewer(
 	var exifData by remember(current.path) { mutableStateOf<MediaExifData?>(null) }
 	var loadingExif by remember(current.path) { mutableStateOf(false) }
 
-	LaunchedEffect(showInfoDialog, current?.path) {
-		if (showInfoDialog && exifData == null && current != null) {
+	LaunchedEffect(showInfoDialog, current.path) {
+		if (showInfoDialog && exifData == null) {
 			loadingExif = true
 			val activeUrl = urlOf(current.path) ?: fallbackUrlOf?.invoke(current.path) ?: thumbOf?.invoke(current.path)
 			exifData = MediaExifHelper.extractExif(context, current, activeUrl, context.app.repo.http())
@@ -1644,15 +1644,15 @@ private fun ZoomableImage(
 			)
 		}
 
-		// 原图加载中状态：保留缩略图背景，底部悬浮轻盈胶囊指示加载动画
+		// 原图加载中状态：置于顶部顶栏下方，避免与底部默认展开的伴生记忆卡片发生遮挡重叠
 		if (isFullLoading && !isFullLoaded) {
 			Surface(
 				shape = RoundedCornerShape(16.dp),
 				color = Color.Black.copy(alpha = 0.65f),
 				border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
 				modifier = Modifier
-					.align(Alignment.BottomCenter)
-					.padding(bottom = 92.dp),
+					.align(Alignment.TopCenter)
+					.padding(top = 88.dp),
 			) {
 				Row(
 					modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
@@ -1677,14 +1677,14 @@ private fun ZoomableImage(
 		// 原图加载失败时的处理
 		if (fullLoadFailed) {
 			if (!thumbUrl.isNullOrBlank()) {
-				// 若缩略图仍在显示，在底部提示失败并允许点击重试原图
+				// 若缩略图仍在显示，置于顶部提示失败并允许点击重试原图，避免与底部伴生记忆卡片重叠
 				Surface(
 					shape = RoundedCornerShape(16.dp),
 					color = Color.Black.copy(alpha = 0.7f),
 					border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
 					modifier = Modifier
-						.align(Alignment.BottomCenter)
-						.padding(bottom = 92.dp)
+						.align(Alignment.TopCenter)
+						.padding(top = 88.dp)
 						.clickable {
 							fullLoadFailed = false
 							isFullLoading = true
