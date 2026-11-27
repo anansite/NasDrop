@@ -201,6 +201,9 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/** 当前打开的串联组 ID（用于从组内放大照片时限定左右滑动范围在组内） */
 	var activePhotoGroupId by mutableStateOf<String?>(null)
 
+	/** 当前打开的「那年今日」回忆详情（用于从回忆详情放大照片时按展示顺序左右滑动） */
+	var activeMemoryYearGroup by mutableStateOf<MemoryYearGroup?>(null)
+
 	/** 当用户从串联组内点击「+ 追加 -> 新上传照片」时记录目标组 ID，上传完成自动入组 */
 	var pendingAppendGroupId by mutableStateOf<String?>(null)
 
@@ -1583,32 +1586,27 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 
-	fun imageAlbum(entry: DavEntry): Pair<List<DavEntry>, Int> {
-		val groupPhotos = activePhotoGroupId?.let { gid ->
-			val group = photoGroups.firstOrNull { it.id == gid }
-			if (group != null) {
-				val photoMap = allPhotos.associateBy { it.path }
-				group.items.mapNotNull { p -> photoMap[p] }.filter { it.isImage }
-			} else null
-		}?.takeIf { it.any { item -> item.path == entry.path } }
+	fun homeRecentDisplayItems(limit: Int = 6): List<DavEntry> =
+		selectHomeRecentDisplayItems(
+			homeRecentMedia = homeRecentMedia,
+			allPhotos = allPhotos,
+			allVideos = allVideos,
+			limit = limit,
+		)
 
-		val list = when {
-			groupPhotos != null -> groupPhotos
-			currentTab == MainTab.Photos -> {
-				val timelineItems = photoTimelineGroups.flatMap { it.items }.filter { it.isImage }
-				if (timelineItems.any { it.path == entry.path }) timelineItems else allPhotos.filter { it.isImage }
-			}
-			filteredEntries.any { it.path == entry.path } -> {
-				filteredEntries.filter { !it.isDir && it.isImage }
-			}
-			allPhotos.any { it.path == entry.path } -> {
-				allPhotos.filter { it.isImage }
-			}
-			else -> listOf(entry)
-		}
-		val idx = list.indexOfFirst { it.path == entry.path }.coerceAtLeast(0)
-		return Pair(if (list.isEmpty()) listOf(entry) else list, idx)
-	}
+	fun imageAlbum(entry: DavEntry): Pair<List<DavEntry>, Int> =
+		resolveViewerImageAlbum(
+			entry = entry,
+			currentTab = currentTab,
+			activePhotoGroupId = activePhotoGroupId,
+			photoGroups = photoGroups,
+			activeMemoryYearGroup = activeMemoryYearGroup,
+			homeRecentMedia = homeRecentMedia,
+			photoTimelineGroups = photoTimelineGroups,
+			filteredEntries = filteredEntries,
+			allPhotos = allPhotos,
+			allVideos = allVideos,
+		)
 
 	/** 手动触发加速直连，返回打洞结果并在成功后自动刷新 */
 	fun punchHole(onResult: (String) -> Unit = {}) {
@@ -3619,4 +3617,71 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 		}
 	}
+}
+
+internal fun selectHomeRecentDisplayItems(
+	homeRecentMedia: List<DavEntry>,
+	allPhotos: List<DavEntry>,
+	allVideos: List<DavEntry>,
+	limit: Int = 6,
+): List<DavEntry> {
+	val mediaPool = (homeRecentMedia + allPhotos + allVideos).distinctBy { it.path }
+	return mediaPool
+		.sortedWith(
+			compareByDescending<DavEntry> { it.modified }
+				.thenByDescending { it.effectiveDate }
+				.thenBy { it.path },
+		)
+		.take(12)
+		.take(limit)
+}
+
+internal fun resolveViewerImageAlbum(
+	entry: DavEntry,
+	currentTab: MainTab,
+	activePhotoGroupId: String?,
+	photoGroups: List<PhotoGroup>,
+	activeMemoryYearGroup: MemoryYearGroup?,
+	homeRecentMedia: List<DavEntry>,
+	photoTimelineGroups: List<TimelineGroup>,
+	filteredEntries: List<DavEntry>,
+	allPhotos: List<DavEntry>,
+	allVideos: List<DavEntry>,
+): Pair<List<DavEntry>, Int> {
+	val groupPhotos = activePhotoGroupId?.let { gid ->
+		val group = photoGroups.firstOrNull { it.id == gid }
+		if (group != null) {
+			val photoMap = (allPhotos + homeRecentMedia).distinctBy { it.path }.associateBy { it.path }
+			group.items.mapNotNull { p -> photoMap[p] }.filter { it.isImage }
+		} else null
+	}?.takeIf { it.any { item -> item.path == entry.path } }
+
+	val memoryPhotos = activeMemoryYearGroup?.let { yg ->
+		yg.albumGroups.flatMap { it.items }.distinctBy { it.path }.filter { it.isImage }
+	}?.takeIf { it.any { item -> item.path == entry.path } }
+
+	val homeRecentImages = if (currentTab == MainTab.Home) {
+		selectHomeRecentDisplayItems(homeRecentMedia, allPhotos, allVideos, limit = 6)
+			.filter { it.isImage }
+			.takeIf { it.any { item -> item.path == entry.path } }
+	} else null
+
+	val list = when {
+		groupPhotos != null -> groupPhotos
+		memoryPhotos != null -> memoryPhotos
+		homeRecentImages != null -> homeRecentImages
+		currentTab == MainTab.Photos -> {
+			val timelineItems = photoTimelineGroups.flatMap { it.items }.filter { it.isImage }
+			if (timelineItems.any { it.path == entry.path }) timelineItems else allPhotos.filter { it.isImage }
+		}
+		filteredEntries.any { it.path == entry.path } -> {
+			filteredEntries.filter { !it.isDir && it.isImage }
+		}
+		allPhotos.any { it.path == entry.path } -> {
+			allPhotos.filter { it.isImage }
+		}
+		else -> listOf(entry)
+	}
+	val idx = list.indexOfFirst { it.path == entry.path }.coerceAtLeast(0)
+	return Pair(if (list.isEmpty()) listOf(entry) else list, idx)
 }

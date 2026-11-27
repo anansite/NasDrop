@@ -301,7 +301,6 @@ fun BrowserScreen(
 	var showBatchDeleteConfirm by remember { mutableStateOf(false) }
 	var showBatchMoveSheet by remember { mutableStateOf(false) }
 	var activeEntryForIconPicker by remember { mutableStateOf<DavEntry?>(null) }
-	var activeMemoryYearGroup by remember { mutableStateOf<com.nasdrop.MemoryYearGroup?>(null) }
 	var showGameCenterSheet by remember { mutableStateOf(false) }
 	var showRandomPhotoGame by remember { mutableStateOf(false) }
 	var showCreatePhotoGroupDialog by remember { mutableStateOf(false) }
@@ -541,7 +540,7 @@ fun BrowserScreen(
 							HomeScreenContent(
 								vm = vm,
 								memoryYearGroups = vm.memoryYearGroups,
-								onSelectMemoryGroup = { activeMemoryYearGroup = it },
+								onSelectMemoryGroup = { vm.activeMemoryYearGroup = it },
 								onOpenImage = onOpenImage,
 								onOpenVideo = onOpenVideo,
 								urlOf = { vm.thumbnailUrlFor(it) },
@@ -826,12 +825,12 @@ fun BrowserScreen(
 	// 确认窗口只在发现同名冲突时弹出，支持智能跳过相同文件 / 自动重命名不同文件 / 覆盖上传
 	UploadConflictDialog(vm)
 
-	if (activeMemoryYearGroup != null) {
+	if (vm.activeMemoryYearGroup != null) {
 		MemoryDetailModalSheet(
-			yearGroup = activeMemoryYearGroup!!,
-			onDismiss = { activeMemoryYearGroup = null },
+			yearGroup = vm.activeMemoryYearGroup!!,
+			onDismiss = { vm.activeMemoryYearGroup = null },
 			onSelectAlbum = {
-				activeMemoryYearGroup = null
+				vm.activeMemoryYearGroup = null
 				vm.currentTab = MainTab.Photos
 				vm.openAlbum(it)
 			},
@@ -3332,10 +3331,13 @@ private fun HomeScreenContent(
 		(vm.allPhotos + vm.allVideos).distinctBy { it.path }
 			.sortedByDescending { it.effectiveDate }
 	}
-	val recentItems = remember(vm.homeRecentMedia, allMedia) {
-		(vm.homeRecentMedia + allMedia).distinctBy { it.path }
-			.sortedByDescending { it.modified }
-			.take(12)
+	val recentItems = remember(vm.homeRecentMedia, vm.allPhotos, vm.allVideos) {
+		com.nasdrop.selectHomeRecentDisplayItems(
+			homeRecentMedia = vm.homeRecentMedia,
+			allPhotos = vm.allPhotos,
+			allVideos = vm.allVideos,
+			limit = 12,
+		)
 	}
 
 	// 进入首页即刷新服务端概览（方法内置 2 秒节流，重复进入不会造成请求风暴）
@@ -3851,7 +3853,6 @@ private fun PhotoTimelineContent(
 	val haptic = LocalHapticFeedback.current
 	var draggingIndex by remember { mutableStateOf<Int?>(null) }
 	var dragOffsetXPx by remember { mutableFloatStateOf(0f) }
-	var activeMemoryYearGroup by remember { mutableStateOf<com.nasdrop.MemoryYearGroup?>(null) }
 
 	val shouldLoadMore by remember {
 		derivedStateOf {
@@ -4575,21 +4576,6 @@ private fun PhotoTimelineContent(
 				}
 			}
 		}
-	}
-
-	if (activeMemoryYearGroup != null) {
-		MemoryDetailModalSheet(
-			yearGroup = activeMemoryYearGroup!!,
-			onDismiss = { activeMemoryYearGroup = null },
-			onSelectAlbum = {
-				activeMemoryYearGroup = null
-				onSelectAlbum(it)
-			},
-			onOpenImage = onOpenImage,
-			onOpenVideo = onOpenVideo,
-			urlOf = urlOf,
-			directUrlOf = directUrlOf,
-		)
 	}
 }
 
