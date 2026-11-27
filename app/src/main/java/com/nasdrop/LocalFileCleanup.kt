@@ -77,11 +77,14 @@ private fun uriExists(context: Context, uri: Uri): Boolean {
 internal fun resolveMediaStoreUri(context: Context, uri: Uri): Uri? {
 	if (uri.scheme != ContentResolver.SCHEME_CONTENT) return null
 	if (uri.authority == MediaStore.AUTHORITY && !uri.path.orEmpty().contains("/picker")) {
-		return uri.takeIf { uriExists(context, it) }
+		return uri
 	}
 	if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+		// 先尝试系统 MediaStore.getMediaUri；注意不要对返回的新 URI 再做 openAssetFileDescriptor 读取校验，
+		// 因为在 Android 11+ 无 READ_MEDIA_* 权限下，App 仅持有原 documentUri 的临时读权限，
+		// MediaStore.createDeleteRequest 会由系统代为校验并弹窗授权删除。
 		val official = runCatching { MediaStore.getMediaUri(context, uri) }.getOrNull()
-		if (official != null && uriExists(context, official)) return official
+		if (official != null) return official
 	}
 	if (DocumentsContract.isDocumentUri(context, uri)) {
 		val docId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
@@ -92,8 +95,7 @@ internal fun resolveMediaStoreUri(context: Context, uri: Uri): Uri? {
 				MediaStoreKind.VIDEO -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
 				MediaStoreKind.AUDIO -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
 			}
-			val candidate = ContentUris.withAppendedId(base, spec.second)
-			if (uriExists(context, candidate)) return candidate
+			return ContentUris.withAppendedId(base, spec.second)
 		}
 	}
 	return null
@@ -136,6 +138,10 @@ fun buildLocalCleanupPlan(context: Context, candidates: List<LocalCleanupCandida
 			} else {
 				skipped++
 			}
+			continue
+		}
+		if (!uriExists(context, uri)) {
+			skipped++
 			continue
 		}
 		val mediaUri = resolveMediaStoreUri(context, uri)
@@ -188,7 +194,8 @@ suspend fun executeLocalDeletePlan(context: Context, plan: LocalDeletePlan): Loc
 					val pi = MediaStore.createDeleteRequest(context.contentResolver, plan.mediaStoreUris)
 					intentSenders.add(pi.intentSender)
 					pendingMediaCount = plan.mediaStoreUris.size
-				}.onFailure {
+				}.onFailure { err ->
+					android.util.Log.w("LocalFileCleanup", "createDeleteRequest failed uris=${plan.mediaStoreUris}", err)
 					failed += plan.mediaStoreUris.size
 				}
 			} else {
