@@ -1,14 +1,21 @@
 package com.nasdrop
 
+import android.Manifest
 import android.app.RecoverableSecurityException
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.Context
+import android.content.Intent
 import android.content.IntentSender
+import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.provider.Settings
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -163,7 +170,56 @@ fun buildLocalCleanupPlan(context: Context, candidates: List<LocalCleanupCandida
 	)
 }
 
-suspend fun executeLocalDeletePlan(context: Context, plan: LocalDeletePlan): LocalDeleteExecution =
+fun hasDirectLocalDeletePermission(context: Context): Boolean =
+	if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+		Environment.isExternalStorageManager()
+	} else {
+		ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+	}
+
+fun buildManageAllFilesIntent(context: Context): Intent {
+	if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+		val appIntent = Intent(
+			Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+			Uri.parse("package:${context.packageName}"),
+		)
+		if (appIntent.resolveActivity(context.packageManager) != null) {
+			return appIntent
+		}
+		return Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+	}
+	return Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+}
+
+private fun tryDeleteMediaViaFileFallback(context: Context, mediaUri: Uri): Boolean {
+	@Suppress("DEPRECATION")
+	val filePath = runCatching {
+		context.contentResolver.query(
+			mediaUri,
+			arrayOf(MediaStore.MediaColumns.DATA),
+			null,
+			null,
+			null,
+		)?.use { c ->
+			if (!c.moveToFirst()) null
+			else c.getString(c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA))
+		}
+	}.getOrNull() ?: return false
+	val file = File(filePath)
+	if (!file.exists()) return false
+	val deleted = runCatching { file.delete() }.getOrDefault(false)
+	if (deleted) {
+		runCatching { context.contentResolver.delete(mediaUri, null, null) }
+		runCatching { MediaScannerConnection.scanFile(context, arrayOf(filePath), null, null) }
+	}
+	return deleted
+}
+
+suspend fun executeLocalDeletePlan(
+	context: Context,
+	plan: LocalDeletePlan,
+	allowDirectMediaDelete: Boolean = hasDirectLocalDeletePermission(context),
+): LocalDeleteExecution =
 	withContext(Dispatchers.IO) {
 		var directDeleted = 0
 		var failed = 0
@@ -189,30 +245,52 @@ suspend fun executeLocalDeletePlan(context: Context, plan: LocalDeletePlan): Loc
 		}
 
 		if (plan.mediaStoreUris.isNotEmpty()) {
-			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-				runCatching {
-					val pi = MediaStore.createDeleteRequest(context.contentResolver, plan.mediaStoreUris)
-					intentSenders.add(pi.intentSender)
-					pendingMediaCount = plan.mediaStoreUris.size
-				}.onFailure { err ->
-					android.util.Log.w("LocalFileCleanup", "createDeleteRequest failed uris=${plan.mediaStoreUris}", err)
-					failed += plan.mediaStoreUris.size
-				}
-			} else {
+			val fallbackForCreateDeleteRequest = mutableListOf<Uri>()
+			if (allowDirectMediaDelete || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
 				for (mediaUri in plan.mediaStoreUris) {
 					try {
 						val rows = context.contentResolver.delete(mediaUri, null, null)
-						if (rows > 0) directDeleted++ else failed++
+						if (rows > 0) {
+							directDeleted++
+						} else if (allowDirectMediaDelete && tryDeleteMediaViaFileFallback(context, mediaUri)) {
+							directDeleted++
+						} else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+							fallbackForCreateDeleteRequest.add(mediaUri)
+						} else {
+							failed++
+						}
 					} catch (sec: SecurityException) {
-						if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && sec is RecoverableSecurityException) {
+						if (allowDirectMediaDelete && tryDeleteMediaViaFileFallback(context, mediaUri)) {
+							directDeleted++
+						} else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+							fallbackForCreateDeleteRequest.add(mediaUri)
+						} else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && sec is RecoverableSecurityException) {
 							intentSenders.add(sec.userAction.actionIntent.intentSender)
 							pendingMediaCount++
 						} else {
 							failed++
 						}
-					} catch (_: Exception) {
-						failed++
+					} catch (e: Exception) {
+						android.util.Log.w("LocalFileCleanup", "direct delete failed uri=$mediaUri", e)
+						if (allowDirectMediaDelete && tryDeleteMediaViaFileFallback(context, mediaUri)) {
+							directDeleted++
+						} else {
+							failed++
+						}
 					}
+				}
+			} else {
+				fallbackForCreateDeleteRequest.addAll(plan.mediaStoreUris)
+			}
+
+			if (fallbackForCreateDeleteRequest.isNotEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+				runCatching {
+					val pi = MediaStore.createDeleteRequest(context.contentResolver, fallbackForCreateDeleteRequest)
+					intentSenders.add(pi.intentSender)
+					pendingMediaCount += fallbackForCreateDeleteRequest.size
+				}.onFailure { err ->
+					android.util.Log.w("LocalFileCleanup", "createDeleteRequest failed uris=$fallbackForCreateDeleteRequest", err)
+					failed += fallbackForCreateDeleteRequest.size
 				}
 			}
 		}

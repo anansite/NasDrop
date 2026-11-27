@@ -7036,7 +7036,10 @@ fun UploadLocalCleanupDialog(vm: BrowserViewModel) {
 	if (candidates.isEmpty()) return
 
 	val context = LocalContext.current
+	val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 	val scope = rememberCoroutineScope()
+	var hasDirectPerm by remember { mutableStateOf(com.nasdrop.hasDirectLocalDeletePermission(context)) }
+	var awaitingAllFilesPerm by remember { mutableStateOf(false) }
 	var isDeleting by remember { mutableStateOf(false) }
 	var directDeletedCount by remember { mutableIntStateOf(0) }
 	var failedCount by remember { mutableIntStateOf(0) }
@@ -7081,7 +7084,54 @@ fun UploadLocalCleanupDialog(vm: BrowserViewModel) {
 		}
 	}
 
+	fun performCleanup(allowDirectMediaDelete: Boolean) {
+		isDeleting = true
+		scope.launch {
+			val plan = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+				com.nasdrop.buildLocalCleanupPlan(context, candidates)
+			}
+			val exec = com.nasdrop.executeLocalDeletePlan(
+				context = context,
+				plan = plan,
+				allowDirectMediaDelete = allowDirectMediaDelete,
+			)
+			directDeletedCount = exec.directDeleted
+			failedCount = exec.failedCount
+			pendingMediaCount = exec.pendingMediaCount
+			approvedSenders = 0
+			cancelledAnySender = false
+			singlePerSenderMedia = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R
+			queuedSenders = exec.intentSenders
+			launchNextSenderOrFinish()
+		}
+	}
+
+	val legacyStoragePermLauncher = rememberLauncherForActivityResult(
+		contract = ActivityResultContracts.RequestPermission(),
+	) { granted ->
+		hasDirectPerm = com.nasdrop.hasDirectLocalDeletePermission(context)
+		performCleanup(allowDirectMediaDelete = granted || hasDirectPerm)
+	}
+
+	androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+		val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+			if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+				val grantedNow = com.nasdrop.hasDirectLocalDeletePermission(context)
+				hasDirectPerm = grantedNow
+				if (awaitingAllFilesPerm) {
+					awaitingAllFilesPerm = false
+					if (grantedNow && !isDeleting) {
+						performCleanup(allowDirectMediaDelete = true)
+					}
+				}
+			}
+		}
+		lifecycleOwner.lifecycle.addObserver(obs)
+		onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+	}
+
 	val totalBytes = remember(candidates) { candidates.sumOf { it.sizeBytes.coerceAtLeast(0L) } }
+	val needsAllFilesSetupOnRPlus = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && !hasDirectPerm
 
 	AlertDialog(
 		onDismissRequest = { if (!isDeleting) vm.dismissLocalCleanup() },
@@ -7118,6 +7168,21 @@ fun UploadLocalCleanupDialog(vm: BrowserViewModel) {
 						color = MaterialTheme.colorScheme.onSurfaceVariant,
 					)
 				}
+				if (needsAllFilesSetupOnRPlus && !isDeleting) {
+					Surface(
+						shape = RoundedCornerShape(10.dp),
+						color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+						modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+					) {
+						Text(
+							text = "授权一次「所有文件访问权限」后，以后确认即可直接删除，不再弹出系统确认框。",
+							fontSize = 11.5.sp,
+							lineHeight = 16.sp,
+							color = MaterialTheme.colorScheme.onPrimaryContainer,
+							modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+						)
+					}
+				}
 				if (isDeleting) {
 					Row(
 						modifier = Modifier.padding(top = 6.dp),
@@ -7131,32 +7196,46 @@ fun UploadLocalCleanupDialog(vm: BrowserViewModel) {
 			}
 		},
 		confirmButton = {
-			Button(
-				enabled = !isDeleting,
-				onClick = {
-					isDeleting = true
-					scope.launch {
-						val plan = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-							com.nasdrop.buildLocalCleanupPlan(context, candidates)
+			if (needsAllFilesSetupOnRPlus) {
+				Button(
+					enabled = !isDeleting,
+					onClick = {
+						awaitingAllFilesPerm = true
+						runCatching {
+							context.startActivity(com.nasdrop.buildManageAllFilesIntent(context))
+						}.onFailure {
+							awaitingAllFilesPerm = false
+							performCleanup(allowDirectMediaDelete = false)
 						}
-						val exec = com.nasdrop.executeLocalDeletePlan(context, plan)
-						directDeletedCount = exec.directDeleted
-						failedCount = exec.failedCount
-						pendingMediaCount = exec.pendingMediaCount
-						approvedSenders = 0
-						cancelledAnySender = false
-						singlePerSenderMedia = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R
-						queuedSenders = exec.intentSenders
-						launchNextSenderOrFinish()
-					}
-				},
-			) {
-				Text("删除本地文件")
+					},
+				) {
+					Text("授权并直接删除")
+				}
+			} else {
+				Button(
+					enabled = !isDeleting,
+					onClick = {
+						if (hasDirectPerm) {
+							performCleanup(allowDirectMediaDelete = true)
+						} else {
+							legacyStoragePermLauncher.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+						}
+					},
+				) {
+					Text("删除本地文件")
+				}
 			}
 		},
 		dismissButton = {
-			TextButton(enabled = !isDeleting, onClick = { vm.dismissLocalCleanup() }) {
-				Text("保留文件")
+			Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+				if (needsAllFilesSetupOnRPlus) {
+					TextButton(enabled = !isDeleting, onClick = { performCleanup(allowDirectMediaDelete = false) }) {
+						Text("系统弹窗删")
+					}
+				}
+				TextButton(enabled = !isDeleting, onClick = { vm.dismissLocalCleanup() }) {
+					Text("保留文件")
+				}
 			}
 		},
 	)
