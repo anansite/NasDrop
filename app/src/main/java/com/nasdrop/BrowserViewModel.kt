@@ -161,6 +161,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var allVideos by mutableStateOf<List<DavEntry>>(emptyList())
 		private set
 
+	/** 首页「近期精彩动态」专属列表：按服务端上传/修改时间倒序拉取最新 12 条 */
+	var homeRecentMedia by mutableStateOf<List<DavEntry>>(emptyList())
+		private set
+
 	/** 全局聚合文档池（跨目录汇总所有文档，支持根目录筛选 xls/pdf/doc 等） */
 	var allDocuments by mutableStateOf<List<DavEntry>>(emptyList())
 		private set
@@ -1938,19 +1942,31 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			toast("正在准备打开「${entry.name}」…")
 			val result = withContext(Dispatchers.IO) {
 				runCatching {
-					val dir = File(context.cacheDir, "external_open").apply { mkdirs() }
+					val rootDir = File(context.cacheDir, "external_open").apply { mkdirs() }
+					// 顺手清理超过 3 天的旧外部打开缓存，防止 cacheDir 膨胀
+					val deadline = System.currentTimeMillis() - 3L * 24 * 3600 * 1000
+					rootDir.listFiles()?.forEach { child ->
+						if (child.lastModified() < deadline) child.deleteRecursively()
+					}
+					// 按路径哈希 + 修改时间隔离目录，防止不同目录同名文件互相覆盖冲突，同时保留干净文件名给外部查看器
+					val itemDir = File(rootDir, "${Integer.toHexString(entry.path.hashCode())}_${entry.modified}").apply { mkdirs() }
 					val safeName = entry.name.replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank { "file" }
-					val localFile = File(dir, safeName)
-					if (!localFile.exists() || (entry.size > 0L && localFile.length() != entry.size)) {
-						val tmpFile = File(dir, "$safeName.part")
-						val c = clientOf(app.prefs.current())
-						tmpFile.outputStream().use { out ->
-							c.download(entry.path, out, onProgress = { _, _ -> })
-						}
-						if (localFile.exists()) localFile.delete()
-						if (!tmpFile.renameTo(localFile)) {
-							tmpFile.copyTo(localFile, overwrite = true)
-							tmpFile.delete()
+					val localFile = File(itemDir, safeName)
+					if (!localFile.exists() || localFile.length() == 0L || (entry.size > 0L && localFile.length() != entry.size)) {
+						val tmpFile = File(itemDir, "$safeName.part")
+						try {
+							val c = clientOf(app.prefs.current())
+							tmpFile.outputStream().use { out ->
+								c.download(entry.path, out, onProgress = { _, _ -> })
+							}
+							if (localFile.exists()) localFile.delete()
+							if (!tmpFile.renameTo(localFile)) {
+								tmpFile.copyTo(localFile, overwrite = true)
+								tmpFile.delete()
+							}
+						} catch (t: Throwable) {
+							runCatching { tmpFile.delete() }
+							throw t
 						}
 					}
 					localFile
@@ -2582,12 +2598,18 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		statsJob?.cancel()
 		statsJob = viewModelScope.launch {
 			val cfg = app.prefs.current()
-			val st = withContext(Dispatchers.IO) {
-				runCatching { clientOf(cfg).fetchServerStats() }.getOrNull()
+			val (st, recent) = withContext(Dispatchers.IO) {
+				val c = runCatching { clientOf(cfg) }.getOrNull()
+				val s = runCatching { c?.fetchServerStats() }.getOrNull()
+				val r = runCatching { c?.fetchServerTimelinePage(limit = 12, offset = 0, dir = "", sort = "modified")?.items }.getOrNull()
+				s to r
 			}
 			if (st != null) {
 				serverStats = st
 				lastStatsFetchAt = System.currentTimeMillis()
+			}
+			if (recent != null) {
+				homeRecentMedia = recent
 			}
 		}
 	}
@@ -2784,10 +2806,21 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 		val p = entry.path
 		fun hit(target: String) = target == p || target.startsWith("$p/")
+		val snapEntries = entries
+		val snapPhotos = allPhotos
+		val snapVideos = allVideos
+		val snapHomeRecent = homeRecentMedia
+		val snapDocs = allDocuments
+		val snapAlbums = allAlbumFolders
+		val snapMedia = allMediaFolders
+		val snapFolders = allFolderPaths
+		val snapSelAlbum = selectedAlbumPath
+		val snapSelMedia = selectedMediaPath
 		// 乐观 UI 立即清除，包括文件列表、相册/影音胶囊栏和全部媒体池，告别删除迟钝/需要手动刷新的问题
 		entries = entries.filterNot { hit(it.path) }
 		allPhotos = allPhotos.filterNot { hit(it.path) }
 		allVideos = allVideos.filterNot { hit(it.path) }
+		homeRecentMedia = homeRecentMedia.filterNot { hit(it.path) }
 		allDocuments = allDocuments.filterNot { hit(it.path) }
 		allAlbumFolders = allAlbumFolders.filterNot { hit(it.path) }
 		allMediaFolders = allMediaFolders.filterNot { hit(it.path) }
@@ -2823,6 +2856,17 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				pruneMediaPools(listOf(entry.path))
 				onResult(true, null)
 			} else {
+				// 失败回滚乐观删除，避免假删除丢失数据视图
+				entries = snapEntries
+				allPhotos = snapPhotos
+				allVideos = snapVideos
+				homeRecentMedia = snapHomeRecent
+				allDocuments = snapDocs
+				allAlbumFolders = snapAlbums
+				allMediaFolders = snapMedia
+				allFolderPaths = snapFolders
+				selectedAlbumPath = snapSelAlbum
+				selectedMediaPath = snapSelMedia
 				uiMessage = "删除失败：$err"
 				onResult(false, err)
 			}
@@ -2838,18 +2882,39 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		}
 		val dest = join(entry.path.substringBeforeLast('/', ""), newName)
 		val oldPath = entry.path
+		if (dest == oldPath) {
+			onResult(true, "名称未变化")
+			return
+		}
 		fun hit(target: String) = target == oldPath || target.startsWith("$oldPath/")
 		fun replacePath(p: String) = if (p == oldPath) dest else dest + p.removePrefix(oldPath)
 
+		val snapEntries = entries
+		val snapPhotos = allPhotos
+		val snapVideos = allVideos
+		val snapHomeRecent = homeRecentMedia
+		val snapAlbums = allAlbumFolders
+		val snapMedia = allMediaFolders
+		val snapFolders = allFolderPaths
+		val snapSelAlbum = selectedAlbumPath
+		val snapSelMedia = selectedMediaPath
+		val snapGroups = photoGroups
+		val snapIcons = folderIcons
+
 		val renamedEntry = entry.copy(name = newName, path = dest)
-		if (!entry.isDir) {
+		// 无论是文件还是文件夹（相册），乐观迁移本地元数据与缩略图，杜绝改名瞬间缩略图丢失闪烁
+		if (entry.isDir) {
+			LocalThumbs.moveDir(app, oldPath, dest)
+			PhotoMetadataStore.moveDir(oldPath, dest)
+		} else {
 			LocalThumbs.move(app, oldPath, dest)
 			PhotoMetadataStore.move(oldPath, dest, newName)
-			thumbRevision++
 		}
+		thumbRevision++
 		entries = entries.map { if (it.path == oldPath) renamedEntry else it }
 		allPhotos = allPhotos.map { if (it.path == oldPath) renamedEntry else if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
 		allVideos = allVideos.map { if (it.path == oldPath) renamedEntry else if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
+		homeRecentMedia = homeRecentMedia.map { if (it.path == oldPath) renamedEntry else if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
 		allAlbumFolders = allAlbumFolders.map { if (it.path == oldPath) renamedEntry else if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
 		allMediaFolders = allMediaFolders.map { if (it.path == oldPath) renamedEntry else if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
 		allFolderPaths = allFolderPaths.map { if (hit(it)) replacePath(it) else it }.distinct().sorted()
@@ -2873,12 +2938,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			dirCache.clear()
 			refreshSilent()
 			if (err == null) {
-				if (entry.isDir) {
-					LocalThumbs.forget(entry.path)
-					PhotoMetadataStore.moveDir(oldPath, dest)
-				} else {
-					LocalThumbs.move(app, oldPath, dest)
-					PhotoMetadataStore.move(oldPath, dest, newName)
+				if (!entry.isDir) {
 					PhotoMetadataStore.get(dest)?.let { m ->
 						launch(Dispatchers.IO) {
 							runCatching { clientOf(app.prefs.current()).reportMetadata(listOf(m)) }
@@ -2888,6 +2948,26 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				mediaDirty = true
 				onResult(true, "已重命名为 $newName")
 			} else {
+				// 失败回滚乐观状态与本地元数据
+				if (entry.isDir) {
+					LocalThumbs.moveDir(app, dest, oldPath)
+					PhotoMetadataStore.moveDir(dest, oldPath)
+				} else {
+					LocalThumbs.move(app, dest, oldPath)
+					PhotoMetadataStore.move(dest, oldPath, entry.name)
+				}
+				entries = snapEntries
+				allPhotos = snapPhotos
+				allVideos = snapVideos
+				homeRecentMedia = snapHomeRecent
+				allAlbumFolders = snapAlbums
+				allMediaFolders = snapMedia
+				allFolderPaths = snapFolders
+				selectedAlbumPath = snapSelAlbum
+				selectedMediaPath = snapSelMedia
+				photoGroups = snapGroups
+				folderIcons = snapIcons
+				thumbRevision++
 				uiMessage = "重命名失败：$err"
 				onResult(false, err)
 			}
@@ -2914,16 +2994,34 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			val err = runRemote { it.move(entry.path, dest) }
 			dirCache.clear()
 			if (err == null) {
+				val oldPath = entry.path
+				fun hit(target: String) = target == oldPath || target.startsWith("$oldPath/")
+				fun replacePath(p: String) = if (p == oldPath) dest else dest + p.removePrefix(oldPath)
 				if (entry.isDir) {
-					LocalThumbs.forget(entry.path)
-					PhotoMetadataStore.moveDir(entry.path, dest)
-					pruneMediaPools(listOf(entry.path))
+					LocalThumbs.moveDir(app, oldPath, dest)
+					PhotoMetadataStore.moveDir(oldPath, dest)
+					allPhotos = allPhotos.map { if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
+					allVideos = allVideos.map { if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
+					allAlbumFolders = allAlbumFolders.map { if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
+					allMediaFolders = allMediaFolders.map { if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
+					allFolderPaths = allFolderPaths.map { if (hit(it)) replacePath(it) else it }.distinct().sorted()
+					photoGroups = photoGroups.map { g ->
+						g.copy(
+							albumDir = if (hit(g.albumDir)) replacePath(g.albumDir) else g.albumDir,
+							items = g.items.map { p -> if (hit(p)) replacePath(p) else p },
+						)
+					}
+					folderIcons = folderIcons.entries.associate { (k, v) -> (if (hit(k)) replacePath(k) else k) to v }
+					thumbRevision++
 				} else {
-					LocalThumbs.move(app, entry.path, dest)
-					PhotoMetadataStore.move(entry.path, dest)
+					LocalThumbs.move(app, oldPath, dest)
+					PhotoMetadataStore.move(oldPath, dest)
 					val movedEntry = entry.copy(path = dest)
-					allPhotos = allPhotos.map { if (it.path == entry.path) movedEntry else it }
-					allVideos = allVideos.map { if (it.path == entry.path) movedEntry else it }
+					allPhotos = allPhotos.map { if (it.path == oldPath) movedEntry else it }
+					allVideos = allVideos.map { if (it.path == oldPath) movedEntry else it }
+					photoGroups = photoGroups.map { g ->
+						g.copy(items = g.items.map { p -> if (p == oldPath) dest else p })
+					}
 					thumbRevision++
 					PhotoMetadataStore.get(dest)?.let { m ->
 						withContext(Dispatchers.IO) {
@@ -2956,6 +3054,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		albumHasMoreMap.clear()
 		allPhotos = emptyList()
 		allVideos = emptyList()
+		homeRecentMedia = emptyList()
 		// 概览数字是服务端快照，清缓存后旧值不能继续停留
 		serverStats = null
 		lastStatsFetchAt = 0L
@@ -2974,6 +3073,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			client = null  // repo 已停隧道并清缓存，VM 里的旧 client 指向死端口，必须丢弃重建
 			allPhotos = emptyList()
 			allVideos = emptyList()
+			homeRecentMedia = emptyList()
 			allAlbumFolders = emptyList()
 			allMediaFolders = emptyList()
 			serverStats = null
@@ -2998,7 +3098,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		dirCache.clear()
 		uploadListing = UploadListing()
 		entries = emptyList()
-		allPhotos = emptyList(); allVideos = emptyList()
+		allPhotos = emptyList(); allVideos = emptyList(); homeRecentMedia = emptyList()
 		allAlbumFolders = emptyList(); allMediaFolders = emptyList()
 		serverStats = null
 		lastStatsFetchAt = 0L

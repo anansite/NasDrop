@@ -126,6 +126,7 @@ class UploadService : Service() {
 		val queue = tasks.map { task -> Triple(task, Uri.parse(task.uri), Query.sizeOf(this@UploadService, Uri.parse(task.uri))) }
 			.sortedByDescending { it.third }
 
+		val thumbJobs = java.util.Collections.synchronizedList(mutableListOf<kotlinx.coroutines.Job>())
 		val jobs = queue.map { (task, uri, size) ->
 			scope.launch {
 				// 同名目标串行写入，防止两个 PUT 同时覆盖同一个远端文件。
@@ -198,7 +199,7 @@ class UploadService : Service() {
 								lng = exif.longitude,
 								locationName = locationName,
 							)
-							scope.launch {
+							thumbJobs += scope.launch {
 								// 只落库一次「带最终 thumbId」的版本。
 								// 旧实现先 put(meta)（thumbId 为空）、再 updateThumbId(thumbId)，两次都在
 								// Dispatchers.IO 线程池上 launch、无顺序保证；空值那次若后写回 SQLite，
@@ -241,25 +242,29 @@ class UploadService : Service() {
 		}
 		jobs.joinAll()
 
-		finishBatch(tasks, batchId)
+		val pendingThumbs = synchronized(thumbJobs) { thumbJobs.toList() }
+		finishBatch(tasks, batchId, stopService = pendingThumbs.isEmpty())
+		if (pendingThumbs.isNotEmpty()) {
+			pendingThumbs.joinAll()
+			Handler(Looper.getMainLooper()).post { releaseBatch() }
+		}
 	}
 
 	/** 按本批最终记录统计，取消不会被误算成失败或“零个文件上传成功”。 */
-	private fun finishBatch(tasks: List<UploadTask>, batchId: String) {
+	private fun finishBatch(tasks: List<UploadTask>, batchId: String, stopService: Boolean = true) {
 		val ids = tasks.map { it.id }.toSet()
 		val results = Uploads.tasks.value.filter { it.id in ids }
 		finish(results.count { it.done && it.error == null && !it.cancelled },
-			results.count { it.error != null && !it.cancelled }, batchId, results.count { it.cancelled })
+			results.count { it.error != null && !it.cancelled }, batchId, results.count { it.cancelled }, stopService)
 	}
 
 	/** 主线程串行结束批次，仍有其他批次时保留前台服务与通知。 */
-	private fun finish(ok: Int, failed: Int, batchId: String, cancelled: Int = 0) {
-		Handler(Looper.getMainLooper()).post { finishOnMain(ok, failed, batchId, cancelled) }
+	private fun finish(ok: Int, failed: Int, batchId: String, cancelled: Int = 0, stopService: Boolean = true) {
+		Handler(Looper.getMainLooper()).post { finishOnMain(ok, failed, batchId, cancelled, stopService) }
 	}
 
-	private fun finishOnMain(ok: Int, failed: Int, batchId: String, cancelled: Int) {
-		activeBatches--
-		Log.i("UploadService", "批次结束 batch=$batchId success=$ok failed=$failed cancelled=$cancelled activeBatches=$activeBatches")
+	private fun finishOnMain(ok: Int, failed: Int, batchId: String, cancelled: Int, stopService: Boolean = true) {
+		Log.i("UploadService", "批次结束 batch=$batchId success=$ok failed=$failed cancelled=$cancelled activeBatches=$activeBatches stopService=$stopService")
 		val text = when {
 			cancelled > 0 -> "$ok 个成功，$failed 个失败，$cancelled 个已取消"
 			failed == 0 -> "$ok 个文件已存入"
@@ -276,6 +281,13 @@ class UploadService : Service() {
 			.setContentIntent(openApp())
 			.build()
 		manager().notify(NOTIF_ID + 1, n)
+		if (stopService) {
+			releaseBatch()
+		}
+	}
+
+	private fun releaseBatch() {
+		activeBatches = (activeBatches - 1).coerceAtLeast(0)
 		if (activeBatches == 0) {
 			ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
 			stopSelf()

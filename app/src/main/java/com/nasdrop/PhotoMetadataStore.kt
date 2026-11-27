@@ -225,6 +225,9 @@ object PhotoMetadataStore {
 		}
 	}
 
+	private fun escapeLike(s: String): String =
+		s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
 	/**
 	 * 删除某个目录及其所有子孙文件的元数据（用于目录删除）
 	 */
@@ -245,7 +248,8 @@ object PhotoMetadataStore {
 				if (prefix.isEmpty()) {
 					db.delete(TABLE_NAME, null, null)
 				} else {
-					db.delete(TABLE_NAME, "path = ? OR path LIKE ?", arrayOf(prefix, "$prefix/%"))
+					val esc = escapeLike(prefix)
+					db.delete(TABLE_NAME, "path = ? OR path LIKE ? ESCAPE '\\'", arrayOf(prefix, "$esc/%"))
 				}
 			} catch (e: Exception) {
 				Log.e(TAG, "删除目录图片元数据失败: $dirPrefix", e)
@@ -318,13 +322,15 @@ object PhotoMetadataStore {
 		}
 		toRemove.forEach { cache.remove(it) }
 		toUpdate.forEach { cache[it.path] = it }
+		notifyUpdated()
 
 		ioScope.launch {
 			try {
 				val db = dbHelper?.writableDatabase ?: return@launch
 				db.beginTransaction()
 				try {
-					db.delete(TABLE_NAME, "path = ? OR path LIKE ?", arrayOf(oldP, "$oldP/%"))
+					val esc = escapeLike(oldP)
+					db.delete(TABLE_NAME, "path = ? OR path LIKE ? ESCAPE '\\'", arrayOf(oldP, "$esc/%"))
 					for (meta in toUpdate) {
 						db.insertWithOnConflict(TABLE_NAME, null, toContentValues(meta), SQLiteDatabase.CONFLICT_REPLACE)
 					}

@@ -346,12 +346,13 @@ class WebDavClient(
 		val hasMore: Boolean,
 	)
 
-	fun fetchServerTimelinePage(limit: Int = 120, offset: Int = 0, dir: String = ""): TimelinePage? {
+	fun fetchServerTimelinePage(limit: Int = 120, offset: Int = 0, dir: String = "", sort: String = ""): TimelinePage? {
 		return try {
 			val urlBuilder = effectiveBase.newBuilder().encodedPath("/api/timeline")
 				.addQueryParameter("limit", limit.toString())
 				.addQueryParameter("offset", offset.toString())
 			if (dir.isNotBlank()) urlBuilder.addQueryParameter("dir", dir)
+			if (sort.isNotBlank()) urlBuilder.addQueryParameter("sort", sort)
 
 			val req = Request.Builder().url(urlBuilder.build()).get().build()
 			metaCall(req).execute().use { resp ->

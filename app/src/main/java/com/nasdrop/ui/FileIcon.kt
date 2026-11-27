@@ -60,6 +60,19 @@ import com.nasdrop.FileCategory
 import com.nasdrop.NasFolderIcon
 
 /**
+ * 统一缩略图缓存键：若命中内容寻址的 `.nasdrop_thumbs/<thumbId>.jpg`，直接按 thumbId 做缓存键，
+ * 不与文件路径耦合，保证重命名或移动相册时内存/磁盘缓存 100% 命中，彻底消除缩略图闪烁。
+ */
+fun thumbCacheKey(entryPath: String, thumbUrl: String): String {
+	val idx = thumbUrl.indexOf(".nasdrop_thumbs/")
+	if (idx >= 0) {
+		val idPart = thumbUrl.substring(idx + ".nasdrop_thumbs/".length).substringBefore('?')
+		if (idPart.isNotBlank()) return "thumb:id:$idPart"
+	}
+	return "thumb:${entryPath.trim('/')}:${thumbUrl.hashCode()}"
+}
+
+/**
  * 夸克风格智能文件缩略图 / 图标：
  * - 图片/视频：尝试加载高清缩略图与海报，带精致圆角（微小圆角）；视频带半透明播放角标；
  * - 文档：支持专属视觉徽标（PDF 红标、Word 蓝标 W、Excel 绿标 X、PPT 橙标 P、APK 绿色安卓标、ZIP 压缩包）；
@@ -81,11 +94,12 @@ fun FileThumbnail(
 		// 1. 图片真实缩略图（仅加载 20KB 微缩图，严禁在列表拉取几十MB原图）
 		entry.isImage -> {
 			val thumbTarget = urlOf(entry.path)
-			var failedUrl by remember(entry.path) { mutableStateOf<String?>(null) }
+			var failedUrl by remember(thumbTarget ?: entry.path) { mutableStateOf<String?>(null) }
 			val thumbFailed = thumbTarget != null && failedUrl == thumbTarget
 			val actualData = if (!thumbFailed) thumbTarget else null
 
 			if (!actualData.isNullOrBlank()) {
+				val cacheKey = remember(entry.path, actualData) { thumbCacheKey(entry.path, actualData) }
 				Box(
 					modifier = modifier
 						.size(size)
@@ -103,8 +117,8 @@ fun FileThumbnail(
 					AsyncImage(
 						model = ImageRequest.Builder(LocalContext.current)
 							.data(actualData)
-							.memoryCacheKey("thumb:${entry.path.trim('/')}:${actualData.hashCode()}")
-							.diskCacheKey("thumb:${entry.path.trim('/')}:${actualData.hashCode()}")
+							.memoryCacheKey(cacheKey)
+							.diskCacheKey(cacheKey)
 							.size(240, 240)
 							.precision(coil.size.Precision.INEXACT)
 							.allowRgb565(true)
@@ -137,10 +151,11 @@ fun FileThumbnail(
 		entry.isVideo -> {
 			val url = urlOf(entry.path)
 			// 按 URL 记录失败：URL 变化（后台补齐出新 thumbId）即自动复位重试
-			var failedUrl by remember(entry.path) { mutableStateOf<String?>(null) }
+			var failedUrl by remember(url ?: entry.path) { mutableStateOf<String?>(null) }
 			val isError = url != null && failedUrl == url
 
 			if (!isError && !url.isNullOrBlank()) {
+				val cacheKey = remember(entry.path, url) { thumbCacheKey(entry.path, url) }
 				Box(
 					modifier = modifier
 						.size(size)
@@ -158,8 +173,8 @@ fun FileThumbnail(
 					AsyncImage(
 						model = ImageRequest.Builder(LocalContext.current)
 							.data(url)
-							.memoryCacheKey("thumb:${entry.path.trim('/')}:${url.hashCode()}")
-							.diskCacheKey("thumb:${entry.path.trim('/')}:${url.hashCode()}")
+							.memoryCacheKey(cacheKey)
+							.diskCacheKey(cacheKey)
 							.size(240, 240)
 							.precision(coil.size.Precision.INEXACT)
 							.allowRgb565(true)

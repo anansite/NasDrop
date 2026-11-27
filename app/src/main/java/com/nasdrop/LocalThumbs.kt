@@ -125,8 +125,10 @@ object LocalThumbs {
 		try {
 			newFile.parentFile?.mkdirs()
 			if (oldFile.absolutePath != newFile.absolutePath) {
-				oldFile.copyTo(newFile, overwrite = true)
-				runCatching { oldFile.delete() }
+				if (!oldFile.renameTo(newFile)) {
+					oldFile.copyTo(newFile, overwrite = true)
+					runCatching { oldFile.delete() }
+				}
 			}
 			if (newFile.isFile && newFile.length() > 0L) {
 				map[newKey] = newFile
@@ -135,6 +137,35 @@ object LocalThumbs {
 			runCatching { oldFile.delete() }
 		}
 		revision++
+	}
+
+	/** 整个目录重命名或移动时，批量迁移本地缩略图映射，避免重命名瞬间缩略图闪烁 */
+	fun moveDir(context: Context, oldPrefix: String, newPrefix: String) {
+		val oldP = oldPrefix.trim('/')
+		val newP = newPrefix.trim('/')
+		if (oldP.isEmpty() || newP.isEmpty() || oldP == newP) return
+		val matches = map.keys.filter { it == oldP || it.startsWith("$oldP/") }
+		if (matches.isEmpty()) return
+		var changed = false
+		for (oldKey in matches) {
+			val newKey = if (oldKey == oldP) newP else newP + oldKey.removePrefix(oldP)
+			val oldFile = map.remove(oldKey) ?: continue
+			val newFile = target(context, newKey)
+			try {
+				newFile.parentFile?.mkdirs()
+				if (oldFile.absolutePath != newFile.absolutePath) {
+					if (!oldFile.renameTo(newFile)) {
+						oldFile.copyTo(newFile, overwrite = true)
+						runCatching { oldFile.delete() }
+					}
+				}
+				if (newFile.isFile && newFile.length() > 0L) {
+					map[newKey] = newFile
+					changed = true
+				}
+			} catch (_: Throwable) {}
+		}
+		if (changed) revision++
 	}
 
 	/** 清掉某个路径的本地图（删除时调用，避免旧图被复用） */

@@ -282,17 +282,19 @@ fun ImageViewer(
 		val companionPath = current.photoMeta?.audioPath?.ifBlank { null }
 			?: PhotoMetadataStore.get(current.path)?.audioPath?.ifBlank { null }
 			?: ""
-		val directAudio = audioUrlOf?.invoke(companionPath) ?: (audioUrlOf ?: urlOf).invoke(current.path)
+		val directAudio = if (current.hasAudio && companionPath.isNotBlank()) {
+			audioUrlOf?.invoke(companionPath)
+		} else null
 		audioPlayer.onDurationResolved = { dur ->
 			PhotoMetadataStore.updateAudioDuration(current.path, dur)
 		}
 		audioPlayer.onError = { msg ->
 			Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
 		}
-		if (current.hasAudio && directAudio != null) {
+		if (!directAudio.isNullOrBlank()) {
 			audioPlayer.prepare(directAudio)
 		} else {
-			audioPlayer.prepare(directAudio ?: "")
+			audioPlayer.stop()
 		}
 		onDispose {
 			audioPlayer.stop()
@@ -318,11 +320,12 @@ fun ImageViewer(
 			for (i in listOf(center + 1, center - 1)) {
 				val e = imageList.getOrNull(i) ?: continue
 				val tu = thumbOf?.invoke(e.path) ?: continue
+				val tKey = thumbCacheKey(e.path, tu)
 				imageLoader.enqueue(
 					ImageRequest.Builder(context)
 						.data(tu)
-						.memoryCacheKey("thumb:${e.path.trim('/')}")
-						.diskCacheKey("thumb:${e.path.trim('/')}")
+						.memoryCacheKey(tKey)
+						.diskCacheKey(tKey)
 						.build()
 				)
 			}
@@ -1490,15 +1493,18 @@ private fun ZoomableImage(
 		onZoomChanged(scale > 1.05f)
 	}
 
+	val thumbKey = remember(path, thumbUrl) {
+		thumbUrl?.takeIf { it.isNotBlank() }?.let { thumbCacheKey(path, it) }
+	}
 	// 每次 activeUrl / retryKey 变化重建请求；支持重试与坏缓存穿透
-	val fullRequest = remember(activeUrl, retryKey, targetSize) {
+	val fullRequest = remember(activeUrl, retryKey, targetSize, thumbKey) {
 		ImageRequest.Builder(context)
 			.data(activeUrl)
 			.size(targetSize)
 			.precision(coil.size.Precision.INEXACT)
 			.allowHardware(true)
 			.crossfade(true)
-			.placeholderMemoryCacheKey("thumb:$path")
+			.apply { if (thumbKey != null) placeholderMemoryCacheKey(thumbKey) }
 			.memoryCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
 			.diskCachePolicy(if (retryKey > 0) coil.request.CachePolicy.WRITE_ONLY else coil.request.CachePolicy.ENABLED)
 			.build()
@@ -1583,9 +1589,13 @@ private fun ZoomableImage(
 			AsyncImage(
 				model = ImageRequest.Builder(LocalContext.current)
 					.data(thumbUrl)
-					.memoryCacheKey("thumb:${path.trim('/')}")
-					.diskCacheKey("thumb:${path.trim('/')}")
-					.placeholderMemoryCacheKey("thumb:${path.trim('/')}")
+					.apply {
+						if (thumbKey != null) {
+							memoryCacheKey(thumbKey)
+							diskCacheKey(thumbKey)
+							placeholderMemoryCacheKey(thumbKey)
+						}
+					}
 					.crossfade(false)
 					.build(),
 				contentDescription = null,
@@ -1943,12 +1953,16 @@ fun VideoPlayer(
 		val companionPath = currentEntry.photoMeta?.audioPath?.ifBlank { null }
 			?: PhotoMetadataStore.get(currentEntry.path)?.audioPath?.ifBlank { null }
 			?: ""
-		val directAudioUrl = audioUrlOf?.invoke(companionPath) ?: audioUrlOf?.invoke(currentEntry.path) ?: ""
+		val directAudioUrl = if (currentEntry.hasAudio && companionPath.isNotBlank()) {
+			audioUrlOf?.invoke(companionPath) ?: ""
+		} else ""
 		audioPlayer.onDurationResolved = { dur ->
 			PhotoMetadataStore.updateAudioDuration(currentEntry.path, dur)
 		}
-		if (currentEntry.hasAudio && directAudioUrl.isNotEmpty()) {
+		if (directAudioUrl.isNotEmpty()) {
 			audioPlayer.prepare(directAudioUrl)
+		} else {
+			audioPlayer.stop()
 		}
 		onDispose {
 			audioPlayer.stop()
@@ -2091,14 +2105,17 @@ fun VideoPlayer(
 
 	// 监听应用与屏幕生命周期：锁屏/后台暂停，解锁/前台恢复播放与重新挂接渲染
 	val lifecycleOwner = LocalLifecycleOwner.current
+	var resumeOnForeground by remember(player) { mutableStateOf(false) }
 	DisposableEffect(lifecycleOwner, player) {
 		val observer = LifecycleEventObserver { _, event ->
 			when (event) {
 				Lifecycle.Event.ON_PAUSE -> {
+					resumeOnForeground = player.isPlaying || player.playWhenReady
 					player.pause()
 				}
 				Lifecycle.Event.ON_RESUME -> {
-					if (isPlaying) {
+					if (resumeOnForeground) {
+						resumeOnForeground = false
 						player.play()
 					} else if (player.playbackState == Player.STATE_ENDED) {
 						// 视频播放完后锁屏再打开，Surface 重建，刷新最后一帧画幅防黑屏

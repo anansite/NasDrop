@@ -3231,11 +3231,12 @@ private fun FileBrowserContent(
 											.clip(RoundedCornerShape(8.dp))
 											.background(MaterialTheme.colorScheme.outlineVariant),
 									) {
+										val thumbKey = remember(entry.path, actualData) { thumbCacheKey(entry.path, actualData) }
 										AsyncImage(
 											model = ImageRequest.Builder(LocalContext.current)
 												.data(actualData)
-												.memoryCacheKey("thumb:${entry.path.trim('/')}:${actualData.hashCode()}")
-												.diskCacheKey("thumb:${entry.path.trim('/')}:${actualData.hashCode()}")
+												.memoryCacheKey(thumbKey)
+												.diskCacheKey(thumbKey)
 												.size(240, 240)
 												.precision(coil.size.Precision.INEXACT)
 												.allowRgb565(true)
@@ -3331,8 +3332,10 @@ private fun HomeScreenContent(
 		(vm.allPhotos + vm.allVideos).distinctBy { it.path }
 			.sortedByDescending { it.effectiveDate }
 	}
-	val recentItems = remember(allMedia) {
-		allMedia.sortedByDescending { it.modified }.take(12)
+	val recentItems = remember(vm.homeRecentMedia, allMedia) {
+		(vm.homeRecentMedia + allMedia).distinctBy { it.path }
+			.sortedByDescending { it.modified }
+			.take(12)
 	}
 
 	// 进入首页即刷新服务端概览（方法内置 2 秒节流，重复进入不会造成请求风暴）
@@ -3630,11 +3633,12 @@ private fun HomeScreenContent(
 										val actualData = if (!thumbFailed) (thumbTarget ?: directTarget) else directTarget
 
 										if (!actualData.isNullOrBlank()) {
+											val cacheKey = remember(entry.path, actualData) { thumbCacheKey(entry.path, actualData) }
 											AsyncImage(
 												model = ImageRequest.Builder(LocalContext.current)
 													.data(actualData)
-													.memoryCacheKey("media_thumb:${entry.path.trim('/')}:${actualData.hashCode()}")
-													.diskCacheKey("media_thumb:${entry.path.trim('/')}:${actualData.hashCode()}")
+													.memoryCacheKey(cacheKey)
+													.diskCacheKey(cacheKey)
 													.size(480, 480)
 													.precision(coil.size.Precision.AUTOMATIC)
 													.allowRgb565(false)
@@ -4227,7 +4231,7 @@ private fun PhotoTimelineContent(
 								modifier = Modifier.size(13.dp),
 							)
 							Text(
-								text = if (showCollectionsInAlbum) "集锦已收起" else "集锦已展开",
+								text = if (showCollectionsInAlbum) "集锦已合并" else "集锦已展开",
 								fontSize = 11.5.sp,
 								fontWeight = FontWeight.Medium,
 								color = if (showCollectionsInAlbum) Color(0xFF00695C) else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -4247,10 +4251,11 @@ private fun PhotoTimelineContent(
 						val thresholdPx = with(swipeDensity) { 68.dp.toPx() }
 						val touchSlop = viewConfiguration.touchSlop
 						val edgeGuardPx = with(swipeDensity) { 46.dp.toPx() }
+						val leftBackGuardPx = with(swipeDensity) { 24.dp.toPx() }
 						awaitEachGesture {
 							val down = awaitFirstDown(requireUnconsumed = false)
-							if (currentIsMulti) return@awaitEachGesture
-							if (down.position.x > size.width - edgeGuardPx) return@awaitEachGesture
+							if (currentIsMulti || currentSelectedAlbum == "__ALL_FOLDERS__") return@awaitEachGesture
+							if (down.position.x < leftBackGuardPx || down.position.x > size.width - edgeGuardPx) return@awaitEachGesture
 							var totalDx = 0f
 							var totalDy = 0f
 							var horizontalLocked = false
@@ -4397,15 +4402,16 @@ private fun PhotoTimelineContent(
 											),
 									) {
 										val thumbTarget = urlOf(item.path)
-										var failedThumbUrl by remember(item.path) { mutableStateOf<String?>(null) }
+										var failedThumbUrl by remember(thumbTarget ?: item.path) { mutableStateOf<String?>(null) }
 										val thumbFailed = thumbTarget != null && failedThumbUrl == thumbTarget
 										val actualData = if (!thumbFailed) thumbTarget else null
 										if (!actualData.isNullOrBlank()) {
+											val cacheKey = remember(item.path, actualData) { thumbCacheKey(item.path, actualData) }
 											AsyncImage(
 												model = ImageRequest.Builder(LocalContext.current)
 													.data(actualData)
-													.memoryCacheKey("thumb:${item.path.trim('/')}:${actualData.hashCode()}")
-													.diskCacheKey("thumb:${item.path.trim('/')}:${actualData.hashCode()}")
+													.memoryCacheKey(cacheKey)
+													.diskCacheKey(cacheKey)
 													.size(240, 240)
 													.precision(coil.size.Precision.INEXACT)
 													.allowRgb565(true)
@@ -4975,7 +4981,7 @@ private fun TimelineDateScrubber(
 	val groupIndexByTitle = remember(groups) {
 		groups.mapIndexed { idx, g -> "hdr_${g.dateTitle}" to idx }.toMap()
 	}
-	val visibleGroupIdx by remember(groups, state) {
+	val visibleGroupIdx by remember(groups, state, groupStartIndices) {
 		derivedStateOf {
 			if (!state.canScrollBackward) return@derivedStateOf 0
 			if (!state.canScrollForward && state.canScrollBackward) return@derivedStateOf groups.lastIndex
@@ -4984,9 +4990,21 @@ private fun TimelineDateScrubber(
 				(item.key as? String)?.let { groupIndexByTitle[it] }
 			}
 			if (matchedHdr != null) return@derivedStateOf matchedHdr
-			val maxFirst = (info.totalItemsCount - info.visibleItemsInfo.size).coerceAtLeast(1)
-			val ratio = (state.firstVisibleItemIndex.toFloat() / maxFirst).coerceIn(0f, 1f)
-			(ratio * (groups.size - 1)).roundToInt().coerceIn(0, groups.lastIndex)
+			// 二分查找当前首个可见 item 所属分组，避免长月份无标题可见时线性比例错位
+			val firstIdx = state.firstVisibleItemIndex
+			var lo = 0
+			var hi = groupStartIndices.lastIndex
+			var ans = 0
+			while (lo <= hi) {
+				val mid = (lo + hi) ushr 1
+				if (groupStartIndices[mid] <= firstIdx) {
+					ans = mid
+					lo = mid + 1
+				} else {
+					hi = mid - 1
+				}
+			}
+			ans.coerceIn(0, groups.lastIndex)
 		}
 	}
 	val scrollProgress by remember(state) {
@@ -6032,14 +6050,15 @@ private fun VideoCardItem(
 			contentAlignment = Alignment.Center,
 		) {
 			val thumbUrl = urlOf(video.path)
-			var failedThumbUrl by remember(video.path) { mutableStateOf<String?>(null) }
+			var failedThumbUrl by remember(thumbUrl ?: video.path) { mutableStateOf<String?>(null) }
 			val thumbFailed = thumbUrl != null && failedThumbUrl == thumbUrl
 			if (!thumbFailed && !thumbUrl.isNullOrBlank()) {
+				val cacheKey = remember(video.path, thumbUrl) { thumbCacheKey(video.path, thumbUrl) }
 				AsyncImage(
 					model = ImageRequest.Builder(LocalContext.current)
 						.data(thumbUrl)
-						.memoryCacheKey("thumb:${video.path.trim('/')}:${thumbUrl.hashCode()}")
-						.diskCacheKey("thumb:${video.path.trim('/')}:${thumbUrl.hashCode()}")
+						.memoryCacheKey(cacheKey)
+						.diskCacheKey(cacheKey)
 						.size(320, 180)
 						.precision(coil.size.Precision.INEXACT)
 						.allowRgb565(true)
