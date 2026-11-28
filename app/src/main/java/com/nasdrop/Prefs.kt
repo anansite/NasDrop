@@ -53,6 +53,7 @@ class Prefs(private val context: Context) {
 		val trustAllCerts = booleanPreferencesKey("trust_all_certs")
 		val themePalette = stringPreferencesKey("theme_palette")
 		val viewMode = stringPreferencesKey("view_mode")
+		val photosViewMode = stringPreferencesKey("photos_view_mode")
 		val sortOrder = stringPreferencesKey("sort_order")
 		val albumOrder = stringPreferencesKey("album_order")
 		val mediaOrder = stringPreferencesKey("media_order")
@@ -123,6 +124,11 @@ class Prefs(private val context: Context) {
 	suspend fun getViewMode(): String? = context.dataStore.data.map { it[Keys.viewMode] }.first()
 	suspend fun setViewMode(mode: String) {
 		context.dataStore.edit { it[Keys.viewMode] = mode }
+	}
+
+	suspend fun getPhotosViewMode(): String? = context.dataStore.data.map { it[Keys.photosViewMode] }.first()
+	suspend fun setPhotosViewMode(mode: String) {
+		context.dataStore.edit { it[Keys.photosViewMode] = mode }
 	}
 
 	suspend fun getSortOrder(): String? = context.dataStore.data.map { it[Keys.sortOrder] }.first()

@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -57,6 +58,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.scrollBy
@@ -75,6 +77,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
+import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowForward
@@ -246,6 +249,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.input.pointer.pointerInput
+import com.nasdrop.PhotosViewMode
 import com.nasdrop.ViewMode
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
@@ -420,6 +424,8 @@ fun BrowserScreen(
 							count = vm.currentAlbumPhotos.size,
 							selectedAlbumPath = vm.selectedAlbumPath,
 							allAlbumsCount = vm.allAlbumFolders.size,
+							photosViewMode = vm.photosViewMode,
+							onSelectPhotosViewMode = { vm.setPhotosView(it) },
 							activeTransferCount = vm.activeTransferCount,
 							hasUpdate = vm.hasUpdate,
 							onOpenUpdateDialog = { vm.openUpdateDialog() },
@@ -591,6 +597,10 @@ fun BrowserScreen(
 						MainTab.Photos -> {
 							PhotoTimelineContent(
 								state = vm.photoGridState,
+								listState = vm.photoListState,
+								compactListState = vm.photoCompactState,
+								cardGridState = vm.photoCardGridState,
+								photosViewMode = vm.photosViewMode,
 								groups = vm.photoTimelineGroups,
 								photoGroups = vm.photoGroups,
 								allAlbums = vm.allAlbumFolders,
@@ -1612,6 +1622,7 @@ private fun CollectionTopBar(
 	onSettings: () -> Unit,
 	routeInfo: RouteInfo? = null,
 	onShowNetworkSheet: () -> Unit = {},
+	extraActions: @Composable RowScope.() -> Unit = {},
 ) {
 	Surface(
 		color = MaterialTheme.colorScheme.surface,
@@ -1670,6 +1681,7 @@ private fun CollectionTopBar(
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.spacedBy(4.dp),
 			) {
+				extraActions()
 				TransferButton(activeTransferCount, onTransfer)
 				if (hasUpdate && onOpenUpdateDialog != null) {
 					UpdateBadgeButton(onClick = onOpenUpdateDialog)
@@ -1747,6 +1759,8 @@ private fun PhotosTopBar(
 	count: Int,
 	selectedAlbumPath: String,
 	allAlbumsCount: Int = 0,
+	photosViewMode: PhotosViewMode = PhotosViewMode.TimelineGrid,
+	onSelectPhotosViewMode: (PhotosViewMode) -> Unit = {},
 	activeTransferCount: Int = 0,
 	hasUpdate: Boolean = false,
 	onOpenUpdateDialog: (() -> Unit)? = null,
@@ -1759,6 +1773,7 @@ private fun PhotosTopBar(
 	onOpenSettings: () -> Unit,
 	onShowNetworkSheet: () -> Unit = {},
 ) {
+	var showViewMenu by remember { mutableStateOf(false) }
 	val (title, subtitle, isInside) = when (selectedAlbumPath) {
 		"__ALL_FOLDERS__" -> Triple("相册", if (allAlbumsCount > 0) "$allAlbumsCount 个相册" else "相册分类总览", true)
 		"" -> Triple("云端相册", "$count 张照片", false)
@@ -1778,6 +1793,72 @@ private fun PhotosTopBar(
 		onUp = onUpAlbum, onUpload = onUploadPhoto, onCreate = onCreateAlbum,
 		onDelete = onDeleteCurrentAlbum, onTransfer = onOpenTransferSheet, onSettings = onOpenSettings,
 		routeInfo = routeInfo, onShowNetworkSheet = onShowNetworkSheet,
+		extraActions = {
+			Box {
+				IconButton(
+					onClick = { showViewMenu = true },
+					modifier = Modifier.size(36.dp),
+				) {
+					val icon = when (photosViewMode) {
+						PhotosViewMode.TimelineGrid -> Icons.Rounded.Apps
+						PhotosViewMode.Cards -> Icons.Rounded.ViewHeadline
+						PhotosViewMode.Compact -> Icons.Rounded.ViewList
+						PhotosViewMode.Grid -> Icons.Rounded.GridView
+					}
+					Icon(
+						imageVector = icon,
+						contentDescription = "切换相册视图",
+						modifier = Modifier.size(20.dp),
+						tint = MaterialTheme.colorScheme.onSurfaceVariant,
+					)
+				}
+				DropdownMenu(
+					expanded = showViewMenu,
+					onDismissRequest = { showViewMenu = false },
+				) {
+					PhotosViewMode.entries.forEach { mode ->
+						val selected = mode == photosViewMode
+						val itemIcon = when (mode) {
+							PhotosViewMode.TimelineGrid -> Icons.Rounded.Apps
+							PhotosViewMode.Cards -> Icons.Rounded.ViewHeadline
+							PhotosViewMode.Compact -> Icons.Rounded.ViewList
+							PhotosViewMode.Grid -> Icons.Rounded.GridView
+						}
+						val labelText = if (mode == PhotosViewMode.TimelineGrid) "${mode.label}（默认）" else mode.label
+						DropdownMenuItem(
+							text = {
+								Text(
+									text = labelText,
+									fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+									color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+								)
+							},
+							leadingIcon = {
+								Icon(
+									imageVector = itemIcon,
+									contentDescription = null,
+									tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+								)
+							},
+							trailingIcon = if (selected) {
+								{
+									Icon(
+										imageVector = Icons.Rounded.Check,
+										contentDescription = "当前选中",
+										tint = MaterialTheme.colorScheme.primary,
+										modifier = Modifier.size(18.dp),
+									)
+								}
+							} else null,
+							onClick = {
+								showViewMenu = false
+								onSelectPhotosViewMode(mode)
+							},
+						)
+					}
+				}
+			}
+		},
 	)
 }
 
@@ -3832,6 +3913,10 @@ private fun HomeQuickCard(
 @Composable
 private fun PhotoTimelineContent(
 	state: LazyGridState,
+	listState: LazyListState = rememberLazyListState(),
+	compactListState: LazyListState = rememberLazyListState(),
+	cardGridState: LazyGridState = rememberLazyGridState(),
+	photosViewMode: PhotosViewMode = PhotosViewMode.TimelineGrid,
 	groups: List<com.nasdrop.TimelineGroup>,
 	photoGroups: List<PhotoGroup> = emptyList(),
 	allAlbums: List<DavEntry>,
@@ -3896,11 +3981,30 @@ private fun PhotoTimelineContent(
 	var draggingIndex by remember { mutableStateOf<Int?>(null) }
 	var dragOffsetXPx by remember { mutableFloatStateOf(0f) }
 
-	val shouldLoadMore by remember {
+	val shouldLoadMore by remember(photosViewMode) {
 		derivedStateOf {
-			val total = state.layoutInfo.totalItemsCount
-			val lastVisible = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-			total > 0 && lastVisible >= (total - 12).coerceAtLeast(0)
+			when (photosViewMode) {
+				PhotosViewMode.TimelineGrid -> {
+					val total = state.layoutInfo.totalItemsCount
+					val lastVisible = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+					total > 0 && lastVisible >= (total - 12).coerceAtLeast(0)
+				}
+				PhotosViewMode.Grid -> {
+					val total = cardGridState.layoutInfo.totalItemsCount
+					val lastVisible = cardGridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+					total > 0 && lastVisible >= (total - 8).coerceAtLeast(0)
+				}
+				PhotosViewMode.Cards -> {
+					val total = listState.layoutInfo.totalItemsCount
+					val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+					total > 0 && lastVisible >= (total - 6).coerceAtLeast(0)
+				}
+				PhotosViewMode.Compact -> {
+					val total = compactListState.layoutInfo.totalItemsCount
+					val lastVisible = compactListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+					total > 0 && lastVisible >= (total - 8).coerceAtLeast(0)
+				}
+			}
 		}
 	}
 	LaunchedEffect(shouldLoadMore) {
@@ -4228,6 +4332,7 @@ private fun PhotoTimelineContent(
 				allPhotos = allPhotos,
 				allAudios = allAudios,
 				folderIcons = folderIcons,
+				photosViewMode = photosViewMode,
 				isRefreshing = isRefreshing,
 				onRefresh = onRefresh,
 				onSelectAlbum = onSelectAlbum,
@@ -4351,286 +4456,225 @@ private fun PhotoTimelineContent(
 							Text("点击上传按钮，添加照片到当前相册", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 						}
 					}
-				} else {
-					var isScrubbing by remember { mutableStateOf(false) }
-					var scrubFraction by remember { mutableFloatStateOf(0f) }
-					var currentScrubGroup by remember { mutableStateOf<com.nasdrop.TimelineGroup?>(null) }
-					var scrubberTrackHeightPx by remember { mutableFloatStateOf(1f) }
+				} else when (photosViewMode) {
+					PhotosViewMode.Cards -> {
+						PhotoTimelineListContent(
+							listState = listState,
+							groups = groups,
+							collapsedNonFirstPaths = collapsedNonFirstPaths,
+							groupByFirstPath = groupByFirstPath,
+							isMulti = isMulti,
+							selectedPaths = selectedPaths,
+							compact = false,
+							onToggleSelect = onToggleSelect,
+							onEnterMultiSelect = onEnterMultiSelect,
+							onToggleSelectGroup = onToggleSelectGroup,
+							onOpenAction = onOpenAction,
+							onOpenPhotoGroup = onOpenPhotoGroup,
+							onOpenImage = onOpenImage,
+							onOpenVideo = onOpenVideo,
+							onOpenAudio = onOpenAudio,
+							urlOf = urlOf,
+							directUrlOf = directUrlOf,
+							onThumbnailError = onThumbnailError,
+						)
+					}
 
-					Box(modifier = Modifier.fillMaxSize()) {
-						LazyVerticalGrid(
-							state = state,
-							columns = GridCells.Fixed(3),
-							contentPadding = PaddingValues(start = 4.dp, end = 26.dp, top = 4.dp, bottom = 88.dp),
-							horizontalArrangement = Arrangement.spacedBy(3.dp),
-							verticalArrangement = Arrangement.spacedBy(3.dp),
-							modifier = Modifier
-								.fillMaxSize()
-								.dragSelectablePhotoGrid(
-									state = state,
-									allPhotos = currentPhotos,
-									isMulti = isMulti,
-									selectedPaths = selectedPaths,
-									onEnterMultiSelect = onEnterMultiSelect,
-									onUpdateSelectionPaths = { onUpdateSelectionPaths?.invoke(it) },
-								),
-						) {
-							groups.forEach { group ->
-								val visibleItems = group.items.filterNot { collapsedNonFirstPaths.contains(it.path) }
-								if (visibleItems.isEmpty()) return@forEach
+					PhotosViewMode.Compact -> {
+						PhotoTimelineListContent(
+							listState = compactListState,
+							groups = groups,
+							collapsedNonFirstPaths = collapsedNonFirstPaths,
+							groupByFirstPath = groupByFirstPath,
+							isMulti = isMulti,
+							selectedPaths = selectedPaths,
+							compact = true,
+							onToggleSelect = onToggleSelect,
+							onEnterMultiSelect = onEnterMultiSelect,
+							onToggleSelectGroup = onToggleSelectGroup,
+							onOpenAction = onOpenAction,
+							onOpenPhotoGroup = onOpenPhotoGroup,
+							onOpenImage = onOpenImage,
+							onOpenVideo = onOpenVideo,
+							onOpenAudio = onOpenAudio,
+							urlOf = urlOf,
+							directUrlOf = directUrlOf,
+							onThumbnailError = onThumbnailError,
+						)
+					}
 
-								item(key = "hdr_${group.dateTitle}", span = { GridItemSpan(3) }) {
-									Row(
-										modifier = Modifier
-											.fillMaxWidth()
-											.padding(horizontal = 10.dp, vertical = 6.dp),
-										verticalAlignment = Alignment.CenterVertically,
-										horizontalArrangement = Arrangement.SpaceBetween,
-									) {
-										Row(
-											verticalAlignment = Alignment.CenterVertically,
-											horizontalArrangement = Arrangement.spacedBy(8.dp),
-										) {
-											val hasAudioInGroup = group.items.any { it.isAudio }
-											val hasVisualInGroup = group.items.any { !it.isAudio }
-											val countSuffix = when {
-												hasAudioInGroup && !hasVisualInGroup -> "个音频"
-												hasAudioInGroup -> "项"
-												else -> "张"
-											}
-											Text(group.dateTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-											Text("${group.count}$countSuffix", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-										}
-										if (isMulti) {
-											val isAllGroupSelected = visibleItems.isNotEmpty() && visibleItems.all { selectedPaths.contains(it.path) }
-											Surface(
-												shape = RoundedCornerShape(12.dp),
-												color = if (isAllGroupSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-												onClick = {
-													onToggleSelectGroup?.invoke(group, !isAllGroupSelected)
-												},
-											) {
-												Text(
-													text = if (isAllGroupSelected) "取消全选" else "全选",
-													fontSize = 12.sp,
-													fontWeight = FontWeight.Bold,
-													color = if (isAllGroupSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
-													modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-												)
-											}
-										}
-									}
-								}
+					PhotosViewMode.Grid -> {
+						PhotoTimelineCardGridContent(
+							gridState = cardGridState,
+							groups = groups,
+							currentPhotos = currentPhotos,
+							collapsedNonFirstPaths = collapsedNonFirstPaths,
+							groupByFirstPath = groupByFirstPath,
+							isMulti = isMulti,
+							selectedPaths = selectedPaths,
+							onToggleSelect = onToggleSelect,
+							onEnterMultiSelect = onEnterMultiSelect,
+							onUpdateSelectionPaths = onUpdateSelectionPaths,
+							onToggleSelectGroup = onToggleSelectGroup,
+							onOpenAction = onOpenAction,
+							onOpenPhotoGroup = onOpenPhotoGroup,
+							onOpenImage = onOpenImage,
+							onOpenVideo = onOpenVideo,
+							onOpenAudio = onOpenAudio,
+							urlOf = urlOf,
+							onThumbnailError = onThumbnailError,
+						)
+					}
 
-								items(visibleItems, key = { it.path }) { item ->
-									val isSelected = selectedPaths.contains(item.path)
-									val photoGroup = groupByFirstPath[item.path]
-									Box(
-										modifier = Modifier
-											.aspectRatio(1f)
-											.clip(RoundedCornerShape(6.dp))
-											.background(MaterialTheme.colorScheme.outlineVariant)
-											.combinedClickable(
-												onClick = {
-													if (isMulti) {
-														onToggleSelect(item)
-													} else if (photoGroup != null) {
-														onOpenPhotoGroup(photoGroup)
-													} else {
-														if (item.isAudio) {
-															onOpenAudio(item)
-														} else if (item.isVideo) {
-															onOpenVideo(item)
-														} else {
-															onOpenImage(item)
-														}
-													}
-												},
-												onLongClick = {
-													if (!isMulti) {
-														onEnterMultiSelect(item)
-													} else {
-														onToggleSelect(item)
-													}
-												},
-											),
-									) {
-										if (item.isAudio) {
-											AudioStoryGridCard(
-												item = item,
-												modifier = Modifier.fillMaxSize(),
-											)
-										} else {
-											val thumbTarget = urlOf(item.path)
-											var failedThumbUrl by remember(thumbTarget ?: item.path) { mutableStateOf<String?>(null) }
-											val thumbFailed = thumbTarget != null && failedThumbUrl == thumbTarget
-											val actualData = if (!thumbFailed) thumbTarget else null
-											if (!actualData.isNullOrBlank()) {
-												val cacheKey = remember(item.path, actualData) { thumbCacheKey(item.path, actualData) }
-												AsyncImage(
-													model = ImageRequest.Builder(LocalContext.current)
-														.data(actualData)
-														.memoryCacheKey(cacheKey)
-														.diskCacheKey(cacheKey)
-														.size(240, 240)
-														.precision(coil.size.Precision.INEXACT)
-														.allowRgb565(true)
-														.crossfade(false)
-														.build(),
-													onError = {
-														failedThumbUrl = actualData
-														onThumbnailError?.invoke(item.path)
-													},
-													contentDescription = item.name,
-													contentScale = ContentScale.Crop,
-													modifier = Modifier.fillMaxSize(),
-												)
-											} else {
-												Box(
-													modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
-													contentAlignment = Alignment.Center,
-												) {
-													FileIcon(category = if (item.isVideo) FileCategory.Video else FileCategory.Image, isDir = false, size = 32.dp)
-												}
-											}
-										}
+					PhotosViewMode.TimelineGrid -> {
+						var isScrubbing by remember { mutableStateOf(false) }
+						var scrubFraction by remember { mutableFloatStateOf(0f) }
+						var currentScrubGroup by remember { mutableStateOf<com.nasdrop.TimelineGroup?>(null) }
+						var scrubberTrackHeightPx by remember { mutableFloatStateOf(1f) }
 
-										// 媒体角标覆盖层（麦克风伴随语、文字备忘、视频指示与时长）
-										if (photoGroup == null) {
-											MediaThumbBadges(
-												entry = item,
-												modifier = Modifier.fillMaxSize().padding(3.dp),
-												compact = false,
-											)
-										} else {
-											// 集锦：保持普通网格尺寸，使用轻透半透明暗色角标与渐变底栏
-											Surface(
-												shape = RoundedCornerShape(8.dp),
-												color = Color.Black.copy(alpha = 0.54f),
-												modifier = Modifier
-													.align(Alignment.TopEnd)
-													.padding(5.dp),
-											) {
-												Row(
-													modifier = Modifier.padding(horizontal = 5.5.dp, vertical = 2.dp),
-													verticalAlignment = Alignment.CenterVertically,
-													horizontalArrangement = Arrangement.spacedBy(2.dp),
-												) {
-													Icon(Icons.Rounded.Link, contentDescription = null, tint = Color.White, modifier = Modifier.size(11.dp))
-													Text("${photoGroup.items.size}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
-												}
-											}
-											Column(
-												modifier = Modifier
-													.align(Alignment.BottomCenter)
-													.fillMaxWidth()
-													.background(
-														Brush.verticalGradient(
-															listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f))
-														)
-													)
-													.padding(start = 6.dp, end = 6.dp, top = 12.dp, bottom = 5.dp),
-											) {
-												Text(
-													text = photoGroup.title.ifBlank { "集锦" },
-													fontSize = 10.5.sp,
-													fontWeight = FontWeight.Bold,
-													color = Color.White,
-													maxLines = 1,
-													overflow = TextOverflow.Ellipsis,
-												)
-												if (photoGroup.memo.isNotBlank()) {
-													Text(
-														text = photoGroup.memo,
-														fontSize = 9.sp,
-														color = Color.White.copy(alpha = 0.86f),
-														maxLines = 1,
-														overflow = TextOverflow.Ellipsis,
-													)
-												}
-											}
-										}
-
-										// 多选选中时显示精致主题色边框与半透明遮罩
-										if (isMulti && isSelected) {
-											Box(
-												modifier = Modifier
-													.fillMaxSize()
-													.border(2.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
-													.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.20f))
-											)
-										}
-
-										// 仅在多选模式下显示右上角勾选框
-										if (isMulti) {
-											Box(
-												modifier = Modifier
-													.align(Alignment.TopEnd)
-													.padding(6.dp)
-											) {
-												SelectCheckbox(isSelected = isSelected)
-											}
-										}
-									}
-								}
-							}
-						}
-
-						// 拖动时间轴时悬浮在右侧的时间胶囊（避免 NPE）
-						if (isScrubbing && currentScrubGroup != null) {
-							Surface(
-								shape = RoundedCornerShape(20.dp),
-								color = MaterialTheme.colorScheme.inverseSurface,
-								tonalElevation = 6.dp,
-								shadowElevation = 8.dp,
-								border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+						Box(modifier = Modifier.fillMaxSize()) {
+							LazyVerticalGrid(
+								state = state,
+								columns = GridCells.Fixed(3),
+								contentPadding = PaddingValues(start = 4.dp, end = 26.dp, top = 4.dp, bottom = 88.dp),
+								horizontalArrangement = Arrangement.spacedBy(3.dp),
+								verticalArrangement = Arrangement.spacedBy(3.dp),
 								modifier = Modifier
-									.align(Alignment.TopEnd)
-									.padding(end = 46.dp)
-									.offset {
-										val maxTravel = (scrubberTrackHeightPx - 44.dp.toPx()).coerceAtLeast(0f)
-										IntOffset(
-											x = 0,
-											y = (scrubFraction * maxTravel + 20.dp.toPx()).roundToInt().coerceAtLeast(0)
+									.fillMaxSize()
+									.dragSelectablePhotoGrid(
+										state = state,
+										allPhotos = currentPhotos,
+										isMulti = isMulti,
+										selectedPaths = selectedPaths,
+										onEnterMultiSelect = onEnterMultiSelect,
+										onUpdateSelectionPaths = { onUpdateSelectionPaths?.invoke(it) },
+									),
+							) {
+								groups.forEach { group ->
+									val visibleItems = group.items.filterNot { collapsedNonFirstPaths.contains(it.path) }
+									if (visibleItems.isEmpty()) return@forEach
+
+									item(key = "hdr_${group.dateTitle}", span = { GridItemSpan(3) }) {
+										TimelineDateGroupHeader(
+											group = group,
+											visibleItems = visibleItems,
+											isMulti = isMulti,
+											selectedPaths = selectedPaths,
+											onToggleSelectGroup = onToggleSelectGroup,
 										)
 									}
-							) {
-								Row(
-									modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-									verticalAlignment = Alignment.CenterVertically,
-									horizontalArrangement = Arrangement.spacedBy(8.dp),
-								) {
-									Icon(
-										Icons.Rounded.DateRange,
-										contentDescription = null,
-										tint = MaterialTheme.colorScheme.inverseOnSurface,
-										modifier = Modifier.size(17.dp),
-									)
-									Text(
-										text = "${currentScrubGroup?.dateTitle ?: ""} · ${currentScrubGroup?.count ?: 0}张",
-										style = MaterialTheme.typography.labelLarge,
-										fontWeight = FontWeight.Bold,
-										color = MaterialTheme.colorScheme.inverseOnSurface,
-									)
+
+									items(visibleItems, key = { it.path }) { item ->
+										val isSelected = selectedPaths.contains(item.path)
+										val photoGroup = groupByFirstPath[item.path]
+										Box(
+											modifier = Modifier
+												.aspectRatio(1f)
+												.clip(RoundedCornerShape(6.dp))
+												.background(MaterialTheme.colorScheme.outlineVariant)
+												.combinedClickable(
+													onClick = {
+														handlePhotoTimelineClick(
+															item = item,
+															photoGroup = photoGroup,
+															isMulti = isMulti,
+															onToggleSelect = onToggleSelect,
+															onOpenPhotoGroup = onOpenPhotoGroup,
+															onOpenAudio = onOpenAudio,
+															onOpenVideo = onOpenVideo,
+															onOpenImage = onOpenImage,
+														)
+													},
+													onLongClick = {
+														if (!isMulti) onEnterMultiSelect(item) else onToggleSelect(item)
+													},
+												),
+										) {
+											PhotoTimelineThumbnailBox(
+												item = item,
+												photoGroup = photoGroup,
+												urlOf = urlOf,
+												onThumbnailError = onThumbnailError,
+												modifier = Modifier.fillMaxSize(),
+											)
+
+											if (isMulti && isSelected) {
+												Box(
+													modifier = Modifier
+														.fillMaxSize()
+														.border(2.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
+														.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.20f))
+												)
+											}
+
+											if (isMulti) {
+												Box(
+													modifier = Modifier
+														.align(Alignment.TopEnd)
+														.padding(6.dp)
+												) {
+													SelectCheckbox(isSelected = isSelected)
+												}
+											}
+										}
+									}
 								}
 							}
-						}
 
-						// 右侧竖向时间轴快捷滑动条
-						TimelineDateScrubber(
-							state = state,
-							groups = groups,
-							onScrubStateChanged = { dragging, fraction, group, heightPx ->
-								isScrubbing = dragging
-								scrubFraction = fraction
-								currentScrubGroup = group
-								scrubberTrackHeightPx = heightPx
-							},
-							modifier = Modifier
-								.align(Alignment.CenterEnd)
-								.fillMaxHeight()
-								.padding(end = 2.dp, top = 8.dp, bottom = 96.dp),
-						)
+							if (isScrubbing && currentScrubGroup != null) {
+								Surface(
+									shape = RoundedCornerShape(20.dp),
+									color = MaterialTheme.colorScheme.inverseSurface,
+									tonalElevation = 6.dp,
+									shadowElevation = 8.dp,
+									border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+									modifier = Modifier
+										.align(Alignment.TopEnd)
+										.padding(end = 46.dp)
+										.offset {
+											val maxTravel = (scrubberTrackHeightPx - 44.dp.toPx()).coerceAtLeast(0f)
+											IntOffset(
+												x = 0,
+												y = (scrubFraction * maxTravel + 20.dp.toPx()).roundToInt().coerceAtLeast(0)
+											)
+										}
+								) {
+									Row(
+										modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+										verticalAlignment = Alignment.CenterVertically,
+										horizontalArrangement = Arrangement.spacedBy(8.dp),
+									) {
+										Icon(
+											Icons.Rounded.DateRange,
+											contentDescription = null,
+											tint = MaterialTheme.colorScheme.inverseOnSurface,
+											modifier = Modifier.size(17.dp),
+										)
+										Text(
+											text = "${currentScrubGroup?.dateTitle ?: ""} · ${currentScrubGroup?.count ?: 0}张",
+											style = MaterialTheme.typography.labelLarge,
+											fontWeight = FontWeight.Bold,
+											color = MaterialTheme.colorScheme.inverseOnSurface,
+										)
+									}
+								}
+							}
+
+							TimelineDateScrubber(
+								state = state,
+								groups = groups,
+								onScrubStateChanged = { dragging, fraction, group, heightPx ->
+									isScrubbing = dragging
+									scrubFraction = fraction
+									currentScrubGroup = group
+									scrubberTrackHeightPx = heightPx
+								},
+								modifier = Modifier
+									.align(Alignment.CenterEnd)
+									.fillMaxHeight()
+									.padding(end = 2.dp, top = 8.dp, bottom = 96.dp),
+							)
+						}
 					}
 				}
 			}
@@ -4645,6 +4689,7 @@ private fun AlbumFoldersGrid(
 	allPhotos: List<DavEntry>,
 	allAudios: List<DavEntry> = emptyList(),
 	folderIcons: Map<String, String>,
+	photosViewMode: PhotosViewMode = PhotosViewMode.TimelineGrid,
 	isRefreshing: Boolean,
 	onRefresh: () -> Unit,
 	onSelectAlbum: (String) -> Unit,
@@ -4676,226 +4721,101 @@ private fun AlbumFoldersGrid(
 		onRefresh = onRefresh,
 		modifier = modifier.fillMaxSize(),
 	) {
-		LazyVerticalGrid(
-			columns = GridCells.Fixed(2),
-			contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 88.dp),
-			horizontalArrangement = Arrangement.spacedBy(10.dp),
-			verticalArrangement = Arrangement.spacedBy(10.dp),
-			modifier = Modifier.fillMaxSize(),
-		) {
-			item(key = "__CREATE_ALBUM__") {
-				Card(
-					shape = RoundedCornerShape(14.dp),
-					colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
-					border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
-					modifier = Modifier
-						.fillMaxWidth()
-						.clip(RoundedCornerShape(14.dp))
-						.clickable { onCreateAlbum() },
-				) {
+		if (photosViewMode == PhotosViewMode.Cards || photosViewMode == PhotosViewMode.Compact) {
+			val compact = photosViewMode == PhotosViewMode.Compact
+			val thumbSize = if (compact) 32.dp else 42.dp
+			val dividerIndent = if (compact) 56.dp else 68.dp
+			LazyColumn(
+				contentPadding = PaddingValues(top = 4.dp, bottom = 88.dp),
+				modifier = Modifier
+					.fillMaxSize()
+					.background(MaterialTheme.colorScheme.surface),
+			) {
+				item(key = "__CREATE_ALBUM__") {
 					Row(
 						modifier = Modifier
 							.fillMaxWidth()
-							.padding(10.dp),
+							.clickable { onCreateAlbum() }
+							.padding(horizontal = 14.dp, vertical = if (compact) 8.dp else 9.dp),
 						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
 					) {
 						Box(
 							modifier = Modifier
-								.size(42.dp)
+								.size(thumbSize)
 								.clip(RoundedCornerShape(10.dp))
-								.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+								.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
 							contentAlignment = Alignment.Center,
 						) {
 							Icon(
 								Icons.Rounded.Add,
 								contentDescription = "新建相册",
 								tint = MaterialTheme.colorScheme.primary,
-								modifier = Modifier.size(24.dp),
+								modifier = Modifier.size(if (compact) 18.dp else 22.dp),
 							)
 						}
-						Spacer(modifier = Modifier.width(10.dp))
-						Column(
-							modifier = Modifier.weight(1f),
-							verticalArrangement = Arrangement.Center,
-						) {
+						Column(modifier = Modifier.weight(1f)) {
 							Text(
 								text = "新建相册",
-								fontSize = 13.5.sp,
-								fontWeight = FontWeight.Bold,
+								fontSize = if (compact) 13.sp else 14.sp,
+								fontWeight = FontWeight.SemiBold,
 								color = MaterialTheme.colorScheme.primary,
-								maxLines = 1,
-								overflow = TextOverflow.Ellipsis,
 							)
-							Spacer(modifier = Modifier.height(2.dp))
 							Text(
 								text = "创建专属相册",
-								fontSize = 11.5.sp,
+								fontSize = 11.sp,
 								color = MaterialTheme.colorScheme.onSurfaceVariant,
-								maxLines = 1,
-								overflow = TextOverflow.Ellipsis,
 							)
 						}
 					}
+					HorizontalDivider(
+						color = MaterialTheme.colorScheme.surfaceVariant,
+						thickness = 0.5.dp,
+						modifier = Modifier.padding(start = dividerIndent),
+					)
 				}
-			}
 
-			items(validAlbums, key = { it.path }) { album ->
-				var menuOpen by remember { mutableStateOf(false) }
-				val photoCount = remember(album.path, allPhotos) {
-					allPhotos.count { it.path.startsWith(album.path + "/") }
-				}
-				val audioCount = remember(album.path, allAudios) {
-					allAudios.count { it.path.startsWith(album.path + "/") }
-				}
-				val customKey = folderIcons[album.path]
-				val coverPhoto = remember(album.path, allPhotos, customKey) {
-					if (customKey.isNullOrBlank()) {
-						allPhotos.firstOrNull { it.path.startsWith(album.path.trim('/') + "/") }
-					} else null
-				}
-				val isAudioOnlyAlbum = photoCount == 0 && audioCount > 0
-				val isDragging = draggingAlbumPath == album.path
-				Card(
-					shape = RoundedCornerShape(14.dp),
-					colors = CardDefaults.cardColors(
-						containerColor = if (isDragging) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface
-					),
-					border = BorderStroke(
-						if (isDragging) 1.5.dp else 1.dp,
-						if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-					),
-					modifier = Modifier
-						.fillMaxWidth()
-						.clip(RoundedCornerShape(14.dp))
-						.graphicsLayer {
-							if (isDragging) {
-								translationX = dragOffsetXPx
-								translationY = dragOffsetYPx
-								scaleX = 1.05f
-								scaleY = 1.05f
-								shadowElevation = 8.dp.toPx()
-							}
-						}
-						.pointerInput(album.path) {
-							detectDragGesturesAfterLongPress(
-								onDragStart = {
-									draggingAlbumPath = album.path
-									dragOffsetXPx = 0f
-									dragOffsetYPx = 0f
-									haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-								},
-								onDrag = { change, dragAmount ->
-									change.consume()
-									dragOffsetXPx += dragAmount.x
-									dragOffsetYPx += dragAmount.y
-									val currPath = draggingAlbumPath ?: return@detectDragGesturesAfterLongPress
-									val list = currentValidAlbums
-									val curr = list.indexOfFirst { it.path == currPath }
-									if (curr < 0) return@detectDragGesturesAfterLongPress
-
-									val stepXPx = 100.dp.toPx()
-									val stepYPx = 60.dp.toPx()
-
-									if (dragOffsetXPx > stepXPx && curr < list.size - 1) {
-										val fromPath = list[curr].path
-										val toPath = list[curr + 1].path
-										onReorderAlbums(fromPath, toPath)
-										dragOffsetXPx -= stepXPx
-										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-									} else if (dragOffsetXPx < -stepXPx && curr > 0) {
-										val fromPath = list[curr].path
-										val toPath = list[curr - 1].path
-										onReorderAlbums(fromPath, toPath)
-										dragOffsetXPx += stepXPx
-										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-									} else if (dragOffsetYPx > stepYPx && curr + 2 < list.size) {
-										val fromPath = list[curr].path
-										val toPath = list[curr + 2].path
-										onReorderAlbums(fromPath, toPath)
-										dragOffsetYPx -= stepYPx
-										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-									} else if (dragOffsetYPx < -stepYPx && curr - 2 >= 0) {
-										val fromPath = list[curr].path
-										val toPath = list[curr - 2].path
-										onReorderAlbums(fromPath, toPath)
-										dragOffsetYPx += stepYPx
-										haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-									}
-								},
-								onDragEnd = {
-									draggingAlbumPath = null
-									dragOffsetXPx = 0f
-									dragOffsetYPx = 0f
-								},
-								onDragCancel = {
-									draggingAlbumPath = null
-									dragOffsetXPx = 0f
-									dragOffsetYPx = 0f
-								}
-							)
-						}
-						.clickable { onSelectAlbum(album.path) },
-				) {
+				items(validAlbums, key = { it.path }) { album ->
+					var menuOpen by remember { mutableStateOf(false) }
+					val photoCount = remember(album.path, allPhotos) { allPhotos.count { it.path.startsWith(album.path + "/") } }
+					val audioCount = remember(album.path, allAudios) { allAudios.count { it.path.startsWith(album.path + "/") } }
+					val customKey = folderIcons[album.path]
+					val coverPhoto = remember(album.path, allPhotos, customKey) {
+						if (customKey.isNullOrBlank()) allPhotos.firstOrNull { it.path.startsWith(album.path.trim('/') + "/") } else null
+					}
+					val isAudioOnlyAlbum = photoCount == 0 && audioCount > 0
+					val albumCountText = when {
+						photoCount > 0 && audioCount > 0 -> "$photoCount 张照片 · $audioCount 个音频"
+						isAudioOnlyAlbum -> "$audioCount 个音频"
+						else -> "$photoCount 张照片"
+					}
 					Row(
 						modifier = Modifier
 							.fillMaxWidth()
-							.padding(10.dp),
+							.clickable { onSelectAlbum(album.path) }
+							.padding(horizontal = 14.dp, vertical = if (compact) 8.dp else 8.5.dp),
 						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
 					) {
-						if (coverPhoto != null) {
-							FileThumbnail(
-								entry = coverPhoto,
-								urlOf = urlOf,
-								directUrlOf = directUrlOf,
-								size = 42.dp,
-							)
-						} else if (isAudioOnlyAlbum && customKey.isNullOrBlank()) {
-							Box(
-								modifier = Modifier
-									.size(42.dp)
-									.clip(RoundedCornerShape(10.dp))
-									.background(
-										Brush.linearGradient(
-											colors = listOf(Color(0xFF4F46E5), Color(0xFF9333EA)),
-										),
-									),
-								contentAlignment = Alignment.Center,
-							) {
-								Icon(
-									Icons.Rounded.MusicNote,
-									contentDescription = "音频相册",
-									tint = Color.White,
-									modifier = Modifier.size(22.dp),
-								)
-							}
-						} else {
-							FileIconByEntry(
-								entry = album,
-								customIconKey = customKey,
-								size = 42.dp,
-								urlOf = urlOf,
-								directUrlOf = directUrlOf,
-							)
-						}
-						Spacer(modifier = Modifier.width(10.dp))
-						Column(
-							modifier = Modifier.weight(1f),
-							verticalArrangement = Arrangement.Center,
-						) {
+						AlbumFolderCoverThumb(
+							album = album,
+							coverPhoto = coverPhoto,
+							customKey = customKey,
+							isAudioOnlyAlbum = isAudioOnlyAlbum,
+							size = thumbSize,
+							urlOf = urlOf,
+							directUrlOf = directUrlOf,
+						)
+						Column(modifier = Modifier.weight(1f)) {
 							Text(
 								text = album.name,
-								fontSize = 13.5.sp,
-								fontWeight = FontWeight.SemiBold,
+								fontSize = if (compact) 13.sp else 14.sp,
+								fontWeight = if (compact) FontWeight.SemiBold else FontWeight.Medium,
 								color = MaterialTheme.colorScheme.onSurface,
 								maxLines = 1,
 								overflow = TextOverflow.Ellipsis,
 							)
-							Spacer(modifier = Modifier.height(2.dp))
-							val albumCountText = when {
-								photoCount > 0 && audioCount > 0 -> "$photoCount 张照片 · $audioCount 个音频"
-								isAudioOnlyAlbum -> "$audioCount 个音频"
-								else -> "$photoCount 张照片"
-							}
+							Spacer(Modifier.height(2.dp))
 							Text(
 								text = albumCountText,
 								fontSize = 11.5.sp,
@@ -4905,44 +4825,260 @@ private fun AlbumFoldersGrid(
 							)
 						}
 						Box {
-							Box(
-								modifier = Modifier
-									.size(26.dp)
-									.clip(CircleShape)
-									.clickable { menuOpen = true },
-								contentAlignment = Alignment.Center,
+							IconButton(
+								onClick = { menuOpen = true },
+								modifier = Modifier.size(if (compact) 40.dp else 36.dp),
 							) {
 								Icon(
 									Icons.Rounded.MoreVert,
 									contentDescription = "更多",
-									tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-									modifier = Modifier.size(16.dp)
+									tint = MaterialTheme.colorScheme.onSurfaceVariant,
+									modifier = Modifier.size(18.dp),
 								)
 							}
-							DropdownMenu(
+							AlbumFolderDropdownMenu(
+								album = album,
 								expanded = menuOpen,
-								onDismissRequest = { menuOpen = false },
+								onDismiss = { menuOpen = false },
+								onRenameAlbum = onRenameAlbum,
+								onChangeIcon = onChangeIcon,
+								onDeleteAlbum = onDeleteAlbum,
+							)
+						}
+					}
+					HorizontalDivider(
+						color = MaterialTheme.colorScheme.surfaceVariant,
+						thickness = 0.5.dp,
+						modifier = Modifier.padding(start = dividerIndent),
+					)
+				}
+			}
+		} else {
+			LazyVerticalGrid(
+				columns = GridCells.Fixed(2),
+				contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 88.dp),
+				horizontalArrangement = Arrangement.spacedBy(10.dp),
+				verticalArrangement = Arrangement.spacedBy(10.dp),
+				modifier = Modifier.fillMaxSize(),
+			) {
+				item(key = "__CREATE_ALBUM__") {
+					Card(
+						shape = RoundedCornerShape(14.dp),
+						colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
+						border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+						modifier = Modifier
+							.fillMaxWidth()
+							.clip(RoundedCornerShape(14.dp))
+							.clickable { onCreateAlbum() },
+					) {
+						Row(
+							modifier = Modifier
+								.fillMaxWidth()
+								.padding(10.dp),
+							verticalAlignment = Alignment.CenterVertically,
+						) {
+							Box(
+								modifier = Modifier
+									.size(42.dp)
+									.clip(RoundedCornerShape(10.dp))
+									.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+								contentAlignment = Alignment.Center,
 							) {
-								val isDefault = album.name == "默认相册" || album.path == "Photos/默认相册" || album.path.endsWith("/默认相册")
-								if (!isDefault) {
-									DropdownMenuItem(
-										text = { Text("重命名相册") },
-										onClick = { menuOpen = false; onRenameAlbum(album) },
-										leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, null) },
-									)
-								}
-								DropdownMenuItem(
-									text = { Text("更换图标") },
-									onClick = { menuOpen = false; onChangeIcon(album) },
-									leadingIcon = { Icon(Icons.Rounded.Edit, null) },
+								Icon(
+									Icons.Rounded.Add,
+									contentDescription = "新建相册",
+									tint = MaterialTheme.colorScheme.primary,
+									modifier = Modifier.size(24.dp),
 								)
-								if (!isDefault) {
-									DropdownMenuItem(
-										text = { Text("删除相册", color = MaterialTheme.colorScheme.error) },
-										onClick = { menuOpen = false; onDeleteAlbum(album) },
-										leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
+							}
+							Spacer(modifier = Modifier.width(10.dp))
+							Column(
+								modifier = Modifier.weight(1f),
+								verticalArrangement = Arrangement.Center,
+							) {
+								Text(
+									text = "新建相册",
+									fontSize = 13.5.sp,
+									fontWeight = FontWeight.Bold,
+									color = MaterialTheme.colorScheme.primary,
+									maxLines = 1,
+									overflow = TextOverflow.Ellipsis,
+								)
+								Spacer(modifier = Modifier.height(2.dp))
+								Text(
+									text = "创建专属相册",
+									fontSize = 11.5.sp,
+									color = MaterialTheme.colorScheme.onSurfaceVariant,
+									maxLines = 1,
+									overflow = TextOverflow.Ellipsis,
+								)
+							}
+						}
+					}
+				}
+
+				items(validAlbums, key = { it.path }) { album ->
+					var menuOpen by remember { mutableStateOf(false) }
+					val photoCount = remember(album.path, allPhotos) {
+						allPhotos.count { it.path.startsWith(album.path + "/") }
+					}
+					val audioCount = remember(album.path, allAudios) {
+						allAudios.count { it.path.startsWith(album.path + "/") }
+					}
+					val customKey = folderIcons[album.path]
+					val coverPhoto = remember(album.path, allPhotos, customKey) {
+						if (customKey.isNullOrBlank()) {
+							allPhotos.firstOrNull { it.path.startsWith(album.path.trim('/') + "/") }
+						} else null
+					}
+					val isAudioOnlyAlbum = photoCount == 0 && audioCount > 0
+					val isDragging = draggingAlbumPath == album.path
+					Card(
+						shape = RoundedCornerShape(14.dp),
+						colors = CardDefaults.cardColors(
+							containerColor = if (isDragging) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface
+						),
+						border = BorderStroke(
+							if (isDragging) 1.5.dp else 1.dp,
+							if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+						),
+						modifier = Modifier
+							.fillMaxWidth()
+							.clip(RoundedCornerShape(14.dp))
+							.graphicsLayer {
+								if (isDragging) {
+									translationX = dragOffsetXPx
+									translationY = dragOffsetYPx
+									scaleX = 1.05f
+									scaleY = 1.05f
+									shadowElevation = 8.dp.toPx()
+								}
+							}
+							.pointerInput(album.path) {
+								detectDragGesturesAfterLongPress(
+									onDragStart = {
+										draggingAlbumPath = album.path
+										dragOffsetXPx = 0f
+										dragOffsetYPx = 0f
+										haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+									},
+									onDrag = { change, dragAmount ->
+										change.consume()
+										dragOffsetXPx += dragAmount.x
+										dragOffsetYPx += dragAmount.y
+										val currPath = draggingAlbumPath ?: return@detectDragGesturesAfterLongPress
+										val list = currentValidAlbums
+										val curr = list.indexOfFirst { it.path == currPath }
+										if (curr < 0) return@detectDragGesturesAfterLongPress
+
+										val stepXPx = 100.dp.toPx()
+										val stepYPx = 60.dp.toPx()
+
+										if (dragOffsetXPx > stepXPx && curr < list.size - 1) {
+											val fromPath = list[curr].path
+											val toPath = list[curr + 1].path
+											onReorderAlbums(fromPath, toPath)
+											dragOffsetXPx -= stepXPx
+											haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+										} else if (dragOffsetXPx < -stepXPx && curr > 0) {
+											val fromPath = list[curr].path
+											val toPath = list[curr - 1].path
+											onReorderAlbums(fromPath, toPath)
+											dragOffsetXPx += stepXPx
+											haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+										} else if (dragOffsetYPx > stepYPx && curr + 2 < list.size) {
+											val fromPath = list[curr].path
+											val toPath = list[curr + 2].path
+											onReorderAlbums(fromPath, toPath)
+											dragOffsetYPx -= stepYPx
+											haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+										} else if (dragOffsetYPx < -stepYPx && curr - 2 >= 0) {
+											val fromPath = list[curr].path
+											val toPath = list[curr - 2].path
+											onReorderAlbums(fromPath, toPath)
+											dragOffsetYPx += stepYPx
+											haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+										}
+									},
+									onDragEnd = {
+										draggingAlbumPath = null
+										dragOffsetXPx = 0f
+										dragOffsetYPx = 0f
+									},
+									onDragCancel = {
+										draggingAlbumPath = null
+										dragOffsetXPx = 0f
+										dragOffsetYPx = 0f
+									}
+								)
+							}
+							.clickable { onSelectAlbum(album.path) },
+					) {
+						Row(
+							modifier = Modifier
+								.fillMaxWidth()
+								.padding(10.dp),
+							verticalAlignment = Alignment.CenterVertically,
+						) {
+							AlbumFolderCoverThumb(
+								album = album,
+								coverPhoto = coverPhoto,
+								customKey = customKey,
+								isAudioOnlyAlbum = isAudioOnlyAlbum,
+								size = 42.dp,
+								urlOf = urlOf,
+								directUrlOf = directUrlOf,
+							)
+							Spacer(modifier = Modifier.width(10.dp))
+							Column(
+								modifier = Modifier.weight(1f),
+								verticalArrangement = Arrangement.Center,
+							) {
+								Text(
+									text = album.name,
+									fontSize = 13.5.sp,
+									fontWeight = FontWeight.SemiBold,
+									color = MaterialTheme.colorScheme.onSurface,
+									maxLines = 1,
+									overflow = TextOverflow.Ellipsis,
+								)
+								Spacer(modifier = Modifier.height(2.dp))
+								val albumCountText = when {
+									photoCount > 0 && audioCount > 0 -> "$photoCount 张照片 · $audioCount 个音频"
+									isAudioOnlyAlbum -> "$audioCount 个音频"
+									else -> "$photoCount 张照片"
+								}
+								Text(
+									text = albumCountText,
+									fontSize = 11.5.sp,
+									color = MaterialTheme.colorScheme.onSurfaceVariant,
+									maxLines = 1,
+									overflow = TextOverflow.Ellipsis,
+								)
+							}
+							Box {
+								Box(
+									modifier = Modifier
+										.size(26.dp)
+										.clip(CircleShape)
+										.clickable { menuOpen = true },
+									contentAlignment = Alignment.Center,
+								) {
+									Icon(
+										Icons.Rounded.MoreVert,
+										contentDescription = "更多",
+										tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+										modifier = Modifier.size(16.dp)
 									)
 								}
+								AlbumFolderDropdownMenu(
+									album = album,
+									expanded = menuOpen,
+									onDismiss = { menuOpen = false },
+									onRenameAlbum = onRenameAlbum,
+									onChangeIcon = onChangeIcon,
+									onDeleteAlbum = onDeleteAlbum,
+								)
 							}
 						}
 					}
@@ -5029,6 +5165,548 @@ private fun AudioStoryGridCard(
 				fontWeight = FontWeight.Medium,
 				maxLines = 2,
 				overflow = TextOverflow.Ellipsis,
+			)
+		}
+	}
+}
+
+private fun handlePhotoTimelineClick(
+	item: DavEntry,
+	photoGroup: PhotoGroup?,
+	isMulti: Boolean,
+	onToggleSelect: (DavEntry) -> Unit,
+	onOpenPhotoGroup: (PhotoGroup) -> Unit,
+	onOpenAudio: (DavEntry) -> Unit,
+	onOpenVideo: (DavEntry) -> Unit,
+	onOpenImage: (DavEntry) -> Unit,
+) {
+	if (isMulti) {
+		onToggleSelect(item)
+	} else if (photoGroup != null) {
+		onOpenPhotoGroup(photoGroup)
+	} else if (item.isAudio) {
+		onOpenAudio(item)
+	} else if (item.isVideo) {
+		onOpenVideo(item)
+	} else {
+		onOpenImage(item)
+	}
+}
+
+private fun buildPhotoMeta(entry: DavEntry, photoGroup: PhotoGroup? = null): String {
+	if (photoGroup != null) {
+		return buildString {
+			append("集锦 · ${photoGroup.items.size}项")
+			if (photoGroup.memo.isNotBlank()) {
+				append(" · ")
+				append(photoGroup.memo)
+			}
+		}
+	}
+	return formatMeta(entry)
+}
+
+@Composable
+private fun TimelineDateGroupHeader(
+	group: com.nasdrop.TimelineGroup,
+	visibleItems: List<DavEntry>,
+	isMulti: Boolean,
+	selectedPaths: Set<String>,
+	onToggleSelectGroup: ((com.nasdrop.TimelineGroup, Boolean) -> Unit)?,
+) {
+	Row(
+		modifier = Modifier
+			.fillMaxWidth()
+			.padding(horizontal = 10.dp, vertical = 6.dp),
+		verticalAlignment = Alignment.CenterVertically,
+		horizontalArrangement = Arrangement.SpaceBetween,
+	) {
+		Row(
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.spacedBy(8.dp),
+		) {
+			val hasAudioInGroup = group.items.any { it.isAudio }
+			val hasVisualInGroup = group.items.any { !it.isAudio }
+			val countSuffix = when {
+				hasAudioInGroup && !hasVisualInGroup -> "个音频"
+				hasAudioInGroup -> "项"
+				else -> "张"
+			}
+			Text(group.dateTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+			Text("${group.count}$countSuffix", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+		}
+		if (isMulti) {
+			val isAllGroupSelected = visibleItems.isNotEmpty() && visibleItems.all { selectedPaths.contains(it.path) }
+			Surface(
+				shape = RoundedCornerShape(12.dp),
+				color = if (isAllGroupSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+				onClick = { onToggleSelectGroup?.invoke(group, !isAllGroupSelected) },
+			) {
+				Text(
+					text = if (isAllGroupSelected) "取消全选" else "全选",
+					fontSize = 12.sp,
+					fontWeight = FontWeight.Bold,
+					color = if (isAllGroupSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
+					modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+				)
+			}
+		}
+	}
+}
+
+@Composable
+private fun PhotoTimelineThumbnailBox(
+	item: DavEntry,
+	photoGroup: PhotoGroup?,
+	urlOf: (String) -> String?,
+	onThumbnailError: ((String) -> Unit)?,
+	modifier: Modifier = Modifier,
+) {
+	Box(modifier = modifier) {
+		if (item.isAudio) {
+			AudioStoryGridCard(
+				item = item,
+				modifier = Modifier.fillMaxSize(),
+			)
+		} else {
+			val thumbTarget = urlOf(item.path)
+			var failedThumbUrl by remember(thumbTarget ?: item.path) { mutableStateOf<String?>(null) }
+			val thumbFailed = thumbTarget != null && failedThumbUrl == thumbTarget
+			val actualData = if (!thumbFailed) thumbTarget else null
+			if (!actualData.isNullOrBlank()) {
+				val cacheKey = remember(item.path, actualData) { thumbCacheKey(item.path, actualData) }
+				AsyncImage(
+					model = ImageRequest.Builder(LocalContext.current)
+						.data(actualData)
+						.memoryCacheKey(cacheKey)
+						.diskCacheKey(cacheKey)
+						.size(240, 240)
+						.precision(coil.size.Precision.INEXACT)
+						.allowRgb565(true)
+						.crossfade(false)
+						.build(),
+					onError = {
+						failedThumbUrl = actualData
+						onThumbnailError?.invoke(item.path)
+					},
+					contentDescription = item.name,
+					contentScale = ContentScale.Crop,
+					modifier = Modifier.fillMaxSize(),
+				)
+			} else {
+				Box(
+					modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
+					contentAlignment = Alignment.Center,
+				) {
+					FileIcon(category = if (item.isVideo) FileCategory.Video else FileCategory.Image, isDir = false, size = 32.dp)
+				}
+			}
+		}
+
+		if (photoGroup == null) {
+			MediaThumbBadges(
+				entry = item,
+				modifier = Modifier.fillMaxSize().padding(3.dp),
+				compact = false,
+			)
+		} else {
+			Surface(
+				shape = RoundedCornerShape(8.dp),
+				color = Color.Black.copy(alpha = 0.54f),
+				modifier = Modifier
+					.align(Alignment.TopEnd)
+					.padding(5.dp),
+			) {
+				Row(
+					modifier = Modifier.padding(horizontal = 5.5.dp, vertical = 2.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(2.dp),
+				) {
+					Icon(Icons.Rounded.Link, contentDescription = null, tint = Color.White, modifier = Modifier.size(11.dp))
+					Text("${photoGroup.items.size}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+				}
+			}
+			Column(
+				modifier = Modifier
+					.align(Alignment.BottomCenter)
+					.fillMaxWidth()
+					.background(
+						Brush.verticalGradient(
+							listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f))
+						)
+					)
+					.padding(start = 6.dp, end = 6.dp, top = 12.dp, bottom = 5.dp),
+			) {
+				Text(
+					text = photoGroup.title.ifBlank { "集锦" },
+					fontSize = 10.5.sp,
+					fontWeight = FontWeight.Bold,
+					color = Color.White,
+					maxLines = 1,
+					overflow = TextOverflow.Ellipsis,
+				)
+				if (photoGroup.memo.isNotBlank()) {
+					Text(
+						text = photoGroup.memo,
+						fontSize = 9.sp,
+						color = Color.White.copy(alpha = 0.86f),
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
+				}
+			}
+		}
+	}
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PhotoTimelineListContent(
+	listState: LazyListState,
+	groups: List<com.nasdrop.TimelineGroup>,
+	collapsedNonFirstPaths: Set<String>,
+	groupByFirstPath: Map<String, PhotoGroup>,
+	isMulti: Boolean,
+	selectedPaths: Set<String>,
+	compact: Boolean,
+	onToggleSelect: (DavEntry) -> Unit,
+	onEnterMultiSelect: (DavEntry) -> Unit,
+	onToggleSelectGroup: ((com.nasdrop.TimelineGroup, Boolean) -> Unit)?,
+	onOpenAction: (DavEntry) -> Unit,
+	onOpenPhotoGroup: (PhotoGroup) -> Unit,
+	onOpenImage: (DavEntry) -> Unit,
+	onOpenVideo: (DavEntry) -> Unit,
+	onOpenAudio: (DavEntry) -> Unit,
+	urlOf: (String) -> String?,
+	directUrlOf: ((String) -> String?)?,
+	onThumbnailError: ((String) -> Unit)?,
+) {
+	val thumbSize = if (compact) 32.dp else 42.dp
+	val dividerIndent = if (compact) 56.dp else 68.dp
+	LazyColumn(
+		state = listState,
+		contentPadding = PaddingValues(top = 4.dp, bottom = 88.dp),
+		modifier = Modifier
+			.fillMaxSize()
+			.background(MaterialTheme.colorScheme.surface),
+	) {
+		groups.forEach { group ->
+			val visibleItems = group.items.filterNot { collapsedNonFirstPaths.contains(it.path) }
+			if (visibleItems.isEmpty()) return@forEach
+
+			item(key = "hdr_${group.dateTitle}") {
+				TimelineDateGroupHeader(
+					group = group,
+					visibleItems = visibleItems,
+					isMulti = isMulti,
+					selectedPaths = selectedPaths,
+					onToggleSelectGroup = onToggleSelectGroup,
+				)
+			}
+
+			items(visibleItems, key = { it.path }) { item ->
+				val isSelected = selectedPaths.contains(item.path)
+				val photoGroup = groupByFirstPath[item.path]
+				Row(
+					modifier = Modifier
+						.fillMaxWidth()
+						.background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+						.combinedClickable(
+							onClick = {
+								handlePhotoTimelineClick(
+									item = item,
+									photoGroup = photoGroup,
+									isMulti = isMulti,
+									onToggleSelect = onToggleSelect,
+									onOpenPhotoGroup = onOpenPhotoGroup,
+									onOpenAudio = onOpenAudio,
+									onOpenVideo = onOpenVideo,
+									onOpenImage = onOpenImage,
+								)
+							},
+							onLongClick = {
+								if (!isMulti) onEnterMultiSelect(item) else onToggleSelect(item)
+							},
+						)
+						.padding(horizontal = 14.dp, vertical = if (compact) 8.dp else 7.5.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
+				) {
+					if (compact && isMulti) {
+						SelectCheckbox(isSelected = isSelected)
+					}
+
+					FileThumbnail(
+						entry = item,
+						urlOf = urlOf,
+						directUrlOf = directUrlOf,
+						onThumbnailError = onThumbnailError,
+						size = thumbSize,
+					)
+
+					Column(modifier = Modifier.weight(1f)) {
+						val displayTitle = photoGroup?.title?.ifBlank { null }
+							?: if (compact) item.displayName else item.name
+						Text(
+							text = displayTitle,
+							fontSize = if (compact) 13.sp else 14.sp,
+							fontWeight = if (compact) FontWeight.SemiBold else FontWeight.Medium,
+							color = MaterialTheme.colorScheme.onSurface,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+						)
+						Spacer(modifier = Modifier.height(2.dp))
+						Text(
+							text = buildPhotoMeta(item, photoGroup),
+							fontSize = if (compact) 11.sp else 11.5.sp,
+							color = MaterialTheme.colorScheme.onSurfaceVariant,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+						)
+					}
+
+					if (!compact && isMulti) {
+						SelectCheckbox(isSelected = isSelected)
+					} else if (!isMulti) {
+						IconButton(
+							onClick = { onOpenAction(item) },
+							modifier = Modifier.size(if (compact) 48.dp else 40.dp),
+						) {
+							Icon(
+								Icons.Rounded.MoreVert,
+								contentDescription = "更多",
+								tint = MaterialTheme.colorScheme.onSurfaceVariant,
+								modifier = Modifier.size(if (compact) 16.dp else 18.dp),
+							)
+						}
+					}
+				}
+				HorizontalDivider(
+					color = MaterialTheme.colorScheme.surfaceVariant,
+					thickness = 0.5.dp,
+					modifier = Modifier.padding(start = dividerIndent),
+				)
+			}
+		}
+	}
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PhotoTimelineCardGridContent(
+	gridState: LazyGridState,
+	groups: List<com.nasdrop.TimelineGroup>,
+	currentPhotos: List<DavEntry>,
+	collapsedNonFirstPaths: Set<String>,
+	groupByFirstPath: Map<String, PhotoGroup>,
+	isMulti: Boolean,
+	selectedPaths: Set<String>,
+	onToggleSelect: (DavEntry) -> Unit,
+	onEnterMultiSelect: (DavEntry) -> Unit,
+	onUpdateSelectionPaths: ((Set<String>) -> Unit)?,
+	onToggleSelectGroup: ((com.nasdrop.TimelineGroup, Boolean) -> Unit)?,
+	onOpenAction: (DavEntry) -> Unit,
+	onOpenPhotoGroup: (PhotoGroup) -> Unit,
+	onOpenImage: (DavEntry) -> Unit,
+	onOpenVideo: (DavEntry) -> Unit,
+	onOpenAudio: (DavEntry) -> Unit,
+	urlOf: (String) -> String?,
+	onThumbnailError: ((String) -> Unit)?,
+) {
+	LazyVerticalGrid(
+		state = gridState,
+		columns = GridCells.Fixed(2),
+		contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 88.dp),
+		horizontalArrangement = Arrangement.spacedBy(10.dp),
+		verticalArrangement = Arrangement.spacedBy(10.dp),
+		modifier = Modifier
+			.fillMaxSize()
+			.dragSelectablePhotoGrid(
+				state = gridState,
+				allPhotos = currentPhotos,
+				isMulti = isMulti,
+				selectedPaths = selectedPaths,
+				onEnterMultiSelect = onEnterMultiSelect,
+				onUpdateSelectionPaths = { onUpdateSelectionPaths?.invoke(it) },
+			),
+	) {
+		groups.forEach { group ->
+			val visibleItems = group.items.filterNot { collapsedNonFirstPaths.contains(it.path) }
+			if (visibleItems.isEmpty()) return@forEach
+
+			item(key = "hdr_${group.dateTitle}", span = { GridItemSpan(2) }) {
+				TimelineDateGroupHeader(
+					group = group,
+					visibleItems = visibleItems,
+					isMulti = isMulti,
+					selectedPaths = selectedPaths,
+					onToggleSelectGroup = onToggleSelectGroup,
+				)
+			}
+
+			items(visibleItems, key = { it.path }) { item ->
+				val isSelected = selectedPaths.contains(item.path)
+				val photoGroup = groupByFirstPath[item.path]
+				Card(
+					shape = RoundedCornerShape(14.dp),
+					colors = CardDefaults.cardColors(
+						containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface
+					),
+					border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+					elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+					modifier = Modifier
+						.fillMaxWidth()
+						.combinedClickable(
+							onClick = {
+								handlePhotoTimelineClick(
+									item = item,
+									photoGroup = photoGroup,
+									isMulti = isMulti,
+									onToggleSelect = onToggleSelect,
+									onOpenPhotoGroup = onOpenPhotoGroup,
+									onOpenAudio = onOpenAudio,
+									onOpenVideo = onOpenVideo,
+									onOpenImage = onOpenImage,
+								)
+							},
+							onLongClick = {
+								if (!isMulti) onEnterMultiSelect(item) else onToggleSelect(item)
+							},
+						),
+				) {
+					Column(
+						modifier = Modifier.padding(10.dp),
+						horizontalAlignment = Alignment.CenterHorizontally,
+					) {
+						Box(modifier = Modifier.fillMaxWidth()) {
+							if (isMulti) {
+								SelectCheckbox(isSelected = isSelected, modifier = Modifier.align(Alignment.TopStart))
+							} else {
+								IconButton(
+									onClick = { onOpenAction(item) },
+									modifier = Modifier
+										.size(36.dp)
+										.align(Alignment.TopEnd),
+								) {
+									Icon(Icons.Rounded.MoreVert, contentDescription = "更多", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+								}
+							}
+						}
+
+						Spacer(modifier = Modifier.height(2.dp))
+						PhotoTimelineThumbnailBox(
+							item = item,
+							photoGroup = photoGroup,
+							urlOf = urlOf,
+							onThumbnailError = onThumbnailError,
+							modifier = Modifier
+								.fillMaxWidth()
+								.aspectRatio(1.2f)
+								.clip(RoundedCornerShape(8.dp))
+								.background(MaterialTheme.colorScheme.surfaceVariant),
+						)
+						Spacer(modifier = Modifier.height(8.dp))
+						Text(
+							text = photoGroup?.title?.ifBlank { null } ?: item.displayName,
+							fontSize = 13.sp,
+							fontWeight = FontWeight.Bold,
+							color = MaterialTheme.colorScheme.onSurface,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+						)
+						Spacer(modifier = Modifier.height(2.dp))
+						Text(
+							text = buildPhotoMeta(item, photoGroup),
+							fontSize = 10.sp,
+							color = MaterialTheme.colorScheme.onSurfaceVariant,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+						)
+					}
+				}
+			}
+		}
+	}
+}
+
+@Composable
+private fun AlbumFolderCoverThumb(
+	album: DavEntry,
+	coverPhoto: DavEntry?,
+	customKey: String?,
+	isAudioOnlyAlbum: Boolean,
+	size: Dp,
+	urlOf: (String) -> String?,
+	directUrlOf: ((String) -> String?)?,
+) {
+	if (coverPhoto != null) {
+		FileThumbnail(
+			entry = coverPhoto,
+			urlOf = urlOf,
+			directUrlOf = directUrlOf,
+			size = size,
+		)
+	} else if (isAudioOnlyAlbum && customKey.isNullOrBlank()) {
+		Box(
+			modifier = Modifier
+				.size(size)
+				.clip(RoundedCornerShape(10.dp))
+				.background(
+					Brush.linearGradient(
+						colors = listOf(Color(0xFF4F46E5), Color(0xFF9333EA)),
+					),
+				),
+			contentAlignment = Alignment.Center,
+		) {
+			Icon(
+				Icons.Rounded.MusicNote,
+				contentDescription = "音频相册",
+				tint = Color.White,
+				modifier = Modifier.size(size * 0.52f),
+			)
+		}
+	} else {
+		FileIconByEntry(
+			entry = album,
+			customIconKey = customKey,
+			size = size,
+			urlOf = urlOf,
+			directUrlOf = directUrlOf,
+		)
+	}
+}
+
+@Composable
+private fun AlbumFolderDropdownMenu(
+	album: DavEntry,
+	expanded: Boolean,
+	onDismiss: () -> Unit,
+	onRenameAlbum: (DavEntry) -> Unit,
+	onChangeIcon: (DavEntry) -> Unit,
+	onDeleteAlbum: (DavEntry) -> Unit,
+) {
+	DropdownMenu(
+		expanded = expanded,
+		onDismissRequest = onDismiss,
+	) {
+		val isDefault = album.name == "默认相册" || album.path == "Photos/默认相册" || album.path.endsWith("/默认相册")
+		if (!isDefault) {
+			DropdownMenuItem(
+				text = { Text("重命名相册") },
+				onClick = { onDismiss(); onRenameAlbum(album) },
+				leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, null) },
+			)
+		}
+		DropdownMenuItem(
+			text = { Text("更换图标") },
+			onClick = { onDismiss(); onChangeIcon(album) },
+			leadingIcon = { Icon(Icons.Rounded.Edit, null) },
+		)
+		if (!isDefault) {
+			DropdownMenuItem(
+				text = { Text("删除相册", color = MaterialTheme.colorScheme.error) },
+				onClick = { onDismiss(); onDeleteAlbum(album) },
+				leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
 			)
 		}
 	}

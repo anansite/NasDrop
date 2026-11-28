@@ -164,4 +164,13 @@ class HomeViewerAlbumTest {
 		assertEquals(listOf(travelAudio2.path, travelAudio1.path), groupPlaylist.map { it.path })
 		assertEquals("仅音频", MediaFilterType.AudiosOnly.label)
 	}
+
+	@Test
+	fun photosViewModePreservesTimelineGridDefaultAndSupportsFolderAlignedModes() {
+		assertEquals(PhotosViewMode.TimelineGrid, PhotosViewMode.entries.first())
+		assertEquals(
+			listOf("宫格视图", "列表视图", "紧凑列表", "卡片视图"),
+			PhotosViewMode.entries.map { it.label },
+		)
+	}
 }
