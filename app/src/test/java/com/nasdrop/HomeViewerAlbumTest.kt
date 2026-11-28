@@ -139,4 +139,29 @@ class HomeViewerAlbumTest {
 
 		assertEquals(listOf(s1.path, s2.path, s3.path), playlist.map { it.path })
 	}
+
+	@Test
+	fun resolveAudioPlaylistWorksInArbitraryAlbumsAndPhotoGroups() {
+		val travelPhoto = DavEntry(name = "beach.jpg", path = "Photos/旅行/beach.jpg", isDir = false)
+		val travelAudio1 = DavEntry(name = "海浪声.wav", path = "Photos/旅行/海浪声.wav", isDir = false)
+		val travelAudio2 = DavEntry(name = "街头吉他.mp3", path = "Photos/旅行/街头吉他.mp3", isDir = false)
+		val group = PhotoGroup(
+			id = "grp_travel",
+			title = "三亚回忆",
+			albumDir = "Photos/旅行",
+			items = listOf(travelPhoto.path, travelAudio2.path, travelAudio1.path),
+		)
+
+		val groupPlaylist = resolveAudioPlaylist(
+			entry = travelAudio2,
+			currentTab = MainTab.Photos,
+			activePhotoGroupId = group.id,
+			photoGroups = listOf(group),
+			photoTimelineGroups = listOf(TimelineGroup("今天", 3, listOf(travelPhoto, travelAudio1, travelAudio2))),
+			filteredEntries = emptyList(),
+			allAudios = listOf(travelAudio1, travelAudio2),
+		)
+		assertEquals(listOf(travelAudio2.path, travelAudio1.path), groupPlaylist.map { it.path })
+		assertEquals("仅音频", MediaFilterType.AudiosOnly.label)
+	}
 }

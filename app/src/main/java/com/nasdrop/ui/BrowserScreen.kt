@@ -860,7 +860,7 @@ fun BrowserScreen(
 	}
 
 	if (showCreatePhotoGroupDialog) {
-		val selectedMedia = vm.selectedEntries.filter { it.isImage || it.isVideo }
+		val selectedMedia = vm.selectedEntries.filter { it.isImage || it.isVideo || it.isAudio }
 		CreatePhotoGroupDialog(
 			selectedCount = selectedMedia.size,
 			onDismiss = { showCreatePhotoGroupDialog = false },
@@ -3683,42 +3683,49 @@ private fun HomeScreenContent(
 												else onOpenImage(entry)
 											},
 									) {
-										val thumbTarget = urlOf(entry.path)
-										val directTarget = vm.directUrlFor(entry.path)
-										var failedThumbUrl by remember(entry.path) { mutableStateOf<String?>(null) }
-										val thumbFailed = thumbTarget != null && failedThumbUrl == thumbTarget
-										val actualData = if (!thumbFailed) (thumbTarget ?: directTarget) else directTarget
-
-										if (!actualData.isNullOrBlank()) {
-											val cacheKey = remember(entry.path, actualData) { thumbCacheKey(entry.path, actualData) }
-											AsyncImage(
-												model = ImageRequest.Builder(LocalContext.current)
-													.data(actualData)
-													.memoryCacheKey(cacheKey)
-													.diskCacheKey(cacheKey)
-													.size(480, 480)
-													.precision(coil.size.Precision.AUTOMATIC)
-													.allowRgb565(false)
-													.crossfade(true)
-													.build(),
-												contentDescription = entry.name,
-												contentScale = ContentScale.Crop,
-												onError = {
-													if (thumbTarget != null && failedThumbUrl != thumbTarget) {
-														failedThumbUrl = thumbTarget
-													} else {
-														vm.markThumbnailFailed(entry.path)
-													}
-												},
+										if (entry.isAudio) {
+											AudioStoryGridCard(
+												item = entry,
 												modifier = Modifier.fillMaxSize(),
 											)
 										} else {
-											Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-												FileIcon(
-													category = if (entry.isVideo) FileCategory.Video else FileCategory.Image,
-													isDir = false,
-													size = 36.dp,
+											val thumbTarget = urlOf(entry.path)
+											val directTarget = vm.directUrlFor(entry.path)
+											var failedThumbUrl by remember(entry.path) { mutableStateOf<String?>(null) }
+											val thumbFailed = thumbTarget != null && failedThumbUrl == thumbTarget
+											val actualData = if (!thumbFailed) (thumbTarget ?: directTarget) else directTarget
+
+											if (!actualData.isNullOrBlank()) {
+												val cacheKey = remember(entry.path, actualData) { thumbCacheKey(entry.path, actualData) }
+												AsyncImage(
+													model = ImageRequest.Builder(LocalContext.current)
+														.data(actualData)
+														.memoryCacheKey(cacheKey)
+														.diskCacheKey(cacheKey)
+														.size(480, 480)
+														.precision(coil.size.Precision.AUTOMATIC)
+														.allowRgb565(false)
+														.crossfade(true)
+														.build(),
+													contentDescription = entry.name,
+													contentScale = ContentScale.Crop,
+													onError = {
+														if (thumbTarget != null && failedThumbUrl != thumbTarget) {
+															failedThumbUrl = thumbTarget
+														} else {
+															vm.markThumbnailFailed(entry.path)
+														}
+													},
+													modifier = Modifier.fillMaxSize(),
 												)
+											} else {
+												Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+													FileIcon(
+														category = if (entry.isVideo) FileCategory.Video else FileCategory.Image,
+														isDir = false,
+														size = 36.dp,
+													)
+												}
 											}
 										}
 
@@ -8485,24 +8492,31 @@ private fun MemoryDetailModalSheet(
 											}
 										},
 								) {
-									val thumbUrl = urlOf(item.path)
-									if (!thumbUrl.isNullOrBlank()) {
-										AsyncImage(
-											model = thumbUrl,
-											contentDescription = item.name,
-											contentScale = ContentScale.Crop,
+									if (item.isAudio) {
+										AudioStoryGridCard(
+											item = item,
 											modifier = Modifier.fillMaxSize(),
 										)
 									} else {
-										Box(
-											modifier = Modifier.fillMaxSize(),
-											contentAlignment = Alignment.Center,
-										) {
-											FileIcon(
-												category = if (item.isVideo) FileCategory.Video else FileCategory.Image,
-												isDir = false,
-												size = 28.dp,
+										val thumbUrl = urlOf(item.path)
+										if (!thumbUrl.isNullOrBlank()) {
+											AsyncImage(
+												model = thumbUrl,
+												contentDescription = item.name,
+												contentScale = ContentScale.Crop,
+												modifier = Modifier.fillMaxSize(),
 											)
+										} else {
+											Box(
+												modifier = Modifier.fillMaxSize(),
+												contentAlignment = Alignment.Center,
+											) {
+												FileIcon(
+													category = if (item.isVideo) FileCategory.Video else FileCategory.Image,
+													isDir = false,
+													size = 28.dp,
+												)
+											}
 										}
 									}
 
@@ -8930,7 +8944,12 @@ private fun PhotoGroupDetailSheet(
 									.clip(RoundedCornerShape(10.dp))
 									.background(MaterialTheme.colorScheme.surfaceVariant),
 							) {
-								if (!thumbUrl.isNullOrBlank()) {
+								if (entry?.isAudio == true) {
+									AudioStoryGridCard(
+										item = entry,
+										modifier = Modifier.fillMaxSize(),
+									)
+								} else if (!thumbUrl.isNullOrBlank()) {
 									AsyncImage(
 										model = thumbUrl,
 										contentDescription = displayName,

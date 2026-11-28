@@ -54,6 +54,7 @@ enum class MediaFilterType(val label: String) {
 	All("全部"),
 	PhotosOnly("仅照片"),
 	VideosOnly("仅视频"),
+	AudiosOnly("仅音频"),
 	WithAudioMemo("伴生记忆"),
 }
 
@@ -218,11 +219,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/** 媒体筛选模式：全部、仅照片、仅视频、带语音/备忘 */
 	var mediaFilterType by mutableStateOf(MediaFilterType.All)
 
-	/** 当前所选子相册（或全部）媒体集合：全局时光轴保留照片与视频；具体相册内同时整合音频故事（如故事相册） */
+	/** 当前所选子相册（或全部）媒体集合：具体相册内同时整合音频（不仅限于故事相册，任意相册上传的音频都会展示）；全局下选中「仅音频」或「伴生记忆」也可直达全部音频 */
 	val currentAlbumPhotos: List<DavEntry>
 		get() {
 			val inSpecificAlbum = selectedAlbumPath.isNotBlank() && selectedAlbumPath != "__ALL_FOLDERS__"
-			val allMedia = (if (inSpecificAlbum) (allPhotos + allVideos + allAudios) else (allPhotos + allVideos))
+			val includeAudios = inSpecificAlbum || mediaFilterType == MediaFilterType.AudiosOnly || mediaFilterType == MediaFilterType.WithAudioMemo
+			val allMedia = (if (includeAudios) (allPhotos + allVideos + allAudios) else (allPhotos + allVideos))
 				.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }
 				.distinctBy { it.path }
 			val filtered = if (!inSpecificAlbum) allMedia
@@ -231,6 +233,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				MediaFilterType.All -> filtered
 				MediaFilterType.PhotosOnly -> filtered.filter { it.isImage }
 				MediaFilterType.VideosOnly -> filtered.filter { it.isVideo }
+				MediaFilterType.AudiosOnly -> filtered.filter { it.isAudio }
 				MediaFilterType.WithAudioMemo -> {
 					@Suppress("UNUSED_VARIABLE") val rev = PhotoMetadataStore.revision
 					filtered.filter { it.hasAudio || it.hasMemo }
@@ -1021,6 +1024,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		if (path.trim('/') == cleanDir) entries = visible
 		allPhotos = (allPhotos.filterNot { parentOf(it.path) == cleanDir || it.path.contains(".thumbnails") } + visible.filter { !it.isDir && it.isImage && !it.path.contains(".thumbnails") }).distinctBy { it.path }
 		allVideos = (allVideos.filterNot { parentOf(it.path) == cleanDir || it.path.contains(".thumbnails") } + visible.filter { !it.isDir && it.isVideo && !it.path.contains(".thumbnails") }).distinctBy { it.path }
+		allAudios = (allAudios.filterNot { parentOf(it.path) == cleanDir || it.path.contains(".thumbnails") } + visible.filter { !it.isDir && it.isAudio && !it.path.contains(".thumbnails") }).distinctBy { it.path }
 		allDocuments = (allDocuments.filterNot { parentOf(it.path) == cleanDir } + visible.filter { !it.isDir && it.isDocument }).distinctBy { it.path }
 		if (memoryYearGroups.isEmpty() && (allPhotos.isNotEmpty() || allVideos.isNotEmpty())) {
 			loadMemories()
@@ -1040,7 +1044,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		// 注入并同步拍摄时间（takenAt）元数据与伴生资产（全部来自统一新存储与 SQLite）
 		val toPersist = mutableListOf<PhotoMetadata>()
 		val resolvedFresh = filteredFresh.map { entry ->
-			if (entry.isImage || entry.isVideo) {
+			if (entry.isImage || entry.isVideo || entry.isAudio) {
 				val meta = PhotoMetadataStore.get(entry.path)
 				val takenAt = if (meta != null && meta.takenAt > 0L && meta.size == entry.size && meta.modified == entry.modified) {
 					meta.takenAt
@@ -1063,7 +1067,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						lat = meta?.lat ?: 0.0,
 						lng = meta?.lng ?: 0.0,
 						locationName = meta?.locationName ?: "",
-						mediaType = if (entry.isVideo) 1 else 0,
+						mediaType = when {
+							entry.isVideo -> 1
+							entry.isAudio -> 2
+							else -> 0
+						},
 					)
 					toPersist.add(newMeta)
 					PhotoMetadataStore.putMemoryOnly(newMeta)
@@ -1902,6 +1910,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		entries = entries.filterNot { hit(it.path) }
 		allPhotos = allPhotos.filterNot { hit(it.path) }
 		allVideos = allVideos.filterNot { hit(it.path) }
+		allAudios = allAudios.filterNot { hit(it.path) }
 		allDocuments = allDocuments.filterNot { hit(it.path) }
 		allAlbumFolders = allAlbumFolders.filterNot { hit(it.path) }
 		allMediaFolders = allMediaFolders.filterNot { hit(it.path) }
@@ -1979,6 +1988,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		entries = entries.filterNot { hit(it.path) }
 		allPhotos = allPhotos.filterNot { hit(it.path) }
 		allVideos = allVideos.filterNot { hit(it.path) }
+		allAudios = allAudios.filterNot { hit(it.path) }
 		allDocuments = allDocuments.filterNot { hit(it.path) }
 		allAlbumFolders = allAlbumFolders.filterNot { hit(it.path) }
 		allMediaFolders = allMediaFolders.filterNot { hit(it.path) }
@@ -2035,8 +2045,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			if (movedNewEntries.isNotEmpty()) {
 				val newPhotos = movedNewEntries.filter { it.isImage }
 				val newVideos = movedNewEntries.filter { it.isVideo }
+				val newAudios = movedNewEntries.filter { it.isAudio }
 				if (newPhotos.isNotEmpty()) allPhotos = (newPhotos + allPhotos).distinctBy { it.path }
 				if (newVideos.isNotEmpty()) allVideos = (newVideos + allVideos).distinctBy { it.path }
+				if (newAudios.isNotEmpty()) allAudios = (newAudios + allAudios).distinctBy { it.path }
 			}
 			thumbRevision++
 			mediaDirty = true
@@ -2874,7 +2886,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				} else {
 					allPhotos = (allPhotos + newPhotos).distinctBy { it.path }
 					allVideos = (allVideos + newVideos).distinctBy { it.path }
-					allAudios = (allAudios + newAudios).distinctBy { it.path }
+					val baseAudios = if (reset && cleanDir.isNotBlank()) allAudios.filterNot { parentOf(it.path) == cleanDir } else allAudios
+					allAudios = (baseAudios + newAudios).distinctBy { it.path }
 				}
 				if (page != null) {
 					albumPageOffsets[cleanDir] = offset + page.items.size
@@ -2999,6 +3012,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val snapEntries = entries
 		val snapPhotos = allPhotos
 		val snapVideos = allVideos
+		val snapAudios = allAudios
 		val snapHomeRecent = homeRecentMedia
 		val snapDocs = allDocuments
 		val snapAlbums = allAlbumFolders
@@ -3010,6 +3024,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		entries = entries.filterNot { hit(it.path) }
 		allPhotos = allPhotos.filterNot { hit(it.path) }
 		allVideos = allVideos.filterNot { hit(it.path) }
+		allAudios = allAudios.filterNot { hit(it.path) }
 		homeRecentMedia = homeRecentMedia.filterNot { hit(it.path) }
 		allDocuments = allDocuments.filterNot { hit(it.path) }
 		allAlbumFolders = allAlbumFolders.filterNot { hit(it.path) }
@@ -3050,6 +3065,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				entries = snapEntries
 				allPhotos = snapPhotos
 				allVideos = snapVideos
+				allAudios = snapAudios
 				homeRecentMedia = snapHomeRecent
 				allDocuments = snapDocs
 				allAlbumFolders = snapAlbums
@@ -3082,6 +3098,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		val snapEntries = entries
 		val snapPhotos = allPhotos
 		val snapVideos = allVideos
+		val snapAudios = allAudios
 		val snapHomeRecent = homeRecentMedia
 		val snapAlbums = allAlbumFolders
 		val snapMedia = allMediaFolders
@@ -3104,6 +3121,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		entries = entries.map { if (it.path == oldPath) renamedEntry else it }
 		allPhotos = allPhotos.map { if (it.path == oldPath) renamedEntry else if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
 		allVideos = allVideos.map { if (it.path == oldPath) renamedEntry else if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
+		allAudios = allAudios.map { if (it.path == oldPath) renamedEntry else if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
 		homeRecentMedia = homeRecentMedia.map { if (it.path == oldPath) renamedEntry else if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
 		allAlbumFolders = allAlbumFolders.map { if (it.path == oldPath) renamedEntry else if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
 		allMediaFolders = allMediaFolders.map { if (it.path == oldPath) renamedEntry else if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
@@ -3149,6 +3167,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				entries = snapEntries
 				allPhotos = snapPhotos
 				allVideos = snapVideos
+				allAudios = snapAudios
 				homeRecentMedia = snapHomeRecent
 				allAlbumFolders = snapAlbums
 				allMediaFolders = snapMedia
@@ -3192,6 +3211,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					PhotoMetadataStore.moveDir(oldPath, dest)
 					allPhotos = allPhotos.map { if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
 					allVideos = allVideos.map { if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
+					allAudios = allAudios.map { if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
 					allAlbumFolders = allAlbumFolders.map { if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
 					allMediaFolders = allMediaFolders.map { if (hit(it.path)) it.copy(path = replacePath(it.path)) else it }
 					allFolderPaths = allFolderPaths.map { if (hit(it)) replacePath(it) else it }.distinct().sorted()
@@ -3209,6 +3229,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					val movedEntry = entry.copy(path = dest)
 					allPhotos = allPhotos.map { if (it.path == oldPath) movedEntry else it }
 					allVideos = allVideos.map { if (it.path == oldPath) movedEntry else it }
+					allAudios = allAudios.map { if (it.path == oldPath) movedEntry else it }
 					photoGroups = photoGroups.map { g ->
 						g.copy(items = g.items.map { p -> if (p == oldPath) dest else p })
 					}
@@ -3244,6 +3265,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		albumHasMoreMap.clear()
 		allPhotos = emptyList()
 		allVideos = emptyList()
+		allAudios = emptyList()
 		homeRecentMedia = emptyList()
 		// 概览数字是服务端快照，清缓存后旧值不能继续停留
 		serverStats = null
@@ -3263,6 +3285,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			client = null  // repo 已停隧道并清缓存，VM 里的旧 client 指向死端口，必须丢弃重建
 			allPhotos = emptyList()
 			allVideos = emptyList()
+			allAudios = emptyList()
 			homeRecentMedia = emptyList()
 			allAlbumFolders = emptyList()
 			allMediaFolders = emptyList()
@@ -3288,7 +3311,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		dirCache.clear()
 		uploadListing = UploadListing()
 		entries = emptyList()
-		allPhotos = emptyList(); allVideos = emptyList(); homeRecentMedia = emptyList()
+		allPhotos = emptyList(); allVideos = emptyList(); allAudios = emptyList(); homeRecentMedia = emptyList()
 		allAlbumFolders = emptyList(); allMediaFolders = emptyList()
 		serverStats = null
 		lastStatsFetchAt = 0L
@@ -3324,6 +3347,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		fun hit(p: String) = paths.any { p == it || p.startsWith("$it/") }
 		allPhotos = allPhotos.filterNot { hit(it.path) }
 		allVideos = allVideos.filterNot { hit(it.path) }
+		allAudios = allAudios.filterNot { hit(it.path) }
 		allDocuments = allDocuments.filterNot { hit(it.path) }
 		allAlbumFolders = allAlbumFolders.filterNot { hit(it.path) }
 		allMediaFolders = allMediaFolders.filterNot { hit(it.path) }
