@@ -728,20 +728,27 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		})
 	}
 
-	private fun computeLocalSha256(uri: Uri): String? {
+	private data class LocalHashResult(val sha256: String, val bytesRead: Long)
+
+	private fun computeStreamSha256(openStream: () -> java.io.InputStream?): LocalHashResult? {
 		return runCatching {
 			val md = java.security.MessageDigest.getInstance("SHA-256")
-			app.contentResolver.openInputStream(uri)?.use { input ->
+			var total = 0L
+			openStream()?.use { input ->
 				val buf = ByteArray(64 * 1024)
 				while (true) {
 					val n = input.read(buf)
 					if (n <= 0) break
 					md.update(buf, 0, n)
+					total += n
 				}
 			} ?: return null
-			md.digest().joinToString("") { "%02x".format(it) }
+			LocalHashResult(md.digest().joinToString("") { "%02x".format(it) }, total)
 		}.getOrNull()
 	}
+
+	private fun computeLocalSha256(uri: Uri): LocalHashResult? =
+		computeStreamSha256 { Query.openOriginalInputStream(app, uri) }
 
 	private fun prepareUploads(request: PendingUpload) {
 		if (request.uris.isEmpty()) return
@@ -801,7 +808,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 							val localSize = Query.sizeOf(app, uri)
 							val suggested = resolveUniqueUploadName(name, occupiedLower)
 							occupiedLower.add(suggested.lowercase())
-							if (localSize > 0L && localSize == remote.size) {
+							if (localSize <= 0L || localSize == remote.size) {
 								hashChecks.add(PendingHashCheck(uri, name, localSize, remote, suggested))
 							} else {
 								out.add(UploadConflictItem(uri, name, UploadConflictKind.DIFFERENT_CONTENT, localSize, remote.size, suggested))
@@ -830,8 +837,20 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 							hashChecks.map { hc ->
 								async {
 									hashSem.withPermit {
-										val localHash = computeLocalSha256(hc.uri)
-										val remoteHash = client.fetchRemoteFileHash(hc.remote.path)
+										val primary = computeLocalSha256(hc.uri)
+										val effectiveSize = if (hc.localSize > 0L) hc.localSize else (primary?.bytesRead ?: -1L)
+										val remoteHash = if (hc.remote.size > 0L && effectiveSize > 0L && effectiveSize != hc.remote.size) {
+											null
+										} else {
+											client.fetchRemoteFileHash(hc.remote.path)
+										}
+										// 若早期文件曾按 Android 分区存储去除了 EXIF GPS（等长字节置零）上传，兜底比对原始 ContentResolver 流指纹
+										val fallbackHash = if (primary != null && remoteHash != null &&
+											!primary.sha256.equals(remoteHash, ignoreCase = true) &&
+											effectiveSize == hc.remote.size
+										) {
+											computeStreamSha256 { app.contentResolver.openInputStream(hc.uri) }?.sha256
+										} else null
 										val doneNow = completedHashes.incrementAndGet()
 										withContext(Dispatchers.Main) {
 											if (preparationVersion == version) {
@@ -839,13 +858,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 												checkingUploadProgress = doneNow.toFloat() / totalHashes.toFloat()
 											}
 										}
-										val kind = if (localHash != null && remoteHash != null) {
-											if (localHash.equals(remoteHash, ignoreCase = true)) UploadConflictKind.IDENTICAL
-											else UploadConflictKind.DIFFERENT_CONTENT
-										} else {
-											UploadConflictKind.IDENTICAL
-										}
-										UploadConflictItem(hc.uri, hc.name, kind, hc.localSize, hc.remote.size, hc.suggested)
+										val kind = classifyRemoteUploadConflict(
+											localSize = effectiveSize,
+											remoteSize = hc.remote.size,
+											localPrimarySha256 = primary?.sha256,
+											localFallbackSha256 = fallbackHash,
+											remoteSha256 = remoteHash,
+										)
+										UploadConflictItem(hc.uri, hc.name, kind, effectiveSize, hc.remote.size, hc.suggested)
 									}
 								}
 							}.awaitAll()
@@ -3869,4 +3889,26 @@ internal fun findTimelineGridScrollTarget(
 		targetIndex += visibleItems.size
 	}
 	return null
+}
+
+internal fun classifyRemoteUploadConflict(
+	localSize: Long,
+	remoteSize: Long,
+	localPrimarySha256: String?,
+	localFallbackSha256: String?,
+	remoteSha256: String?,
+): BrowserViewModel.UploadConflictKind {
+	if (remoteSize > 0L && localSize > 0L && localSize != remoteSize) {
+		return BrowserViewModel.UploadConflictKind.DIFFERENT_CONTENT
+	}
+	if (!localPrimarySha256.isNullOrBlank() && !remoteSha256.isNullOrBlank()) {
+		if (localPrimarySha256.equals(remoteSha256, ignoreCase = true)) {
+			return BrowserViewModel.UploadConflictKind.IDENTICAL
+		}
+		if (!localFallbackSha256.isNullOrBlank() && localFallbackSha256.equals(remoteSha256, ignoreCase = true)) {
+			return BrowserViewModel.UploadConflictKind.IDENTICAL
+		}
+		return BrowserViewModel.UploadConflictKind.DIFFERENT_CONTENT
+	}
+	return BrowserViewModel.UploadConflictKind.IDENTICAL
 }

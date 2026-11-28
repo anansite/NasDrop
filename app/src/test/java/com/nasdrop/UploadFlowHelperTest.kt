@@ -49,4 +49,72 @@ class UploadFlowHelperTest {
 			formatLocalCleanupResultMessage(deletedCount = 0, failedCount = 2, userCancelledSystemPrompt = false),
 		)
 	}
+
+	@Test
+	fun originalFilenameHelpersHandlePhotoPickerAndDataPaths() {
+		assertEquals(
+			1000012345L,
+			parsePhotoPickerMediaId("/picker/0/com.android.providers.media.photopicker/media/1000012345"),
+		)
+		assertEquals(
+			42L,
+			parsePhotoPickerMediaId("/picker_get_content/0/com.android.providers.media.photopicker/media/42"),
+		)
+		assertNull(parsePhotoPickerMediaId("/external/images/media/123"))
+
+		assertEquals(
+			"IMG_20261127_151200.jpg",
+			extractOriginalFilenameFromDataPath("/storage/emulated/0/DCIM/Camera/IMG_20261127_151200.jpg"),
+		)
+		assertEquals("photo.png", extractOriginalFilenameFromDataPath("C:\\Photos\\photo.png"))
+		assertNull(extractOriginalFilenameFromDataPath("  "))
+
+		assertEquals("clip.mp4", sanitizeUploadedFileName("DCIM/clip.mp4"))
+		assertNull(sanitizeUploadedFileName(".."))
+	}
+
+	@Test
+	fun remoteConflictClassificationHandlesOriginalAndRedactedExifMatches() {
+		assertEquals(
+			BrowserViewModel.UploadConflictKind.IDENTICAL,
+			classifyRemoteUploadConflict(
+				localSize = 1024L,
+				remoteSize = 1024L,
+				localPrimarySha256 = "ABC123",
+				localFallbackSha256 = null,
+				remoteSha256 = "abc123",
+			),
+		)
+		// 原图与分区存储脱敏流大小一致但仅脱敏前/后哈希命中远端时仍判为相同文件
+		assertEquals(
+			BrowserViewModel.UploadConflictKind.IDENTICAL,
+			classifyRemoteUploadConflict(
+				localSize = 1024L,
+				remoteSize = 1024L,
+				localPrimarySha256 = "original_hash",
+				localFallbackSha256 = "redacted_hash",
+				remoteSha256 = "redacted_hash",
+			),
+		)
+		assertEquals(
+			BrowserViewModel.UploadConflictKind.DIFFERENT_CONTENT,
+			classifyRemoteUploadConflict(
+				localSize = 1024L,
+				remoteSize = 1024L,
+				localPrimarySha256 = "original_hash",
+				localFallbackSha256 = "redacted_hash",
+				remoteSha256 = "other_hash",
+			),
+		)
+		assertEquals(
+			BrowserViewModel.UploadConflictKind.DIFFERENT_CONTENT,
+			classifyRemoteUploadConflict(
+				localSize = 2048L,
+				remoteSize = 1024L,
+				localPrimarySha256 = null,
+				localFallbackSha256 = null,
+				remoteSha256 = null,
+			),
+		)
+	}
 }

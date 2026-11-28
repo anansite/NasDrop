@@ -1199,16 +1199,9 @@ class WebDavClient(
 	) {
 		val name = targetName?.takeIf { it.isNotBlank() } ?: Query.nameOf(context, uri)
 		val total = Query.sizeOf(context, uri)
-		val sourceUri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
-			uri.authority == "media" &&
-			androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_MEDIA_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
-		) {
-			runCatching { android.provider.MediaStore.setRequireOriginal(uri) }.getOrDefault(uri)
-		} else uri
-		uploadStream(name, total, context.contentResolver.getType(sourceUri), remoteDir,
+		uploadStream(name, total, context.contentResolver.getType(uri), remoteDir,
 			openInput = {
-				runCatching { context.contentResolver.openInputStream(sourceUri) }.getOrNull()
-					?: context.contentResolver.openInputStream(uri)
+				Query.openOriginalInputStream(context, uri)
 					?: throw IOException("无法读取上传文件")
 			},
 			onProgress = onProgress, onBodySent = onBodySent, onCall = onCall)
@@ -1572,24 +1565,141 @@ class WebDavClient(
 	}
 }
 
+internal fun parsePhotoPickerMediaId(uriPath: String?): Long? {
+	if (uriPath.isNullOrBlank()) return null
+	if (!uriPath.contains("/picker")) return null
+	val last = uriPath.trimEnd('/').substringAfterLast('/')
+	return last.toLongOrNull()?.takeIf { it > 0L }
+}
+
+internal fun extractOriginalFilenameFromDataPath(dataPath: String?): String? {
+	if (dataPath.isNullOrBlank()) return null
+	val name = dataPath.trim().substringAfterLast('/').substringAfterLast('\\').trim()
+	return if (name.isEmpty() || name == "." || name == "..") null else name
+}
+
+internal fun sanitizeUploadedFileName(raw: String?): String? {
+	if (raw.isNullOrBlank()) return null
+	val clean = raw.trim().substringAfterLast('/').substringAfterLast('\\').trim()
+	return if (clean.isEmpty() || clean == "." || clean == "..") null else clean
+}
+
 internal object Query {
 
-	fun nameOf(context: Context, uri: Uri): String {
-		if (uri.scheme == "file") return uri.lastPathSegment ?: "unnamed"
+	private fun queryColumnsForFilename(context: Context, targetUri: Uri, selection: String? = null, selectionArgs: Array<String>? = null): String? {
+		// 1) 优先读取真实磁盘路径 _data，彻底避开系统 Photo Picker / 相册分享把 DISPLAY_NAME 替换成数字 ID
 		runCatching {
 			context.contentResolver
-				.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+				.query(targetUri, arrayOf(android.provider.MediaStore.MediaColumns.DATA, OpenableColumns.DISPLAY_NAME), selection, selectionArgs, null)
 				?.use { c ->
-					val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-					if (i >= 0 && c.moveToFirst()) {
-						c.getString(i)?.let { return it }
+					if (c.moveToFirst()) {
+						val dataIdx = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DATA)
+						if (dataIdx >= 0 && !c.isNull(dataIdx)) {
+							extractOriginalFilenameFromDataPath(c.getString(dataIdx))?.let { return it }
+						}
+						val nameIdx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+						if (nameIdx >= 0 && !c.isNull(nameIdx)) {
+							sanitizeUploadedFileName(c.getString(nameIdx))?.let { return it }
+						}
 					}
 				}
 		}
-		return uri.lastPathSegment?.substringAfterLast('/') ?: "unnamed"
+		// 2) 若 Provider 不支持同时投影 _data，则单独查询 DISPLAY_NAME
+		runCatching {
+			context.contentResolver
+				.query(targetUri, arrayOf(OpenableColumns.DISPLAY_NAME), selection, selectionArgs, null)
+				?.use { c ->
+					val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+					if (i >= 0 && c.moveToFirst() && !c.isNull(i)) {
+						sanitizeUploadedFileName(c.getString(i))?.let { return it }
+					}
+				}
+		}
+		return null
+	}
+
+	private fun resolveOriginalMediaStoreName(context: Context, uri: Uri): String? {
+		val resolvedMediaUri = resolveMediaStoreUri(context, uri)
+		if (resolvedMediaUri != null) {
+			queryColumnsForFilename(context, resolvedMediaUri)?.let { return it }
+		}
+		val pickerId = parsePhotoPickerMediaId(uri.path)
+		if (pickerId != null) {
+			val filesUri = android.provider.MediaStore.Files.getContentUri("external")
+			queryColumnsForFilename(
+				context,
+				filesUri,
+				selection = "${android.provider.MediaStore.MediaColumns._ID} = ?",
+				selectionArgs = arrayOf(pickerId.toString()),
+			)?.let { return it }
+		}
+		return null
+	}
+
+	fun nameOf(context: Context, uri: Uri): String {
+		if (uri.scheme == "file") return extractOriginalFilenameFromDataPath(uri.path) ?: uri.lastPathSegment ?: "unnamed"
+		resolveOriginalMediaStoreName(context, uri)?.let { return it }
+		queryColumnsForFilename(context, uri)?.let { return it }
+		return sanitizeUploadedFileName(uri.lastPathSegment) ?: "unnamed"
+	}
+
+	private fun queryDataPath(context: Context, targetUri: Uri, selection: String? = null, selectionArgs: Array<String>? = null): String? {
+		return runCatching {
+			context.contentResolver
+				.query(targetUri, arrayOf(android.provider.MediaStore.MediaColumns.DATA), selection, selectionArgs, null)
+				?.use { c ->
+					val idx = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DATA)
+					if (idx >= 0 && c.moveToFirst() && !c.isNull(idx)) c.getString(idx)?.takeIf { it.isNotBlank() } else null
+				}
+		}.getOrNull()
+	}
+
+	private fun resolveOriginalLocalFile(context: Context, uri: Uri): java.io.File? {
+		if (uri.scheme == "file") {
+			val f = uri.path?.let { java.io.File(it) }
+			if (f != null && f.exists() && f.canRead()) return f
+		}
+		val resolvedMediaUri = resolveMediaStoreUri(context, uri)
+		val dataPath = when {
+			resolvedMediaUri != null -> queryDataPath(context, resolvedMediaUri)
+			else -> {
+				val pickerId = parsePhotoPickerMediaId(uri.path)
+				if (pickerId != null) {
+					queryDataPath(
+						context,
+						android.provider.MediaStore.Files.getContentUri("external"),
+						selection = "${android.provider.MediaStore.MediaColumns._ID} = ?",
+						selectionArgs = arrayOf(pickerId.toString()),
+					)
+				} else {
+					queryDataPath(context, uri)
+				}
+			}
+		} ?: return null
+		val f = java.io.File(dataPath)
+		return if (f.exists() && f.isFile && f.canRead()) f else null
+	}
+
+	fun openOriginalInputStream(context: Context, uri: Uri): java.io.InputStream? {
+		resolveOriginalLocalFile(context, uri)?.let { file ->
+			runCatching { return java.io.FileInputStream(file) }
+		}
+		val baseMediaUri = resolveMediaStoreUri(context, uri) ?: uri
+		val sourceUri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
+			baseMediaUri.authority == "media" &&
+			androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_MEDIA_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+		) {
+			runCatching { android.provider.MediaStore.setRequireOriginal(baseMediaUri) }.getOrDefault(baseMediaUri)
+		} else baseMediaUri
+		return runCatching { context.contentResolver.openInputStream(sourceUri) }.getOrNull()
+			?: runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
 	}
 
 	fun sizeOf(context: Context, uri: Uri): Long {
+		resolveOriginalLocalFile(context, uri)?.let { file ->
+			val len = file.length()
+			if (len > 0L) return len
+		}
 		runCatching {
 			context.contentResolver
 				.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
