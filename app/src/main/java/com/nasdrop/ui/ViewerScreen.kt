@@ -3898,6 +3898,85 @@ fun AudioPlayer(
 				textAlign = TextAlign.Center,
 			)
 
+			// 独立的功能选项胶囊区（循环模式 / 倍速 / 播放列表），与底部纯播控按键区清晰分离
+			Spacer(modifier = Modifier.height(16.dp))
+			Row(
+				horizontalArrangement = Arrangement.spacedBy(10.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Surface(
+					shape = RoundedCornerShape(18.dp),
+					color = OnMediaBackdrop.copy(alpha = 0.10f),
+					border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.14f)),
+					onClick = {
+						val nextMode = BackgroundAudioController.cyclePlayMode()
+						Toast.makeText(context, nextMode.label, Toast.LENGTH_SHORT).show()
+					},
+				) {
+					Row(
+						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(4.dp),
+					) {
+						Icon(
+							imageVector = if (playMode == AudioPlayMode.LOOP_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+							contentDescription = playMode.label,
+							tint = if (playMode == AudioPlayMode.SEQUENTIAL) OnMediaBackdrop.copy(alpha = 0.85f) else Color(0xFF38BDF8),
+							modifier = Modifier.size(15.dp),
+						)
+						Text(
+							text = playMode.label,
+							color = if (playMode == AudioPlayMode.SEQUENTIAL) OnMediaBackdrop.copy(alpha = 0.85f) else Color(0xFF38BDF8),
+							fontSize = 11.5.sp,
+							fontWeight = FontWeight.Medium,
+						)
+					}
+				}
+
+				Surface(
+					shape = RoundedCornerShape(18.dp),
+					color = OnMediaBackdrop.copy(alpha = 0.10f),
+					border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.14f)),
+					onClick = { BackgroundAudioController.cycleSpeed() },
+				) {
+					Text(
+						text = "倍速 ${playbackSpeed}x",
+						color = if (playbackSpeed == 1.0f) OnMediaBackdrop.copy(alpha = 0.85f) else Color(0xFF38BDF8),
+						fontSize = 11.5.sp,
+						fontWeight = FontWeight.SemiBold,
+						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+					)
+				}
+
+				if (effectivePlaylist.size > 1) {
+					Surface(
+						shape = RoundedCornerShape(18.dp),
+						color = OnMediaBackdrop.copy(alpha = 0.10f),
+						border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.14f)),
+						onClick = { showPlaylistSheet = true },
+					) {
+						Row(
+							modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(4.dp),
+						) {
+							Icon(
+								imageVector = Icons.Rounded.QueueMusic,
+								contentDescription = null,
+								tint = OnMediaBackdrop.copy(alpha = 0.85f),
+								modifier = Modifier.size(15.dp),
+							)
+							Text(
+								text = "列表 (${effectivePlaylist.size})",
+								color = OnMediaBackdrop.copy(alpha = 0.85f),
+								fontSize = 11.5.sp,
+								fontWeight = FontWeight.SemiBold,
+							)
+						}
+					}
+				}
+			}
+
 			AnimatedVisibility(visible = showResumeTip && playbackError == null) {
 				Surface(
 					color = Color.White.copy(alpha = 0.12f),
@@ -3980,121 +4059,88 @@ fun AudioPlayer(
 				)
 			}
 
-			Spacer(modifier = Modifier.height(14.dp))
+			Spacer(modifier = Modifier.height(18.dp))
 
-			// 5. 主播控按钮行
+			// 5. 纯净播控按键区：上一首 / 快退10s / 播放暂停 / 快进10s / 下一首
 			Row(
-				modifier = Modifier.fillMaxWidth(),
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(bottom = 16.dp),
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.SpaceEvenly,
 			) {
 				IconButton(
-					onClick = {
-						val nextMode = BackgroundAudioController.cyclePlayMode()
-						Toast.makeText(context, nextMode.label, Toast.LENGTH_SHORT).show()
-					},
-				) {
-					Icon(
-						imageVector = if (playMode == AudioPlayMode.LOOP_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-						contentDescription = playMode.label,
-						tint = if (playMode == AudioPlayMode.SEQUENTIAL) OnMediaBackdrop.copy(alpha = 0.6f) else Color(0xFF38BDF8),
-					)
-				}
-
-				IconButton(
 					enabled = effectivePlaylist.size > 1,
 					onClick = { BackgroundAudioController.stepTrack(-1) },
+					modifier = Modifier.size(44.dp),
 				) {
 					Icon(
 						Icons.Rounded.SkipPrevious,
 						contentDescription = "上一首",
 						tint = if (effectivePlaylist.size > 1) OnMediaBackdrop else OnMediaBackdrop.copy(alpha = 0.3f),
-						modifier = Modifier.size(30.dp),
+						modifier = Modifier.size(32.dp),
 					)
 				}
 
-				IconButton(onClick = { BackgroundAudioController.seekBy(-10_000L) }) {
-					Icon(Icons.Rounded.Replay10, contentDescription = "快退10秒", tint = OnMediaBackdrop, modifier = Modifier.size(28.dp))
+				Surface(
+					shape = CircleShape,
+					color = OnMediaBackdrop.copy(alpha = 0.12f),
+					onClick = { BackgroundAudioController.seekBy(-10_000L) },
+					modifier = Modifier.size(46.dp),
+				) {
+					Box(contentAlignment = Alignment.Center) {
+						Icon(
+							Icons.Rounded.Replay10,
+							contentDescription = "快退10秒",
+							tint = OnMediaBackdrop,
+							modifier = Modifier.size(25.dp),
+						)
+					}
 				}
 
 				Surface(
 					shape = CircleShape,
 					color = OnMediaBackdrop,
 					onClick = { BackgroundAudioController.togglePlayPause() },
-					modifier = Modifier.size(62.dp),
+					modifier = Modifier.size(66.dp),
 				) {
 					Box(contentAlignment = Alignment.Center) {
 						Icon(
 							imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
 							contentDescription = if (isPlaying) "暂停" else "播放",
 							tint = MediaBackdrop,
-							modifier = Modifier.size(34.dp),
+							modifier = Modifier.size(36.dp),
 						)
 					}
 				}
 
-				IconButton(onClick = { BackgroundAudioController.seekBy(10_000L) }) {
-					Icon(Icons.Rounded.Forward10, contentDescription = "快进10秒", tint = OnMediaBackdrop, modifier = Modifier.size(28.dp))
+				Surface(
+					shape = CircleShape,
+					color = OnMediaBackdrop.copy(alpha = 0.12f),
+					onClick = { BackgroundAudioController.seekBy(10_000L) },
+					modifier = Modifier.size(46.dp),
+				) {
+					Box(contentAlignment = Alignment.Center) {
+						Icon(
+							Icons.Rounded.Forward10,
+							contentDescription = "快进10秒",
+							tint = OnMediaBackdrop,
+							modifier = Modifier.size(25.dp),
+						)
+					}
 				}
 
 				IconButton(
 					enabled = effectivePlaylist.size > 1,
 					onClick = { BackgroundAudioController.stepTrack(1) },
+					modifier = Modifier.size(44.dp),
 				) {
 					Icon(
 						Icons.Rounded.SkipNext,
 						contentDescription = "下一首",
 						tint = if (effectivePlaylist.size > 1) OnMediaBackdrop else OnMediaBackdrop.copy(alpha = 0.3f),
-						modifier = Modifier.size(30.dp),
+						modifier = Modifier.size(32.dp),
 					)
-				}
-			}
-
-			Spacer(modifier = Modifier.height(14.dp))
-
-			// 6. 次级控制行：倍速药丸、播放列表
-			Row(
-				modifier = Modifier
-					.fillMaxWidth()
-					.padding(bottom = 8.dp),
-				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.Center,
-			) {
-				Surface(
-					shape = RoundedCornerShape(16.dp),
-					color = OnMediaBackdrop.copy(alpha = 0.16f),
-					onClick = { BackgroundAudioController.cycleSpeed() },
-				) {
-					Text(
-						text = "倍速 ${playbackSpeed}x",
-						color = OnMediaBackdrop,
-						fontSize = 12.sp,
-						fontWeight = FontWeight.SemiBold,
-						modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-					)
-				}
-
-				if (effectivePlaylist.size > 1) {
-					Spacer(modifier = Modifier.width(12.dp))
-					Surface(
-						shape = RoundedCornerShape(16.dp),
-						color = OnMediaBackdrop.copy(alpha = 0.16f),
-						onClick = { showPlaylistSheet = true },
-					) {
-						Row(
-							modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(5.dp),
-						) {
-							Icon(Icons.Rounded.QueueMusic, contentDescription = null, tint = OnMediaBackdrop, modifier = Modifier.size(16.dp))
-							Text(
-								text = "播放列表 (${effectivePlaylist.size})",
-								color = OnMediaBackdrop,
-								fontSize = 12.sp,
-								fontWeight = FontWeight.SemiBold,
-							)
-						}
-					}
 				}
 			}
 		}
