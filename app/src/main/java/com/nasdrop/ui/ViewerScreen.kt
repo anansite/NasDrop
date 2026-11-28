@@ -3911,24 +3911,32 @@ fun AudioPlayer(
 								contentScale = ContentScale.Crop,
 								modifier = Modifier.fillMaxSize(),
 							)
-						} else {
-							Icon(
-								imageVector = Icons.Rounded.MusicNote,
-								contentDescription = null,
-								tint = Color.White.copy(alpha = 0.92f),
-								modifier = Modifier.size(44.dp),
+							// 专辑封面图模式下保留中心黑胶主轴孔点缀
+							Box(
+								modifier = Modifier
+									.size(16.dp)
+									.clip(CircleShape)
+									.background(Color(0xFF0E1118))
+									.padding(3.5.dp)
+									.clip(CircleShape)
+									.background(Color.White.copy(alpha = 0.28f)),
 							)
+						} else {
+							Box(
+								modifier = Modifier
+									.fillMaxSize(0.68f)
+									.clip(CircleShape)
+									.background(Color.White.copy(alpha = 0.14f)),
+								contentAlignment = Alignment.Center,
+							) {
+								Icon(
+									imageVector = Icons.Rounded.MusicNote,
+									contentDescription = null,
+									tint = Color.White.copy(alpha = 0.95f),
+									modifier = Modifier.size(46.dp),
+								)
+							}
 						}
-						// 中心黑胶主轴孔点缀
-						Box(
-							modifier = Modifier
-								.size(18.dp)
-								.clip(CircleShape)
-								.background(Color(0xFF0E1118))
-								.padding(4.dp)
-								.clip(CircleShape)
-								.background(Color.White.copy(alpha = 0.25f)),
-						)
 					}
 				}
 
