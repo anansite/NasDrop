@@ -430,8 +430,6 @@ fun BrowserScreen(
 							count = vm.currentAlbumPhotos.size,
 							selectedAlbumPath = vm.selectedAlbumPath,
 							allAlbumsCount = vm.allAlbumFolders.size,
-							photosViewMode = vm.photosViewMode,
-							onSelectPhotosViewMode = { vm.setPhotosView(it) },
 							activeTransferCount = vm.activeTransferCount,
 							hasUpdate = vm.hasUpdate,
 							onOpenUpdateDialog = { vm.openUpdateDialog() },
@@ -604,8 +602,6 @@ fun BrowserScreen(
 							PhotoTimelineContent(
 								state = vm.photoGridState,
 								listState = vm.photoListState,
-								compactListState = vm.photoCompactState,
-								cardGridState = vm.photoCardGridState,
 								photosViewMode = vm.photosViewMode,
 								onSelectPhotosViewMode = { vm.setPhotosView(it) },
 								groups = vm.photoTimelineGroups,
@@ -1784,8 +1780,6 @@ private fun PhotosTopBar(
 	count: Int,
 	selectedAlbumPath: String,
 	allAlbumsCount: Int = 0,
-	photosViewMode: PhotosViewMode = PhotosViewMode.TimelineGrid,
-	onSelectPhotosViewMode: (PhotosViewMode) -> Unit = {},
 	activeTransferCount: Int = 0,
 	hasUpdate: Boolean = false,
 	onOpenUpdateDialog: (() -> Unit)? = null,
@@ -1798,7 +1792,6 @@ private fun PhotosTopBar(
 	onOpenSettings: () -> Unit,
 	onShowNetworkSheet: () -> Unit = {},
 ) {
-	var showViewMenu by remember { mutableStateOf(false) }
 	val (title, subtitle, isInside) = when (selectedAlbumPath) {
 		"__ALL_FOLDERS__" -> Triple("相册", if (allAlbumsCount > 0) "$allAlbumsCount 个相册" else "相册分类总览", true)
 		"" -> Triple("云端相册", "$count 张照片", false)
@@ -1818,72 +1811,6 @@ private fun PhotosTopBar(
 		onUp = onUpAlbum, onUpload = onUploadPhoto, onCreate = onCreateAlbum,
 		onDelete = onDeleteCurrentAlbum, onTransfer = onOpenTransferSheet, onSettings = onOpenSettings,
 		routeInfo = routeInfo, onShowNetworkSheet = onShowNetworkSheet,
-		extraActions = {
-			Box {
-				IconButton(
-					onClick = { showViewMenu = true },
-					modifier = Modifier.size(36.dp),
-				) {
-					val icon = when (photosViewMode) {
-						PhotosViewMode.TimelineGrid -> Icons.Rounded.Apps
-						PhotosViewMode.Cards -> Icons.Rounded.ViewHeadline
-						PhotosViewMode.Compact -> Icons.Rounded.ViewList
-						PhotosViewMode.Grid -> Icons.Rounded.GridView
-					}
-					Icon(
-						imageVector = icon,
-						contentDescription = "切换相册视图",
-						modifier = Modifier.size(20.dp),
-						tint = MaterialTheme.colorScheme.onSurfaceVariant,
-					)
-				}
-				DropdownMenu(
-					expanded = showViewMenu,
-					onDismissRequest = { showViewMenu = false },
-				) {
-					PhotosViewMode.entries.forEach { mode ->
-						val selected = mode == photosViewMode
-						val itemIcon = when (mode) {
-							PhotosViewMode.TimelineGrid -> Icons.Rounded.Apps
-							PhotosViewMode.Cards -> Icons.Rounded.ViewHeadline
-							PhotosViewMode.Compact -> Icons.Rounded.ViewList
-							PhotosViewMode.Grid -> Icons.Rounded.GridView
-						}
-						val labelText = if (mode == PhotosViewMode.TimelineGrid) "${mode.label}（默认）" else mode.label
-						DropdownMenuItem(
-							text = {
-								Text(
-									text = labelText,
-									fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-									color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-								)
-							},
-							leadingIcon = {
-								Icon(
-									imageVector = itemIcon,
-									contentDescription = null,
-									tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-								)
-							},
-							trailingIcon = if (selected) {
-								{
-									Icon(
-										imageVector = Icons.Rounded.Check,
-										contentDescription = "当前选中",
-										tint = MaterialTheme.colorScheme.primary,
-										modifier = Modifier.size(18.dp),
-									)
-								}
-							} else null,
-							onClick = {
-								showViewMenu = false
-								onSelectPhotosViewMode(mode)
-							},
-						)
-					}
-				}
-			}
-		},
 	)
 }
 
@@ -3939,8 +3866,6 @@ private fun HomeQuickCard(
 private fun PhotoTimelineContent(
 	state: LazyGridState,
 	listState: LazyListState = rememberLazyListState(),
-	compactListState: LazyListState = rememberLazyListState(),
-	cardGridState: LazyGridState = rememberLazyGridState(),
 	photosViewMode: PhotosViewMode = PhotosViewMode.TimelineGrid,
 	onSelectPhotosViewMode: (PhotosViewMode) -> Unit = {},
 	groups: List<com.nasdrop.TimelineGroup>,
@@ -4015,20 +3940,10 @@ private fun PhotoTimelineContent(
 					val lastVisible = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
 					total > 0 && lastVisible >= (total - 12).coerceAtLeast(0)
 				}
-				PhotosViewMode.Grid -> {
-					val total = cardGridState.layoutInfo.totalItemsCount
-					val lastVisible = cardGridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-					total > 0 && lastVisible >= (total - 8).coerceAtLeast(0)
-				}
 				PhotosViewMode.Cards -> {
 					val total = listState.layoutInfo.totalItemsCount
 					val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
 					total > 0 && lastVisible >= (total - 6).coerceAtLeast(0)
-				}
-				PhotosViewMode.Compact -> {
-					val total = compactListState.layoutInfo.totalItemsCount
-					val lastVisible = compactListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-					total > 0 && lastVisible >= (total - 8).coerceAtLeast(0)
 				}
 			}
 		}
@@ -4533,52 +4448,6 @@ private fun PhotoTimelineContent(
 						)
 					}
 
-					PhotosViewMode.Compact -> {
-						PhotoTimelineListContent(
-							listState = compactListState,
-							groups = groups,
-							collapsedNonFirstPaths = collapsedNonFirstPaths,
-							groupByFirstPath = groupByFirstPath,
-							isMulti = isMulti,
-							selectedPaths = selectedPaths,
-							compact = true,
-							onToggleSelect = onToggleSelect,
-							onEnterMultiSelect = onEnterMultiSelect,
-							onToggleSelectGroup = onToggleSelectGroup,
-							onOpenAction = onOpenAction,
-							onOpenPhotoGroup = onOpenPhotoGroup,
-							onOpenImage = onOpenImage,
-							onOpenVideo = onOpenVideo,
-							onOpenAudio = onOpenAudio,
-							urlOf = urlOf,
-							directUrlOf = directUrlOf,
-							onThumbnailError = onThumbnailError,
-						)
-					}
-
-					PhotosViewMode.Grid -> {
-						PhotoTimelineCardGridContent(
-							gridState = cardGridState,
-							groups = groups,
-							currentPhotos = currentPhotos,
-							collapsedNonFirstPaths = collapsedNonFirstPaths,
-							groupByFirstPath = groupByFirstPath,
-							isMulti = isMulti,
-							selectedPaths = selectedPaths,
-							onToggleSelect = onToggleSelect,
-							onEnterMultiSelect = onEnterMultiSelect,
-							onUpdateSelectionPaths = onUpdateSelectionPaths,
-							onToggleSelectGroup = onToggleSelectGroup,
-							onOpenAction = onOpenAction,
-							onOpenPhotoGroup = onOpenPhotoGroup,
-							onOpenImage = onOpenImage,
-							onOpenVideo = onOpenVideo,
-							onOpenAudio = onOpenAudio,
-							urlOf = urlOf,
-							onThumbnailError = onThumbnailError,
-						)
-					}
-
 					PhotosViewMode.TimelineGrid -> {
 						var isScrubbing by remember { mutableStateOf(false) }
 						var scrubFraction by remember { mutableFloatStateOf(0f) }
@@ -4774,8 +4643,8 @@ private fun AlbumFoldersGrid(
 		onRefresh = onRefresh,
 		modifier = modifier.fillMaxSize(),
 	) {
-		if (photosViewMode == PhotosViewMode.Cards || photosViewMode == PhotosViewMode.Compact) {
-			val compact = photosViewMode == PhotosViewMode.Compact
+		if (photosViewMode == PhotosViewMode.Cards) {
+			val compact = false
 			val thumbSize = if (compact) 32.dp else 42.dp
 			val dividerIndent = if (compact) 56.dp else 68.dp
 			LazyColumn(
@@ -5539,144 +5408,6 @@ private fun PhotoTimelineListContent(
 					thickness = 0.5.dp,
 					modifier = Modifier.padding(start = dividerIndent),
 				)
-			}
-		}
-	}
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun PhotoTimelineCardGridContent(
-	gridState: LazyGridState,
-	groups: List<com.nasdrop.TimelineGroup>,
-	currentPhotos: List<DavEntry>,
-	collapsedNonFirstPaths: Set<String>,
-	groupByFirstPath: Map<String, PhotoGroup>,
-	isMulti: Boolean,
-	selectedPaths: Set<String>,
-	onToggleSelect: (DavEntry) -> Unit,
-	onEnterMultiSelect: (DavEntry) -> Unit,
-	onUpdateSelectionPaths: ((Set<String>) -> Unit)?,
-	onToggleSelectGroup: ((com.nasdrop.TimelineGroup, Boolean) -> Unit)?,
-	onOpenAction: (DavEntry) -> Unit,
-	onOpenPhotoGroup: (PhotoGroup) -> Unit,
-	onOpenImage: (DavEntry) -> Unit,
-	onOpenVideo: (DavEntry) -> Unit,
-	onOpenAudio: (DavEntry) -> Unit,
-	urlOf: (String) -> String?,
-	onThumbnailError: ((String) -> Unit)?,
-) {
-	LazyVerticalGrid(
-		state = gridState,
-		columns = GridCells.Fixed(2),
-		contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 88.dp),
-		horizontalArrangement = Arrangement.spacedBy(10.dp),
-		verticalArrangement = Arrangement.spacedBy(10.dp),
-		modifier = Modifier
-			.fillMaxSize()
-			.dragSelectablePhotoGrid(
-				state = gridState,
-				allPhotos = currentPhotos,
-				isMulti = isMulti,
-				selectedPaths = selectedPaths,
-				onEnterMultiSelect = onEnterMultiSelect,
-				onUpdateSelectionPaths = { onUpdateSelectionPaths?.invoke(it) },
-			),
-	) {
-		groups.forEach { group ->
-			val visibleItems = group.items.filterNot { collapsedNonFirstPaths.contains(it.path) }
-			if (visibleItems.isEmpty()) return@forEach
-
-			item(key = "hdr_${group.dateTitle}", span = { GridItemSpan(2) }) {
-				TimelineDateGroupHeader(
-					group = group,
-					visibleItems = visibleItems,
-					isMulti = isMulti,
-					selectedPaths = selectedPaths,
-					onToggleSelectGroup = onToggleSelectGroup,
-				)
-			}
-
-			items(visibleItems, key = { it.path }) { item ->
-				val isSelected = selectedPaths.contains(item.path)
-				val photoGroup = groupByFirstPath[item.path]
-				Card(
-					shape = RoundedCornerShape(14.dp),
-					colors = CardDefaults.cardColors(
-						containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface
-					),
-					border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-					elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-					modifier = Modifier
-						.fillMaxWidth()
-						.combinedClickable(
-							onClick = {
-								handlePhotoTimelineClick(
-									item = item,
-									photoGroup = photoGroup,
-									isMulti = isMulti,
-									onToggleSelect = onToggleSelect,
-									onOpenPhotoGroup = onOpenPhotoGroup,
-									onOpenAudio = onOpenAudio,
-									onOpenVideo = onOpenVideo,
-									onOpenImage = onOpenImage,
-								)
-							},
-							onLongClick = {
-								if (!isMulti) onEnterMultiSelect(item) else onToggleSelect(item)
-							},
-						),
-				) {
-					Column(
-						modifier = Modifier.padding(10.dp),
-						horizontalAlignment = Alignment.CenterHorizontally,
-					) {
-						Box(modifier = Modifier.fillMaxWidth()) {
-							if (isMulti) {
-								SelectCheckbox(isSelected = isSelected, modifier = Modifier.align(Alignment.TopStart))
-							} else {
-								IconButton(
-									onClick = { onOpenAction(item) },
-									modifier = Modifier
-										.size(36.dp)
-										.align(Alignment.TopEnd),
-								) {
-									Icon(Icons.Rounded.MoreVert, contentDescription = "更多", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
-								}
-							}
-						}
-
-						Spacer(modifier = Modifier.height(2.dp))
-						PhotoTimelineThumbnailBox(
-							item = item,
-							photoGroup = photoGroup,
-							urlOf = urlOf,
-							onThumbnailError = onThumbnailError,
-							modifier = Modifier
-								.fillMaxWidth()
-								.aspectRatio(1.2f)
-								.clip(RoundedCornerShape(8.dp))
-								.background(MaterialTheme.colorScheme.surfaceVariant),
-						)
-						Spacer(modifier = Modifier.height(8.dp))
-						Text(
-							text = photoGroup?.title?.ifBlank { null } ?: item.displayName,
-							fontSize = 13.sp,
-							fontWeight = FontWeight.Bold,
-							color = MaterialTheme.colorScheme.onSurface,
-							maxLines = 1,
-							overflow = TextOverflow.Ellipsis,
-						)
-						Spacer(modifier = Modifier.height(2.dp))
-						Text(
-							text = buildPhotoMeta(item, photoGroup),
-							fontSize = 10.sp,
-							color = MaterialTheme.colorScheme.onSurfaceVariant,
-							maxLines = 1,
-							overflow = TextOverflow.Ellipsis,
-						)
-					}
-				}
 			}
 		}
 	}

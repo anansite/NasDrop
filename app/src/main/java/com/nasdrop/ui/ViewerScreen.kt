@@ -3895,43 +3895,18 @@ fun AudioPlayer(
 				textAlign = TextAlign.Center,
 			)
 
-			// 独立的功能选项胶囊区（循环模式 / 倍速 / 播放列表），与底部纯播控按键区清晰分离
-			Spacer(modifier = Modifier.height(16.dp))
+			Spacer(modifier = Modifier.weight(1f))
+
+			// 倍速快捷胶囊置于进度条上方，让出简洁舒展的中心视觉区
 			Row(
-				horizontalArrangement = Arrangement.spacedBy(10.dp),
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(bottom = 12.dp),
+				horizontalArrangement = Arrangement.Center,
 				verticalAlignment = Alignment.CenterVertically,
 			) {
 				Surface(
-					shape = RoundedCornerShape(18.dp),
-					color = OnMediaBackdrop.copy(alpha = 0.10f),
-					border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.14f)),
-					onClick = {
-						val nextMode = BackgroundAudioController.cyclePlayMode()
-						Toast.makeText(context, nextMode.label, Toast.LENGTH_SHORT).show()
-					},
-				) {
-					Row(
-						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(4.dp),
-					) {
-						Icon(
-							imageVector = if (playMode == AudioPlayMode.LOOP_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-							contentDescription = playMode.label,
-							tint = if (playMode == AudioPlayMode.SEQUENTIAL) OnMediaBackdrop.copy(alpha = 0.85f) else Color(0xFF38BDF8),
-							modifier = Modifier.size(15.dp),
-						)
-						Text(
-							text = playMode.label,
-							color = if (playMode == AudioPlayMode.SEQUENTIAL) OnMediaBackdrop.copy(alpha = 0.85f) else Color(0xFF38BDF8),
-							fontSize = 11.5.sp,
-							fontWeight = FontWeight.Medium,
-						)
-					}
-				}
-
-				Surface(
-					shape = RoundedCornerShape(18.dp),
+					shape = RoundedCornerShape(16.dp),
 					color = OnMediaBackdrop.copy(alpha = 0.10f),
 					border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.14f)),
 					onClick = { BackgroundAudioController.cycleSpeed() },
@@ -3941,36 +3916,8 @@ fun AudioPlayer(
 						color = if (playbackSpeed == 1.0f) OnMediaBackdrop.copy(alpha = 0.85f) else Color(0xFF38BDF8),
 						fontSize = 11.5.sp,
 						fontWeight = FontWeight.SemiBold,
-						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+						modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
 					)
-				}
-
-				if (effectivePlaylist.size > 1) {
-					Surface(
-						shape = RoundedCornerShape(18.dp),
-						color = OnMediaBackdrop.copy(alpha = 0.10f),
-						border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.14f)),
-						onClick = { showPlaylistSheet = true },
-					) {
-						Row(
-							modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(4.dp),
-						) {
-							Icon(
-								imageVector = Icons.Rounded.QueueMusic,
-								contentDescription = null,
-								tint = OnMediaBackdrop.copy(alpha = 0.85f),
-								modifier = Modifier.size(15.dp),
-							)
-							Text(
-								text = "列表 (${effectivePlaylist.size})",
-								color = OnMediaBackdrop.copy(alpha = 0.85f),
-								fontSize = 11.5.sp,
-								fontWeight = FontWeight.SemiBold,
-							)
-						}
-					}
 				}
 			}
 
@@ -3978,7 +3925,7 @@ fun AudioPlayer(
 				Surface(
 					color = Color.White.copy(alpha = 0.12f),
 					shape = RoundedCornerShape(16.dp),
-					modifier = Modifier.padding(top = 12.dp),
+					modifier = Modifier.padding(bottom = 10.dp),
 				) {
 					Text(
 						text = "已恢复至上次收听位置 ${formatTime(savedProgress)}",
@@ -3996,7 +3943,7 @@ fun AudioPlayer(
 					shape = RoundedCornerShape(14.dp),
 					modifier = Modifier
 						.fillMaxWidth()
-						.padding(top = 14.dp),
+						.padding(bottom = 12.dp),
 				) {
 					Column(
 						modifier = Modifier.padding(12.dp),
@@ -4025,8 +3972,6 @@ fun AudioPlayer(
 					}
 				}
 			}
-
-			Spacer(modifier = Modifier.weight(1f))
 
 			// 4. 进度条
 			Row(
@@ -4058,14 +4003,29 @@ fun AudioPlayer(
 
 			Spacer(modifier = Modifier.height(18.dp))
 
-			// 5. 纯净播控按键区：上一首 / 播放暂停 / 下一首
+			// 5. 现代播放器统一底栏：循环/顺序模式 · 上一首 · 播放/暂停 · 下一首 · 播放列表
 			Row(
 				modifier = Modifier
 					.fillMaxWidth()
-					.padding(bottom = 16.dp),
+					.padding(bottom = 18.dp),
 				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
+				horizontalArrangement = Arrangement.SpaceBetween,
 			) {
+				IconButton(
+					onClick = {
+						val nextMode = BackgroundAudioController.cyclePlayMode()
+						Toast.makeText(context, nextMode.label, Toast.LENGTH_SHORT).show()
+					},
+					modifier = Modifier.size(44.dp),
+				) {
+					Icon(
+						imageVector = if (playMode == AudioPlayMode.LOOP_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+						contentDescription = playMode.label,
+						tint = if (playMode == AudioPlayMode.SEQUENTIAL) OnMediaBackdrop.copy(alpha = 0.7f) else Color(0xFF38BDF8),
+						modifier = Modifier.size(23.dp),
+					)
+				}
+
 				IconButton(
 					enabled = effectivePlaylist.size > 1,
 					onClick = { BackgroundAudioController.stepTrack(-1) },
@@ -4105,6 +4065,19 @@ fun AudioPlayer(
 						contentDescription = "下一首",
 						tint = if (effectivePlaylist.size > 1) OnMediaBackdrop else OnMediaBackdrop.copy(alpha = 0.3f),
 						modifier = Modifier.size(34.dp),
+					)
+				}
+
+				IconButton(
+					enabled = effectivePlaylist.isNotEmpty(),
+					onClick = { showPlaylistSheet = true },
+					modifier = Modifier.size(44.dp),
+				) {
+					Icon(
+						imageVector = Icons.Rounded.QueueMusic,
+						contentDescription = "播放列表 (${effectivePlaylist.size})",
+						tint = if (effectivePlaylist.isNotEmpty()) OnMediaBackdrop.copy(alpha = 0.88f) else OnMediaBackdrop.copy(alpha = 0.3f),
+						modifier = Modifier.size(24.dp),
 					)
 				}
 			}

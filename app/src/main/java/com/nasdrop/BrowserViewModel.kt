@@ -65,10 +65,8 @@ enum class ViewMode {
 }
 
 enum class PhotosViewMode(val label: String, val shortLabel: String) {
-	TimelineGrid("宫格视图", "宫格"), // 默认保持现状：3列时间轴宫格
-	Cards("列表视图", "列表"),        // 与文件夹列表对齐
-	Compact("紧凑列表", "紧凑"),      // 与文件夹紧凑列表对齐
-	Grid("卡片视图", "卡片"),         // 与文件夹2列大卡片对齐
+	TimelineGrid("宫格视图", "宫格"), // 默认：时间轴宫格
+	Cards("列表视图", "列表"),        // 时间轴列表
 }
 
 fun resolveAlbumViewModeKey(albumPath: String): String =
@@ -167,8 +165,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/** 持久化列表与网格滚动位置，跨 Route（看图/视频/设置）生命周期不丢失 */
 	val photoGridState = LazyGridState()
 	val photoListState = LazyListState()
-	val photoCompactState = LazyListState()
-	val photoCardGridState = LazyGridState()
 	val fileListState = LazyListState()
 	val fileCompactState = LazyListState()
 	val fileGridState = LazyGridState()
@@ -1528,28 +1524,12 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 							photoGridState.scrollToItem(scrollPos)
 						}
 					}
-					PhotosViewMode.Grid -> {
-						val layout = photoCardGridState.layoutInfo
-						val visible = layout.visibleItemsInfo.firstOrNull { it.key == target.itemKey }
-						val alreadyVisible = visible != null && visible.offset.y >= 0 && (visible.offset.y + visible.size.height) <= (layout.viewportEndOffset - 120)
-						if (!alreadyVisible) {
-							photoCardGridState.scrollToItem((target.gridIndex - 2).coerceAtLeast(0))
-						}
-					}
 					PhotosViewMode.Cards -> {
 						val layout = photoListState.layoutInfo
 						val visible = layout.visibleItemsInfo.firstOrNull { it.key == target.itemKey }
 						val alreadyVisible = visible != null && visible.offset >= 0 && (visible.offset + visible.size) <= (layout.viewportEndOffset - 120)
 						if (!alreadyVisible) {
 							photoListState.scrollToItem((target.gridIndex - 1).coerceAtLeast(0))
-						}
-					}
-					PhotosViewMode.Compact -> {
-						val layout = photoCompactState.layoutInfo
-						val visible = layout.visibleItemsInfo.firstOrNull { it.key == target.itemKey }
-						val alreadyVisible = visible != null && visible.offset >= 0 && (visible.offset + visible.size) <= (layout.viewportEndOffset - 120)
-						if (!alreadyVisible) {
-							photoCompactState.scrollToItem((target.gridIndex - 2).coerceAtLeast(0))
 						}
 					}
 				}
@@ -1604,16 +1584,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				val rawMap = app.prefs.getAlbumViewModes()
 				val parsed = buildMap {
 					rawMap.forEach { (k, v) ->
-						val mode = PhotosViewMode.entries.firstOrNull { it.name == v }
-						if (mode != null && mode != PhotosViewMode.TimelineGrid) {
-							put(k, mode)
-						}
-					}
-					if (isEmpty()) {
-						val legacy = app.prefs.getPhotosViewMode()
-						val legacyMode = PhotosViewMode.entries.firstOrNull { it.name == legacy }
-						if (legacyMode != null && legacyMode != PhotosViewMode.TimelineGrid) {
-							put(resolveAlbumViewModeKey(""), legacyMode)
+						if (k != "__ALL__" && k != "__ALL_FOLDERS__") {
+							val mode = PhotosViewMode.entries.firstOrNull { it.name == v }
+							if (mode == PhotosViewMode.Cards) {
+								put(k, mode)
+							}
 						}
 					}
 				}
@@ -2933,8 +2908,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			viewModelScope.launch {
 				runCatching { photoGridState.scrollToItem(0) }
 				runCatching { photoListState.scrollToItem(0) }
-				runCatching { photoCompactState.scrollToItem(0) }
-				runCatching { photoCardGridState.scrollToItem(0) }
 			}
 			if (albumPath.isNotBlank() && albumPath != "__ALL_FOLDERS__" && !albumPageOffsets.containsKey(albumPath)) {
 				viewModelScope.launch { loadTimelinePage(dir = albumPath, reset = true) }
@@ -3005,8 +2978,6 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		viewModelScope.launch {
 			runCatching { photoGridState.scrollToItem(0) }
 			runCatching { photoListState.scrollToItem(0) }
-			runCatching { photoCompactState.scrollToItem(0) }
-			runCatching { photoCardGridState.scrollToItem(0) }
 		}
 	}
 
