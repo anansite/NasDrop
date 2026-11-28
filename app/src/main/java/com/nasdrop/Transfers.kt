@@ -22,6 +22,8 @@ data class TransferTask(
 	var lastUpdated: Long = System.currentTimeMillis(),
 	val resultUri: String? = null,
 	val directory: String? = null,
+	val seq: Long = 0L,
+	val activeOrder: Long = Long.MAX_VALUE,
 ) {
 	val finished: Boolean get() = status in setOf(TransferStatus.COMPLETED, TransferStatus.FAILED, TransferStatus.CANCELLED)
 	val progress: Float

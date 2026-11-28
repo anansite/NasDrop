@@ -617,6 +617,8 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 						error = up.error,
 						directory = up.dir,
 						lastUpdated = up.createdAt,
+						seq = up.seq,
+						activeOrder = if (up.writeOrder > 0L) up.writeOrder else Long.MAX_VALUE,
 					)
 				}
 				syncTransferTasks()
@@ -757,7 +759,11 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 					}
 					withContext(Dispatchers.Main) {
 						if (preparationVersion == version) {
-							checkingUploadMessage = "正在检查目标目录并比对同名文件…"
+							checkingUploadMessage = if (client == null) {
+								"正在连接 NAS 并检查目标目录…"
+							} else {
+								"正在检查目标目录并比对同名文件…"
+							}
 						}
 					}
 					val settings = app.prefs.current()
@@ -956,6 +962,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 
 	fun finishLocalCleanup(message: String?) {
 		pendingLocalCleanupCandidates = emptyList()
+		UploadService.cancelCompletionNotification(app)
 		if (!message.isNullOrBlank()) toast(message)
 	}
 

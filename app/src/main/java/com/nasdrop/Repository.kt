@@ -21,7 +21,10 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.net.InetAddress
+import java.net.Socket
 import java.util.concurrent.TimeUnit
+import javax.net.SocketFactory
 
 data class RouteInfo(
 	val isDirect: Boolean,     // 是否为 P2P 直连打洞或局域网直连
@@ -72,8 +75,33 @@ class Repository(private val context: Context) {
 	@Volatile
 	private var authOrigin: HttpUrl? = null
 
+	/**
+	 * 限制内核/回环 Socket 的发送缓冲区上限，避免大块数据一次性倾倒进本地缓存后
+	 * 触发虚假的 100% / "等待确认" 长时间卡顿，同时保持足够吞吐打满局域网带宽。
+	 */
+	private fun boundedSendSocketFactory(sendBufferBytes: Int = 256 * 1024): SocketFactory {
+		val base = SocketFactory.getDefault()
+		fun configure(s: Socket): Socket {
+			runCatching {
+				s.sendBufferSize = sendBufferBytes
+				s.tcpNoDelay = true
+			}
+			return s
+		}
+		return object : SocketFactory() {
+			override fun createSocket(): Socket = configure(base.createSocket())
+			override fun createSocket(host: String?, port: Int): Socket = configure(base.createSocket(host, port))
+			override fun createSocket(host: String?, port: Int, localHost: InetAddress?, localPort: Int): Socket =
+				configure(base.createSocket(host, port, localHost, localPort))
+			override fun createSocket(host: InetAddress?, port: Int): Socket = configure(base.createSocket(host, port))
+			override fun createSocket(address: InetAddress?, port: Int, localAddress: InetAddress?, localPort: Int): Socket =
+				configure(base.createSocket(address, port, localAddress, localPort))
+		}
+	}
+
 	/** 验证与放行证书的连接池隔离，关闭放行后不复用之前未校验证书的连接。 */
 	private val verifiedHttp: OkHttpClient = OkHttpClient.Builder()
+		.socketFactory(boundedSendSocketFactory())
 		.dispatcher(Dispatcher().apply {
 			maxRequests = 128
 			maxRequestsPerHost = 64

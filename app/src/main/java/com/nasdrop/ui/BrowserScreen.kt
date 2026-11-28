@@ -226,6 +226,7 @@ import com.nasdrop.RouteInfo
 import com.nasdrop.SortOrder
 import com.nasdrop.TransferStatus
 import com.nasdrop.TransferTask
+import com.nasdrop.UploadQueueOrder
 import com.nasdrop.UploadService
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.ui.platform.LocalConfiguration
@@ -268,6 +269,7 @@ fun BrowserScreen(
 	vm: BrowserViewModel,
 	mode: BrowserMode = BrowserMode.Browse,
 	lastDir: String = "",
+	showUploadFlowDialogs: Boolean = true,
 	onOpenImage: (DavEntry) -> Unit = {},
 	onOpenVideo: (DavEntry) -> Unit = {},
 	onOpenSettings: () -> Unit = {},
@@ -775,6 +777,10 @@ fun BrowserScreen(
 				PickBar(
 					path = vm.path,
 					lastDir = lastDir,
+					isPreparing = vm.checkingUploadDestination,
+					onQuickLastDir = if (lastDir.isNotBlank() && lastDir.trim('/') != vm.path.trim('/')) {
+						{ vm.open(lastDir.trim('/')) }
+					} else null,
 					onCreateFolder = { activeCreateType = CreateDialogType.Folder },
 					onConfirm = {
 						vm.rememberDir(vm.path)
@@ -826,7 +832,9 @@ fun BrowserScreen(
 
 	// ==================== 抽屉与对话框组件 ====================
 	// 涵盖上传前置校验动画、同名冲突确认、上传完成本地清理询问
-	UploadFlowDialogs(vm)
+	if (showUploadFlowDialogs) {
+		UploadFlowDialogs(vm)
+	}
 
 	if (vm.activeMemoryYearGroup != null) {
 		MemoryDetailModalSheet(
@@ -1447,6 +1455,8 @@ private fun HumanNetworkPill(routeInfo: RouteInfo, onClick: () -> Unit) {
 private fun PickBar(
 	path: String,
 	lastDir: String,
+	isPreparing: Boolean = false,
+	onQuickLastDir: (() -> Unit)? = null,
 	onCreateFolder: () -> Unit,
 	onConfirm: () -> Unit,
 ) {
@@ -1478,6 +1488,7 @@ private fun PickBar(
 				}
 				OutlinedButton(
 					onClick = onCreateFolder,
+					enabled = !isPreparing,
 					shape = RoundedCornerShape(12.dp),
 					contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
 				) {
@@ -1487,17 +1498,47 @@ private fun PickBar(
 				}
 			}
 
-			Spacer(Modifier.height(12.dp))
+			if (onQuickLastDir != null && lastDir.isNotBlank()) {
+				Spacer(Modifier.height(6.dp))
+				TextButton(
+					onClick = onQuickLastDir,
+					enabled = !isPreparing,
+					contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+					modifier = Modifier.height(28.dp),
+				) {
+					Icon(Icons.Rounded.History, contentDescription = null, modifier = Modifier.size(14.dp))
+					Spacer(Modifier.width(4.dp))
+					Text(
+						"快速跳转上次位置: /$lastDir",
+						fontSize = 12.sp,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
+				}
+			}
+
+			Spacer(Modifier.height(10.dp))
 
 			Button(
 				onClick = onConfirm,
+				enabled = !isPreparing,
 				colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
 				shape = RoundedCornerShape(14.dp),
 				modifier = Modifier.fillMaxWidth().height(46.dp),
 			) {
-				Icon(Icons.Rounded.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
-				Spacer(modifier = Modifier.width(6.dp))
-				Text("存入当前目录", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary, fontSize = 15.sp)
+				if (isPreparing) {
+					CircularProgressIndicator(
+						modifier = Modifier.size(18.dp),
+						color = MaterialTheme.colorScheme.onPrimary,
+						strokeWidth = 2.dp,
+					)
+					Spacer(modifier = Modifier.width(8.dp))
+					Text("正在准备上传…", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary, fontSize = 15.sp)
+				} else {
+					Icon(Icons.Rounded.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
+					Spacer(modifier = Modifier.width(6.dp))
+					Text("存入当前目录", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary, fontSize = 15.sp)
+				}
 			}
 		}
 	}
@@ -6229,7 +6270,7 @@ private fun TransferCenterSheet(
 		label = "batch_progress"
 	)
 
-	// 任务排布：进行中的任务严格排在最上面（按实时速率降序，速度越快越靠前），完成项整齐排到最下面
+	// 稳定排序：正在传输与等待确认在同一层级，排队项按提交序紧随其后，避免状态切换引发整行跳动
 	val visibleTasks = remember(tasks, filter) {
 		val filtered = tasks.filter {
 			when (filter) {
@@ -6239,19 +6280,7 @@ private fun TransferCenterSheet(
 				else -> true
 			}
 		}
-		filtered.sortedWith(
-			compareBy<TransferTask> { task ->
-				when (task.status) {
-					TransferStatus.RUNNING -> 0     // 🚀 正在高速传输，绝对置顶第1位！
-					TransferStatus.CONFIRMING -> 1  // 🔄 正在落盘写入存储中
-					TransferStatus.QUEUED -> 2      // ⏳ 排队等待中
-					TransferStatus.PAUSED -> 3      // ⏸️ 已暂停
-					TransferStatus.FAILED -> 4      // ❌ 失败
-					TransferStatus.CANCELLED -> 5   // ⏹️ 取消
-					TransferStatus.COMPLETED -> 6   // ✅ 已完成整齐沉底，排到最下面！
-				}
-			}.thenBy { it.id } // 关键：稳定任务顺序，绝不因为瞬时速度微调导致正在传输的任务互相交换位置抖动！
-		)
+		UploadQueueOrder.sortTransferTasks(filtered)
 	}
 	ModalBottomSheet(
 		onDismissRequest = onDismiss,
@@ -6380,19 +6409,11 @@ private fun TransferCenterSheet(
 					Text(if (tasks.isEmpty()) "暂无传输任务" else "此筛选下暂无任务", color = MaterialTheme.colorScheme.onSurfaceVariant)
 				}
 			} else {
-				val transferListState = androidx.compose.foundation.lazy.rememberLazyListState()
-				val topTaskId = visibleTasks.firstOrNull()?.id
-				LaunchedEffect(topTaskId) {
-					if (topTaskId != null && transferListState.firstVisibleItemIndex > 0) {
-						transferListState.scrollToItem(0)
-					}
-				}
-				LazyColumn(state = transferListState, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+				LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
 					items(visibleTasks, key = { it.id }) { task ->
 						val isCompleted = task.status == TransferStatus.COMPLETED
 						val terminal = task.status in finishedStates
 						Surface(
-							modifier = Modifier.animateItem(),
 							color = if (isCompleted) Color(0xFF2E7D32).copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant,
 							shape = RoundedCornerShape(10.dp),
 							border = if (isCompleted) BorderStroke(1.dp, Color(0xFF2E7D32).copy(alpha = 0.35f)) else null,
@@ -6428,7 +6449,7 @@ private fun TransferCenterSheet(
 											color = MaterialTheme.colorScheme.primary,
 										)
 									} else if (task.status == TransferStatus.CONFIRMING) {
-										Text("写入存储…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+										Text("等待确认…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
 									} else if (isCompleted) {
 										Text("✓ 完成", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
 									} else if (task.status == TransferStatus.FAILED) {
@@ -6473,29 +6494,43 @@ private fun TransferCenterSheet(
 										modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp),
 									)
 								} else if (!terminal) {
-									val animProgress by animateFloatAsState(
-										targetValue = if (task.totalBytes > 0) task.progress.coerceIn(0.01f, 1f) else 0.05f,
-										animationSpec = tween(durationMillis = 300, easing = LinearEasing),
-										label = "task_progress_${task.id}"
-									)
-									if (task.status == TransferStatus.CONFIRMING) {
+									if (task.status == TransferStatus.QUEUED) {
+										SleekLinearProgressBar(
+											progress = 0f,
+											color = MaterialTheme.colorScheme.primary,
+											trackColor = MaterialTheme.colorScheme.surfaceVariant,
+											modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp),
+										)
+									} else if (task.status == TransferStatus.PAUSED) {
+										SleekLinearProgressBar(
+											progress = if (task.totalBytes > 0) task.progress else 0f,
+											color = MaterialTheme.colorScheme.primary,
+											trackColor = MaterialTheme.colorScheme.surfaceVariant,
+											modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp),
+										)
+									} else if (task.status == TransferStatus.CONFIRMING) {
 										SleekLinearProgressBar(
 											progress = 0.99f,
 											color = MaterialTheme.colorScheme.primary,
-											modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp)
+											modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp),
 										)
 									} else if (task.status == TransferStatus.RUNNING && task.totalBytes <= 0) {
 										SleekLinearProgressBar(
 											progress = 0.5f,
 											color = MaterialTheme.colorScheme.primary,
-											modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp)
+											modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp),
 										)
 									} else {
+										val animProgress by animateFloatAsState(
+											targetValue = if (task.totalBytes > 0) task.progress.coerceIn(0.01f, 1f) else 0f,
+											animationSpec = tween(durationMillis = 300, easing = LinearEasing),
+											label = "task_progress_${task.id}",
+										)
 										SleekLinearProgressBar(
 											progress = animProgress,
 											color = MaterialTheme.colorScheme.primary,
 											trackColor = MaterialTheme.colorScheme.surfaceVariant,
-											modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp)
+											modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp),
 										)
 									}
 								}

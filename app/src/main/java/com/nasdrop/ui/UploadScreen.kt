@@ -1,18 +1,25 @@
 package com.nasdrop.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -26,9 +33,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nasdrop.UploadQueueOrder
 import com.nasdrop.UploadTask
 import com.nasdrop.Uploads
 
@@ -75,33 +84,51 @@ fun UploadProgressScreen(count: Int, batchId: String, interrupted: Boolean = fal
 			)
 
 			val sortedTasks = remember(tasks) {
-				tasks.sortedWith(
-					compareBy<UploadTask> { task ->
-						when {
-							task.started && !task.done -> 0   // 进行中置顶
-							task.bodySent && !task.done -> 1  // 写入存储中
-							!task.started && !task.done -> 2  // 排队等待中
-							task.error != null -> 3           // 失败
-							task.cancelled -> 4               // 取消
-							task.done -> 5                    // 完成排到最下面
-							else -> 6
-						}
-					}.thenByDescending { it.createdAt }
-				)
+				UploadQueueOrder.sortUploadTasks(tasks)
 			}
 
-			val uploadListState = androidx.compose.foundation.lazy.rememberLazyListState()
-			val topUploadId = sortedTasks.firstOrNull()?.id
-			androidx.compose.runtime.LaunchedEffect(topUploadId) {
-				if (topUploadId != null && uploadListState.firstVisibleItemIndex > 0) {
-					uploadListState.scrollToItem(0)
+			if (!interrupted && sortedTasks.isEmpty()) {
+				Column(
+					modifier = Modifier.fillMaxSize(),
+					verticalArrangement = Arrangement.Center,
+					horizontalAlignment = Alignment.CenterHorizontally,
+				) {
+					CircularProgressIndicator(modifier = Modifier.size(36.dp), strokeWidth = 3.dp)
+					Spacer(Modifier.height(12.dp))
+					Text(
+						"正在连接 NAS 并初始化队列…",
+						style = MaterialTheme.typography.bodyMedium,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+					)
+				}
+			} else {
+				LazyColumn(modifier = Modifier.fillMaxSize()) {
+					items(sortedTasks, key = { it.id }) { task ->
+						TaskRow(task)
+					}
 				}
 			}
-			LazyColumn(state = uploadListState, modifier = Modifier.fillMaxSize()) {
-				items(sortedTasks, key = { it.id }) { task ->
-					androidx.compose.foundation.layout.Box(Modifier.animateItem()) { TaskRow(task) }
-				}
-			}
+		}
+	}
+}
+
+/** 静态确定进度条：避免 Material3 默认停点或排队状态下出现动画跳动。 */
+@Composable
+private fun StaticQueueProgressBar(progress: Float, modifier: Modifier = Modifier) {
+	val fraction = progress.coerceIn(0f, 1f)
+	Box(
+		modifier = modifier
+			.clip(RoundedCornerShape(50))
+			.background(MaterialTheme.colorScheme.surfaceVariant),
+	) {
+		if (fraction > 0f) {
+			Box(
+				modifier = Modifier
+					.fillMaxHeight()
+					.fillMaxWidth(fraction)
+					.clip(RoundedCornerShape(50))
+					.background(MaterialTheme.colorScheme.primary),
+			)
 		}
 	}
 }
@@ -138,19 +165,22 @@ private fun TaskRow(task: UploadTask) {
 					else -> {
 						Text(
 							when {
-								task.bodySent -> "正在写入存储…"
+								task.bodySent -> "等待服务端确认…"
 								!task.started -> "排队等待中"
 								else -> "正在上传 ${if (task.total > 0) "${(task.progress * 100).toInt()}%" else ""}"
 							},
 							style = MaterialTheme.typography.bodySmall,
 							color = MaterialTheme.colorScheme.onSurfaceVariant,
 						)
-						if (task.bodySent) {
-							LinearProgressIndicator(progress = { 0.99f }, modifier = Modifier.fillMaxWidth().height(4.dp))
+						Spacer(Modifier.height(4.dp))
+						if (!task.started) {
+							StaticQueueProgressBar(progress = 0f, modifier = Modifier.fillMaxWidth().height(4.dp))
+						} else if (task.bodySent) {
+							StaticQueueProgressBar(progress = 0.99f, modifier = Modifier.fillMaxWidth().height(4.dp))
 						} else if (task.total <= 0) {
 							LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp))
 						} else {
-							LinearProgressIndicator(progress = { task.progress }, modifier = Modifier.fillMaxWidth().height(4.dp))
+							StaticQueueProgressBar(progress = task.progress, modifier = Modifier.fillMaxWidth().height(4.dp))
 						}
 					}
 			}

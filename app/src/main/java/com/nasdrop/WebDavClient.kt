@@ -142,6 +142,8 @@ class WebDavClient(
 	private val signUrls = java.util.concurrent.ConcurrentHashMap<String, String>()
 	/** 记录加载失败的缩略图 key，避免每次滑动重复尝试拉取已失效的缩略图 */
 	private val failedThumbs = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+	/** 本次会话已确认存在的远端父目录，避免并发上传重复逐级 MKCOL 阻塞。 */
+	private val verifiedDirs = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
 	fun markThumbnailFailed(path: String) {
 		val key = path.trim('/')
@@ -1253,6 +1255,7 @@ class WebDavClient(
 			override fun writeTo(sink: BufferedSink) {
 				val input = openInput()
 				var sent = 0L
+				var unflushed = 0L
 				input.use { ins ->
 					val buf = ByteArray(64 * 1024)
 					var lastReportTime = 0L
@@ -1261,11 +1264,13 @@ class WebDavClient(
 						val n = ins.read(buf)
 						if (n <= 0) break
 						sink.write(buf, 0, n)
-						// 强制 flush 到底层 Socket，利用阻塞 I/O 形成背压：
-						// 当网络较慢时阻塞等待网络 ACK 腾出窗口，确保进度与物理网速 100% 同步
-						sink.flush()
 						sent += n
+						unflushed += n
 						written.addAndGet(n.toLong())
+						if (unflushed >= 256 * 1024) {
+							sink.flush()
+							unflushed = 0L
+						}
 						val now = System.currentTimeMillis()
 						if (now - lastReportTime >= 100L || (total > 0 && sent >= total)) {
 							lastReportTime = now
@@ -1341,7 +1346,7 @@ class WebDavClient(
 				// 已经传了实打实的数据再断：重传等于让用户重新等一遍，不如如实报错。
 				throw IOException("传输中断（已发送 ${first.written / 1024 / 1024}MB），请重试", first.error)
 			}
-			ensureParentDirs(remoteDir, onCall)
+			ensureParentDirs(remoteDir, onCall, forceRefresh = true)
 			val second = putOnce()
 			if (!second.ok) {
 				if (second.code == 0) throw IOException("上传连接失败，请重试", second.error)
@@ -1354,16 +1359,22 @@ class WebDavClient(
 	private class PutResult(val ok: Boolean, val written: Long, val code: Int, val error: IOException? = null)
 
 	/** 逐级创建远端父目录：MKCOL 每级路径，405（已存在）/409 都算成功。空目录直接返回。 */
-	private fun ensureParentDirs(remoteDir: String, onCall: (Call) -> Unit = {}) {
-		val parts = remoteDir.trim('/').split('/').filter { it.isNotEmpty() }
+	private fun ensureParentDirs(remoteDir: String, onCall: (Call) -> Unit = {}, forceRefresh: Boolean = false) {
+		val cleanDir = remoteDir.trim('/')
+		if (cleanDir.isEmpty()) return
+		if (!forceRefresh && cleanDir in verifiedDirs) return
+		val parts = cleanDir.split('/').filter { it.isNotEmpty() }
 		var cur = ""
 		for (part in parts) {
 			cur = if (cur.isEmpty()) part else "$cur/$part"
+			if (!forceRefresh && cur in verifiedDirs) continue
 			try {
 				exec("MKCOL", urlFor(cur, dir = true), onCall)
+				verifiedDirs.add(cur)
 			} catch (e: DavException) {
 				// 405 Method Not Allowed = 目录已存在；部分实现返回 409。都视为已就绪。
 				if (e.code != 405 && e.code != 409) throw e
+				verifiedDirs.add(cur)
 			}
 		}
 	}

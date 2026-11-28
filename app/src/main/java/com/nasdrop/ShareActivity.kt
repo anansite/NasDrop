@@ -23,6 +23,9 @@ import com.nasdrop.ui.NasDropTheme
 import com.nasdrop.ui.UploadFlowDialogs
 import com.nasdrop.ui.UploadProgressScreen
 import com.nasdrop.ui.SettingsScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 相册/微信/文件管理器里「分享 → 存入 NasDrop」的落地页。
@@ -43,12 +46,6 @@ class ShareActivity : ComponentActivity() {
 		if (uris.isEmpty()) {
 			finish()
 			return
-		}
-		// 部分来源支持持久化授权，能拿到就拿到，拿不到靠下面的进度页保活
-		uris.forEach {
-			runCatching {
-				contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-			}
 		}
 		setContent { ShareFlow() }
 	}
@@ -71,7 +68,17 @@ class ShareActivity : ComponentActivity() {
 				vm.currentTab = MainTab.Files
 				val s = app.prefs.current()
 				lastDir = s.lastDir
-				vm.open("")
+				// BrowserViewModel init 已触发一次 open("")；仅在当前尚未加载根目录时再发起，避免取消首次冷连接
+				if (vm.path.isNotEmpty() || (!vm.loading && vm.entries.isEmpty())) {
+					vm.open("")
+				}
+				launch(Dispatchers.IO) {
+					uris.forEach {
+						runCatching {
+							contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+						}
+					}
+				}
 			}
 			LaunchedEffect(vm.shareUploadBatchId) {
 				vm.shareUploadBatchId?.let { id ->
@@ -126,6 +133,7 @@ class ShareActivity : ComponentActivity() {
 					vm = vm,
 					mode = BrowserMode.Pick,
 					lastDir = lastDir,
+					showUploadFlowDialogs = false,
 					onOpenSettings = { showSettings = true },
 					onLogin = {
 						val url = vm.loginUrl()

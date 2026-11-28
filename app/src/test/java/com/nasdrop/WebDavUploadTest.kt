@@ -69,4 +69,33 @@ class WebDavUploadTest {
 			server.shutdown()
 		}
 	}
+
+	@Test
+	fun largeUploadsToSameFolderCacheVerifiedParentMkcol() {
+		val mkcolCount = java.util.concurrent.atomic.AtomicInteger(0)
+		val server = MockWebServer()
+		server.dispatcher = object : Dispatcher() {
+			override fun dispatch(request: RecordedRequest): MockResponse {
+				return when (request.method) {
+					"MKCOL" -> {
+						mkcolCount.incrementAndGet()
+						MockResponse().setResponseCode(405)
+					}
+					"PUT" -> MockResponse().setResponseCode(201)
+					else -> MockResponse().setResponseCode(200)
+				}
+			}
+		}
+		server.start()
+		try {
+			val client = WebDavClient(server.url("/dav/"), OkHttpClient())
+			val body = ByteArray(8 * 1024 * 1024)
+			client.uploadStream("a.mp4", body.size.toLong(), "video/mp4", "Photos/Trip", { ByteArrayInputStream(body) }, { _, _ -> })
+			client.uploadStream("b.mp4", body.size.toLong(), "video/mp4", "Photos/Trip", { ByteArrayInputStream(body) }, { _, _ -> })
+			// 第一次逐级 MKCOL (Photos, Photos/Trip = 2次)，第二次命中缓存不再发 MKCOL
+			assertEquals(2, mkcolCount.get())
+		} finally {
+			server.shutdown()
+		}
+	}
 }

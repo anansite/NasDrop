@@ -32,6 +32,7 @@ data class UploadTask(
 	val cancelled: Boolean = false,
 	val postProcessed: Boolean = false,
 	val writeOrder: Long = 0L,
+	val seq: Long = 0L,
 	val ownerKey: String = "",
 ) {
 	val progress: Float
@@ -51,6 +52,7 @@ object Uploads {
 	val tasks: StateFlow<List<UploadTask>> = _tasks
 	private val calls = ConcurrentHashMap<String, Call>()
 	private val writeSequence = AtomicLong()
+	private val taskSequence = AtomicLong()
 
 	/** 同路径串行写入时记录实际次序，合并进度快照不能把较早内容当成最终覆盖。 */
 	fun markStarted(id: String, total: Long) {
@@ -66,7 +68,7 @@ object Uploads {
 		batchId: String = UUID.randomUUID().toString(),
 	): List<UploadTask> {
 		val added = items.map { (uri, name) ->
-			UploadTask(uri = uri, name = name, batchId = batchId, dir = dir.trim('/'))
+			UploadTask(uri = uri, name = name, batchId = batchId, dir = dir.trim('/'), seq = taskSequence.incrementAndGet())
 		}
 		// 若已有任务均已结束（即上一批次已全部完成），新批次开始时清理上一批次历史，避免百分比和列表叠加
 		val existing = if (_tasks.value.isNotEmpty() && _tasks.value.all { it.done }) {

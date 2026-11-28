@@ -269,22 +269,26 @@ class UploadService : Service() {
 
 	private fun finishOnMain(ok: Int, failed: Int, batchId: String, cancelled: Int, stopService: Boolean = true) {
 		Log.i("UploadService", "批次结束 batch=$batchId success=$ok failed=$failed cancelled=$cancelled activeBatches=$activeBatches stopService=$stopService")
-		val text = when {
-			cancelled > 0 -> "$ok 个成功，$failed 个失败，$cancelled 个已取消"
-			failed == 0 -> "$ok 个文件已存入"
-			ok == 0 -> "上传失败，共 $failed 个"
-			else -> "$ok 个成功，$failed 个失败"
+		val appInForeground = (applicationContext as? NasDropApp)?.isInForeground == true
+		val shouldNotify = !appInForeground || failed > 0 || cancelled > 0
+		if (shouldNotify) {
+			val text = when {
+				cancelled > 0 -> "$ok 个成功，$failed 个失败，$cancelled 个已取消"
+				failed == 0 -> "$ok 个文件已存入"
+				ok == 0 -> "上传失败，共 $failed 个"
+				else -> "$ok 个成功，$failed 个失败"
+			}
+			val largeIcon = this.largeIcon
+			val n = NotificationCompat.Builder(this, CHANNEL)
+				.setSmallIcon(R.drawable.ic_notification)
+				.apply { if (largeIcon != null) setLargeIcon(largeIcon) }
+				.setContentTitle("NasDrop")
+				.setContentText(text)
+				.setAutoCancel(true)
+				.setContentIntent(openApp())
+				.build()
+			manager().notify(NOTIF_ID + 1, n)
 		}
-		val largeIcon = this.largeIcon
-		val n = NotificationCompat.Builder(this, CHANNEL)
-			.setSmallIcon(R.drawable.ic_notification)
-			.apply { if (largeIcon != null) setLargeIcon(largeIcon) }
-			.setContentTitle("NasDrop")
-			.setContentText(text)
-			.setAutoCancel(true)
-			.setContentIntent(openApp())
-			.build()
-		manager().notify(NOTIF_ID + 1, n)
 		if (stopService) {
 			releaseBatch()
 		}
@@ -374,6 +378,12 @@ class UploadService : Service() {
 			}
 			ContextCompat.startForegroundService(context, i)
 			return batchId
+		}
+
+		fun cancelCompletionNotification(context: Context) {
+			runCatching {
+				context.getSystemService(NotificationManager::class.java)?.cancel(NOTIF_ID + 1)
+			}
 		}
 	}
 }
