@@ -680,36 +680,6 @@ class DlnaManager private constructor(
 		return soapClient.newCall(req).execute()
 	}
 
-	private fun makeSetUriXml(url: String, title: String): String {
-		val safeUrl = escapeXml(url)
-		val safeTitle = escapeXml(title)
-		val mime = when (title.substringAfterLast('.', "").lowercase(Locale.ROOT)) {
-			"mp4", "m4v" -> "video/mp4"
-			"mkv" -> "video/x-matroska"
-			"mov" -> "video/quicktime"
-			"avi" -> "video/x-msvideo"
-			"webm" -> "video/webm"
-			else -> "video/*"
-		}
-		val didl = "&lt;DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"&gt;" +
-			"&lt;item id=\"0\" parentID=\"-1\" restricted=\"1\"&gt;" +
-			"&lt;dc:title&gt;$safeTitle&lt;/dc:title&gt;" +
-			"&lt;upnp:class&gt;object.item.videoItem&lt;/upnp:class&gt;" +
-			"&lt;res protocolInfo=\"http-get:*:$mime:*\"&gt;$safeUrl&lt;/res&gt;" +
-			"&lt;/item&gt;&lt;/DIDL-Lite&gt;"
-
-		return """<?xml version="1.0" encoding="utf-8"?>
-<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-  <s:Body>
-    <u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
-      <InstanceID>0</InstanceID>
-      <CurrentURI>$safeUrl</CurrentURI>
-      <CurrentURIMetaData>$didl</CurrentURIMetaData>
-    </u:SetAVTransportURI>
-  </s:Body>
-</s:Envelope>"""
-	}
-
 	private fun makePlayXml(): String {
 		return """<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
@@ -744,14 +714,6 @@ class DlnaManager private constructor(
 </s:Envelope>"""
 	}
 
-	private fun escapeXml(str: String): String {
-		return str.replace("&", "&amp;")
-			.replace("<", "&lt;")
-			.replace(">", "&gt;")
-			.replace("\"", "&quot;")
-			.replace("'", "&apos;")
-	}
-
 	companion object {
 		@Volatile
 		private var instance: DlnaManager? = null
@@ -763,5 +725,55 @@ class DlnaManager private constructor(
 					context.app.repo.http()
 				).also { instance = it }
 			}
+
+		private fun escapeXml(str: String): String {
+			return str.replace("&", "&amp;")
+				.replace("<", "&lt;")
+				.replace(">", "&gt;")
+				.replace("\"", "&quot;")
+				.replace("'", "&apos;")
+		}
+
+		internal fun makeSetUriXml(url: String, title: String): String {
+			val safeUrl = escapeXml(url)
+			val safeTitle = escapeXml(title)
+			val ext = title.substringAfterLast('.', "").lowercase(Locale.ROOT)
+			val isAudio = ext in DavEntry.AUDIOS
+			val mime = when (ext) {
+				"mp4", "m4v" -> "video/mp4"
+				"mkv" -> "video/x-matroska"
+				"mov" -> "video/quicktime"
+				"avi" -> "video/x-msvideo"
+				"webm" -> "video/webm"
+				"mp3", "mp2" -> "audio/mpeg"
+				"m4a", "aac", "alac" -> "audio/mp4"
+				"wav" -> "audio/wav"
+				"flac" -> "audio/flac"
+				"ogg", "opus", "spx" -> "audio/ogg"
+				"wma" -> "audio/x-ms-wma"
+				"amr", "3ga" -> "audio/amr"
+				"mka" -> "audio/x-matroska"
+				"aiff", "aif" -> "audio/aiff"
+				else -> if (isAudio) "audio/*" else "video/*"
+			}
+			val upnpClass = if (isAudio) "object.item.audioItem.musicTrack" else "object.item.videoItem"
+			val didl = "&lt;DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"&gt;" +
+				"&lt;item id=\"0\" parentID=\"-1\" restricted=\"1\"&gt;" +
+				"&lt;dc:title&gt;$safeTitle&lt;/dc:title&gt;" +
+				"&lt;upnp:class&gt;$upnpClass&lt;/upnp:class&gt;" +
+				"&lt;res protocolInfo=\"http-get:*:$mime:*\"&gt;$safeUrl&lt;/res&gt;" +
+				"&lt;/item&gt;&lt;/DIDL-Lite&gt;"
+
+			return """<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+      <InstanceID>0</InstanceID>
+      <CurrentURI>$safeUrl</CurrentURI>
+      <CurrentURIMetaData>$didl</CurrentURIMetaData>
+    </u:SetAVTransportURI>
+  </s:Body>
+</s:Envelope>"""
+		}
 	}
 }

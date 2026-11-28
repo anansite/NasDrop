@@ -32,14 +32,16 @@ import com.nasdrop.ui.ImageViewer
 import com.nasdrop.ui.NasDropTheme
 import com.nasdrop.ui.SettingsScreen
 import com.nasdrop.ui.UpdateDialog
+import com.nasdrop.ui.AudioPlayer
 import com.nasdrop.ui.VideoPlayer
 
-/** 极简路由。只有四个页面，不值得为它引入 navigation-compose。 */
+/** 极简路由。只有五个页面，不值得为它引入 navigation-compose。 */
 private sealed interface Route {
 	data object Browser : Route
 	data object Settings : Route
 	data class Images(val list: List<DavEntry>, val index: Int) : Route
 	data class Video(val entry: DavEntry) : Route
+	data class Audio(val entry: DavEntry, val playlist: List<DavEntry> = listOf(entry)) : Route
 }
 
 /** 主浏览入口；处理分享完成后的目录跳转，以及通知栏进入传输中心的请求。 */
@@ -160,6 +162,7 @@ class MainActivity : ComponentActivity() {
 						route = Route.Images(album, index)
 					},
 					onOpenVideo = { entry -> route = Route.Video(entry) },
+					onOpenAudio = { entry -> route = Route.Audio(entry, vm.audioPlaylistFor(entry)) },
 					onOpenSettings = { vm.currentTab = MainTab.Settings },
 					onLogin = login,
 					transferRequest = transferRequest,
@@ -209,6 +212,16 @@ class MainActivity : ComponentActivity() {
 							onDeleteAudio = { entry, cb -> vm.deletePhotoVoiceNote(entry.path, cb) },
 							onSaveMemo = { entry, memo -> vm.savePhotoMemo(entry.path, memo) },
 							onDeleteMemo = { entry -> vm.deletePhotoMemo(entry.path) },
+						)
+					}
+					is Route.Audio -> {
+						AudioPlayer(
+							entry = r.entry,
+							playlist = r.playlist,
+							urlOf = { path -> vm.directUrlFor(path) },
+							onBack = { route = Route.Browser },
+							onSaveToMusic = { entry, cb -> vm.saveAudioToMusic(entry, cb) },
+							onOpenExternal = { entry -> vm.openWithExternalViewer(context, entry) },
 						)
 					}
 				}

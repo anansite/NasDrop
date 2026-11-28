@@ -162,6 +162,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var allVideos by mutableStateOf<List<DavEntry>>(emptyList())
 		private set
 
+	/** 全局聚合音频池（故事相册、音乐等音频文件） */
+	var allAudios by mutableStateOf<List<DavEntry>>(emptyList())
+		private set
+
 	/** 首页「近期精彩动态」专属列表：按服务端上传/修改时间倒序拉取最新 12 条 */
 	var homeRecentMedia by mutableStateOf<List<DavEntry>>(emptyList())
 		private set
@@ -214,11 +218,14 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	/** 媒体筛选模式：全部、仅照片、仅视频、带语音/备忘 */
 	var mediaFilterType by mutableStateOf(MediaFilterType.All)
 
-	/** 当前所选子相册（或全部）照片与视频集合：全面整合照片与视频，按时间倒序统一呈现在相册中 */
+	/** 当前所选子相册（或全部）媒体集合：全局时光轴保留照片与视频；具体相册内同时整合音频故事（如故事相册） */
 	val currentAlbumPhotos: List<DavEntry>
 		get() {
-			val allMedia = (allPhotos + allVideos).filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }.distinctBy { it.path }
-			val filtered = if (selectedAlbumPath.isBlank() || selectedAlbumPath == "__ALL_FOLDERS__") allMedia
+			val inSpecificAlbum = selectedAlbumPath.isNotBlank() && selectedAlbumPath != "__ALL_FOLDERS__"
+			val allMedia = (if (inSpecificAlbum) (allPhotos + allVideos + allAudios) else (allPhotos + allVideos))
+				.filterNot { it.name.startsWith(".") || it.path.contains(".thumbnails") }
+				.distinctBy { it.path }
+			val filtered = if (!inSpecificAlbum) allMedia
 			else allMedia.filter { isPathWithin(it.path, selectedAlbumPath) }
 			val typeFiltered = when (mediaFilterType) {
 				MediaFilterType.All -> filtered
@@ -512,6 +519,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		if (all.isEmpty()) return
 		val photos = all.filter { it.isImage }
 		val videos = all.filter { it.isVideo }
+		val audios = all.filter { it.isAudio }
 		val albumDirs = all.map { it.path.substringBeforeLast('/', "") }
 			.filter { it.isNotBlank() }
 			.distinct()
@@ -521,6 +529,7 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			}
 		allPhotos = (allPhotos + photos).distinctBy { it.path }
 		allVideos = (allVideos + videos).distinctBy { it.path }
+		allAudios = (allAudios + audios).distinctBy { it.path }
 		if (albumDirs.isNotEmpty()) {
 			val defaultAlbum = DavEntry(name = "默认相册", path = "Photos/默认相册", isDir = true, modified = 0L)
 			val combined = (listOf(defaultAlbum) + allAlbumFolders + albumDirs).filterNot {
@@ -1666,6 +1675,40 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	}
 
 	/**
+	 * 将远端音频保存到手机本地音乐目录 (Music/NasDrop) 并通知系统媒体库刷新
+	 */
+	fun saveAudioToMusic(entry: DavEntry, onResult: (Boolean, String) -> Unit) {
+		viewModelScope.launch(Dispatchers.IO) {
+			try {
+				val cli = client ?: clientOf(app.prefs.current())
+				val musicDir = android.os.Environment.getExternalStoragePublicDirectory(
+					android.os.Environment.DIRECTORY_MUSIC
+				).resolve("NasDrop")
+				if (!musicDir.exists()) musicDir.mkdirs()
+
+				val destFile = musicDir.resolve(entry.name)
+				destFile.outputStream().use { fos ->
+					cli.download(entry.path, fos) { _, _ -> }
+				}
+				if (destFile.exists() && destFile.length() > 0) {
+					android.media.MediaScannerConnection.scanFile(
+						app,
+						arrayOf(destFile.absolutePath),
+						null,
+					) { _, _ -> }
+					withContext(Dispatchers.Main) {
+						onResult(true, "已保存至音乐目录 Music/NasDrop")
+					}
+				} else {
+					withContext(Dispatchers.Main) { onResult(false, "下载失败") }
+				}
+			} catch (e: Exception) {
+				withContext(Dispatchers.Main) { onResult(false, "保存失败：${e.message}") }
+			}
+		}
+	}
+
+	/**
 	 * 将图片下载至共享临时缓存，准备进行系统微信/QQ等第三方分享
 	 */
 	fun prepareShareImage(entry: DavEntry, onResult: (java.io.File?) -> Unit) {
@@ -1726,6 +1769,17 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			filteredEntries = filteredEntries,
 			allPhotos = allPhotos,
 			allVideos = allVideos,
+		)
+
+	fun audioPlaylistFor(entry: DavEntry): List<DavEntry> =
+		resolveAudioPlaylist(
+			entry = entry,
+			currentTab = currentTab,
+			activePhotoGroupId = activePhotoGroupId,
+			photoGroups = photoGroups,
+			photoTimelineGroups = photoTimelineGroups,
+			filteredEntries = filteredEntries,
+			allAudios = allAudios,
 		)
 
 	/** 手动触发加速直连，返回打洞结果并在成功后自动刷新 */
@@ -2796,11 +2850,23 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		timelineLoadingMore = true
 		try {
 			val cfg = app.prefs.current()
-			val page = withContext(Dispatchers.IO) {
-				clientOf(cfg).fetchServerTimelinePage(limit = 120, offset = offset, dir = cleanDir)
-			} ?: return
-			val newPhotos = page.items.filter { it.isImage }
-			val newVideos = page.items.filter { it.isVideo }
+			val (page, davItems) = withContext(Dispatchers.IO) {
+				val c = clientOf(cfg)
+				val p = c.fetchServerTimelinePage(limit = 120, offset = offset, dir = cleanDir)
+				// 进入具体子相册（如故事相册 Photos/故事）首页时，补充读取 WebDAV 目录内尚未入库的音频/媒体，
+				// 确保 .m4a/.mp3 等故事文件即使服务端尚未重建索引也能立即可见与播放。
+				val dav = if (reset && cleanDir.isNotBlank()) {
+					runCatching {
+						c.list(cleanDir).filter { !it.isDir && !it.name.startsWith(".") && (it.isImage || it.isVideo || it.isAudio) }
+					}.getOrDefault(emptyList())
+				} else emptyList()
+				p to dav
+			}
+			val combined = ((page?.items ?: emptyList()) + davItems).distinctBy { it.path }
+			if (page == null && combined.isEmpty()) return
+			val newPhotos = combined.filter { it.isImage }
+			val newVideos = combined.filter { it.isVideo }
+			val newAudios = combined.filter { it.isAudio }
 			withContext(Dispatchers.Main) {
 				if (reset && cleanDir.isEmpty()) {
 					allPhotos = newPhotos.distinctBy { it.path }
@@ -2808,9 +2874,15 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				} else {
 					allPhotos = (allPhotos + newPhotos).distinctBy { it.path }
 					allVideos = (allVideos + newVideos).distinctBy { it.path }
+					allAudios = (allAudios + newAudios).distinctBy { it.path }
 				}
-				albumPageOffsets[cleanDir] = offset + page.items.size
-				albumHasMoreMap[cleanDir] = page.hasMore
+				if (page != null) {
+					albumPageOffsets[cleanDir] = offset + page.items.size
+					albumHasMoreMap[cleanDir] = page.hasMore
+				} else {
+					albumPageOffsets[cleanDir] = combined.size
+					albumHasMoreMap[cleanDir] = false
+				}
 			}
 		} finally {
 			timelineLoadingMore = false
@@ -3362,6 +3434,10 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 			withContext(Dispatchers.Main) {
 				allPhotos = page.items.filter { it.isImage }.distinctBy { it.path }
 				allVideos = page.items.filter { it.isVideo }.distinctBy { it.path }
+				val pageAudios = page.items.filter { it.isAudio }
+				if (pageAudios.isNotEmpty()) {
+					allAudios = (allAudios + pageAudios).distinctBy { it.path }
+				}
 				albumPageOffsets.clear()
 				albumHasMoreMap.clear()
 				albumPageOffsets[""] = page.items.size
@@ -3911,4 +3987,33 @@ internal fun classifyRemoteUploadConflict(
 		return BrowserViewModel.UploadConflictKind.DIFFERENT_CONTENT
 	}
 	return BrowserViewModel.UploadConflictKind.IDENTICAL
+}
+
+internal fun resolveAudioPlaylist(
+	entry: DavEntry,
+	currentTab: MainTab,
+	activePhotoGroupId: String?,
+	photoGroups: List<PhotoGroup>,
+	photoTimelineGroups: List<TimelineGroup>,
+	filteredEntries: List<DavEntry>,
+	allAudios: List<DavEntry>,
+): List<DavEntry> {
+	val groupAudios = activePhotoGroupId?.let { gid ->
+		val group = photoGroups.firstOrNull { it.id == gid } ?: return@let null
+		val audioMap = (filteredEntries + photoTimelineGroups.flatMap { it.items } + allAudios)
+			.distinctBy { it.path }
+			.associateBy { it.path }
+		group.items.mapNotNull { audioMap[it] }.filter { it.isAudio }
+	}?.takeIf { it.any { item -> item.path == entry.path } }
+	if (!groupAudios.isNullOrEmpty()) return groupAudios
+
+	val list = when (currentTab) {
+		MainTab.Files -> filteredEntries.filter { it.isAudio }
+		MainTab.Photos -> photoTimelineGroups.flatMap { it.items }.filter { it.isAudio }
+		else -> {
+			val dir = entry.path.substringBeforeLast('/', "")
+			allAudios.filter { it.isAudio && it.path.substringBeforeLast('/', "") == dir }
+		}
+	}
+	return if (list.any { it.path == entry.path }) list else listOf(entry)
 }

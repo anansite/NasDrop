@@ -177,8 +177,28 @@ import com.nasdrop.hasMemo
 import com.nasdrop.memoText
 import com.nasdrop.audioDurationText
 import com.nasdrop.photoMeta
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.rounded.CameraAlt
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Place
+import androidx.compose.material.icons.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.style.TextAlign
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import com.nasdrop.MediaExifHelper
 import com.nasdrop.MediaExifData
 import com.nasdrop.NasDb
@@ -1762,36 +1782,14 @@ fun VideoPlayer(
 	var showResumeTip by remember { mutableStateOf(savedProgress > 3000L) }
 
 	val player = remember(url) {
-		val factory = DefaultMediaSourceFactory(context)
-			.setDataSourceFactory(VideoCacheManager.createDataSourceFactory(context, http))
-		// 缓冲深度与恢复调优：配合 256MB LRU 磁盘缓存，起播门槛拉到 1.5s 消除饥饿卡顿，
-		// 恢复门槛 3s，最大缓冲深度拉到 60s，并保留 15s 后向缓冲（回退拖动秒开无网络请求）
-		val loadControl = DefaultLoadControl.Builder()
-			.setBufferDurationsMs(
-				15_000,   // minBufferMs (15s)
-				60_000,   // maxBufferMs (60s)
-				1_500,    // bufferForPlaybackMs (1.5s 安全起播)
-				3_000,    // bufferForPlaybackAfterRebufferMs (3s 稳定恢复)
-			)
-			.setBackBuffer(15_000, true)
-			.setPrioritizeTimeOverSizeThresholds(true)
-			.build()
-
-		val renderersFactory = DefaultRenderersFactory(context)
-			.setEnableDecoderFallback(true)
-
-		ExoPlayer.Builder(context, renderersFactory)
-			.setMediaSourceFactory(factory)
-			.setLoadControl(loadControl)
-			.build()
-			.apply {
-				playWhenReady = true
-				setMediaItem(MediaItem.fromUri(url ?: ""))
-				if (savedProgress > 3000L) {
-					seekTo(savedProgress)
-				}
-				prepare()
+		createConfiguredExoPlayer(context, http).apply {
+			playWhenReady = true
+			setMediaItem(MediaItem.fromUri(url ?: ""))
+			if (savedProgress > 3000L) {
+				seekTo(savedProgress)
 			}
+			prepare()
+		}
 	}
 
 	val togglePlayPause: () -> Unit = {
@@ -2542,281 +2540,16 @@ fun VideoPlayer(
 
 		// 无线投屏与串流直链中心底部抽屉
 		if (showCastSheet) {
-			val dlnaManager = remember { DlnaManager.getInstance(context) }
-			val dlnaDevices by dlnaManager.devices.collectAsState()
-			val isDlnaSearching by dlnaManager.isSearching.collectAsState()
-			val activeDlnaDevice by dlnaManager.activeDevice.collectAsState()
-			val dlnaPlaybackState by dlnaManager.playbackState.collectAsState()
-			val dlnaStatusMessage by dlnaManager.statusMessage.collectAsState()
-			val castScope = rememberCoroutineScope()
-
-			LaunchedEffect(Unit) {
-				dlnaManager.searchDevices()
-			}
-
-			ModalBottomSheet(
-				onDismissRequest = { showCastSheet = false },
-				containerColor = MaterialTheme.colorScheme.surface,
-			) {
-				val scrollState = rememberScrollState()
-				Column(
-					modifier = Modifier
-						.fillMaxWidth()
-						.verticalScroll(scrollState)
-						.padding(horizontal = 24.dp)
-						.padding(bottom = 36.dp),
-					verticalArrangement = Arrangement.spacedBy(16.dp),
-				) {
-					// 顶部标题栏 + 状态与关闭
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.SpaceBetween,
-					) {
-						Row(
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(10.dp),
-						) {
-							Surface(
-								shape = CircleShape,
-								color = MaterialTheme.colorScheme.primaryContainer,
-								modifier = Modifier.size(36.dp),
-							) {
-								Box(contentAlignment = Alignment.Center) {
-									Icon(
-										Icons.Rounded.Cast,
-										contentDescription = null,
-										tint = MaterialTheme.colorScheme.onPrimaryContainer,
-										modifier = Modifier.size(20.dp),
-									)
-								}
-							}
-							Column {
-								Text("DLNA 电视投屏", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-								Text(
-									text = dlnaStatusMessage.ifBlank { "局域网智能电视 · 盒子 · 投影仪直投" },
-									style = MaterialTheme.typography.labelSmall,
-									color = MaterialTheme.colorScheme.onSurfaceVariant,
-								)
-							}
-						}
-						IconButton(onClick = { showCastSheet = false }) {
-							Icon(Icons.Rounded.Close, contentDescription = "关闭")
-						}
-					}
-
-					// 投屏中状态与大屏播控卡片（如果有设备正在投屏）
-					if (activeDlnaDevice != null) {
-						Surface(
-							shape = RoundedCornerShape(16.dp),
-							color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-							border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
-							modifier = Modifier.fillMaxWidth(),
-						) {
-							Column(
-								modifier = Modifier.padding(16.dp),
-								verticalArrangement = Arrangement.spacedBy(10.dp),
-							) {
-								Row(
-									modifier = Modifier.fillMaxWidth(),
-									verticalAlignment = Alignment.CenterVertically,
-									horizontalArrangement = Arrangement.SpaceBetween,
-								) {
-									Row(
-										verticalAlignment = Alignment.CenterVertically,
-										horizontalArrangement = Arrangement.spacedBy(8.dp),
-									) {
-										Icon(Icons.Rounded.Tv, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-										Column {
-											Text(
-												text = activeDlnaDevice?.name ?: "已连接电视",
-												style = MaterialTheme.typography.titleSmall,
-												fontWeight = FontWeight.Bold,
-											)
-											Text(
-												text = when (dlnaPlaybackState) {
-													DlnaPlaybackState.CONNECTING -> "正在投屏连接中…"
-													DlnaPlaybackState.PLAYING -> "大屏正在播放中"
-													DlnaPlaybackState.PAUSED -> "大屏已暂停"
-													DlnaPlaybackState.ERROR -> "投屏异常"
-													else -> "已连接"
-												},
-												style = MaterialTheme.typography.labelSmall,
-												color = MaterialTheme.colorScheme.primary,
-											)
-										}
-									}
-
-									// 大屏播控按钮组
-									Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-										IconButton(
-											onClick = {
-												castScope.launch {
-													if (dlnaPlaybackState == DlnaPlaybackState.PLAYING) {
-														dlnaManager.pause()
-													} else {
-														dlnaManager.resume()
-													}
-												}
-											},
-											modifier = Modifier
-												.size(36.dp)
-												.background(MaterialTheme.colorScheme.primary, CircleShape),
-										) {
-											Icon(
-												imageVector = if (dlnaPlaybackState == DlnaPlaybackState.PLAYING) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-												contentDescription = "播放/暂停",
-												tint = MaterialTheme.colorScheme.onPrimary,
-												modifier = Modifier.size(20.dp),
-											)
-										}
-
-										IconButton(
-											onClick = {
-												castScope.launch {
-													dlnaManager.stop()
-												}
-											},
-											modifier = Modifier
-												.size(36.dp)
-												.background(MaterialTheme.colorScheme.errorContainer, CircleShape),
-										) {
-											Icon(
-												Icons.Rounded.Stop,
-												contentDescription = "退出投屏",
-												tint = MaterialTheme.colorScheme.onErrorContainer,
-												modifier = Modifier.size(20.dp),
-											)
-										}
-									}
-								}
-							}
-						}
-					}
-
-					// 局域网 DLNA 电视直投专区
-					Surface(
-						shape = RoundedCornerShape(16.dp),
-						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-						border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-						modifier = Modifier.fillMaxWidth(),
-					) {
-						Column(
-							modifier = Modifier.padding(16.dp),
-							verticalArrangement = Arrangement.spacedBy(12.dp),
-						) {
-							Row(
-								modifier = Modifier.fillMaxWidth(),
-								verticalAlignment = Alignment.CenterVertically,
-								horizontalArrangement = Arrangement.SpaceBetween,
-							) {
-								Column {
-									Text("局域网电视设备 (DLNA 直投)", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-									Text("支持小米电视/华为/索尼/海信/电视盒子/投影仪", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-								}
-								TextButton(
-									onClick = { dlnaManager.searchDevices() },
-									enabled = !isDlnaSearching,
-								) {
-									Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-									Spacer(modifier = Modifier.width(4.dp))
-									Text(if (isDlnaSearching) "扫描中" else "刷新")
-								}
-							}
-
-							if (isDlnaSearching) {
-								LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-							}
-
-							if (dlnaDevices.isEmpty()) {
-								Column(
-									modifier = Modifier
-										.fillMaxWidth()
-										.padding(vertical = 12.dp),
-									horizontalAlignment = Alignment.CenterHorizontally,
-									verticalArrangement = Arrangement.spacedBy(6.dp),
-								) {
-									Text(
-										text = if (isDlnaSearching) "正在扫描局域网智能电视设备…" else "暂未发现局域网电视设备",
-										style = MaterialTheme.typography.bodySmall,
-										color = MaterialTheme.colorScheme.onSurfaceVariant,
-									)
-									if (!isDlnaSearching) {
-										Text(
-											text = "请确认电视或电视盒子已开机且已连接至同一 Wi-Fi",
-											style = MaterialTheme.typography.labelSmall,
-											color = MaterialTheme.colorScheme.outline,
-										)
-									}
-								}
-							} else {
-								Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-									dlnaDevices.forEach { device ->
-										val isCurrent = device.id == activeDlnaDevice?.id
-										Surface(
-											shape = RoundedCornerShape(12.dp),
-											color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface,
-											border = BorderStroke(1.dp, if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-											modifier = Modifier
-												.fillMaxWidth()
-												.clickable {
-													if (!url.isNullOrBlank()) {
-														castScope.launch {
-															player.pause()
-															isPlaying = false
-															val res = dlnaManager.cast(device, url, entry.name)
-															res.onFailure { err ->
-																Toast.makeText(context, err.message ?: "投屏失败", Toast.LENGTH_SHORT).show()
-															}
-														}
-													} else {
-														Toast.makeText(context, "无法获取视频播放直链", Toast.LENGTH_SHORT).show()
-													}
-												},
-										) {
-											Row(
-												modifier = Modifier
-													.fillMaxWidth()
-													.padding(horizontal = 14.dp, vertical = 10.dp),
-												verticalAlignment = Alignment.CenterVertically,
-												horizontalArrangement = Arrangement.SpaceBetween,
-											) {
-												Row(
-													verticalAlignment = Alignment.CenterVertically,
-													horizontalArrangement = Arrangement.spacedBy(10.dp),
-												) {
-													Icon(
-														Icons.Rounded.Tv,
-														contentDescription = null,
-														tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-													)
-													Column {
-														Text(
-															text = device.name,
-															style = MaterialTheme.typography.bodyMedium,
-															fontWeight = FontWeight.Medium,
-														)
-														Text(
-															text = "${device.host} · DLNA 播放器",
-															style = MaterialTheme.typography.labelSmall,
-															color = MaterialTheme.colorScheme.onSurfaceVariant,
-														)
-													}
-												}
-												if (isCurrent) {
-													Text("已连接", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-												} else {
-													Text("点击投屏", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
+			DlnaCastBottomSheet(
+				mediaTitle = entry.name,
+				streamUrl = url,
+				unavailableMessage = "无法获取视频播放直链",
+				onPauseLocal = {
+					player.pause()
+					isPlaying = false
+				},
+				onDismiss = { showCastSheet = false },
+			)
 		}
 
 		// 视频伴生记忆聚合管理抽屉（点击底栏“伴生记忆”呼出）
@@ -3593,6 +3326,1098 @@ private fun CompanionMemoCapsule(
 								tint = Color(0xFF94A3B8),
 								modifier = Modifier.size(16.dp),
 							)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+private fun createConfiguredExoPlayer(
+	context: Context,
+	http: okhttp3.OkHttpClient,
+	handleAudioFocus: Boolean = false,
+): ExoPlayer {
+	val factory = DefaultMediaSourceFactory(context)
+		.setDataSourceFactory(VideoCacheManager.createDataSourceFactory(context, http))
+	val loadControl = DefaultLoadControl.Builder()
+		.setBufferDurationsMs(
+			15_000,   // minBufferMs (15s)
+			60_000,   // maxBufferMs (60s)
+			1_500,    // bufferForPlaybackMs (1.5s 安全起播)
+			3_000,    // bufferForPlaybackAfterRebufferMs (3s 稳定恢复)
+		)
+		.setBackBuffer(15_000, true)
+		.setPrioritizeTimeOverSizeThresholds(true)
+		.build()
+
+	val renderersFactory = DefaultRenderersFactory(context)
+		.setEnableDecoderFallback(true)
+
+	return ExoPlayer.Builder(context, renderersFactory)
+		.setMediaSourceFactory(factory)
+		.setLoadControl(loadControl)
+		.apply {
+			if (handleAudioFocus) {
+				setAudioAttributes(
+					AudioAttributes.Builder()
+						.setUsage(C.USAGE_MEDIA)
+						.setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+						.build(),
+					true,
+				)
+			}
+		}
+		.build()
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DlnaCastBottomSheet(
+	mediaTitle: String,
+	streamUrl: String?,
+	unavailableMessage: String,
+	onPauseLocal: () -> Unit,
+	onDismiss: () -> Unit,
+) {
+	val context = LocalContext.current
+	val dlnaManager = remember { DlnaManager.getInstance(context) }
+	val dlnaDevices by dlnaManager.devices.collectAsState()
+	val isDlnaSearching by dlnaManager.isSearching.collectAsState()
+	val activeDlnaDevice by dlnaManager.activeDevice.collectAsState()
+	val dlnaPlaybackState by dlnaManager.playbackState.collectAsState()
+	val dlnaStatusMessage by dlnaManager.statusMessage.collectAsState()
+	val castScope = rememberCoroutineScope()
+
+	LaunchedEffect(Unit) {
+		dlnaManager.searchDevices()
+	}
+
+	ModalBottomSheet(
+		onDismissRequest = onDismiss,
+		containerColor = MaterialTheme.colorScheme.surface,
+	) {
+		val scrollState = rememberScrollState()
+		Column(
+			modifier = Modifier
+				.fillMaxWidth()
+				.verticalScroll(scrollState)
+				.padding(horizontal = 24.dp)
+				.padding(bottom = 36.dp),
+			verticalArrangement = Arrangement.spacedBy(16.dp),
+		) {
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.SpaceBetween,
+			) {
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(10.dp),
+				) {
+					Surface(
+						shape = CircleShape,
+						color = MaterialTheme.colorScheme.primaryContainer,
+						modifier = Modifier.size(36.dp),
+					) {
+						Box(contentAlignment = Alignment.Center) {
+							Icon(
+								Icons.Rounded.Cast,
+								contentDescription = null,
+								tint = MaterialTheme.colorScheme.onPrimaryContainer,
+								modifier = Modifier.size(20.dp),
+							)
+						}
+					}
+					Column {
+						Text("DLNA 电视投屏", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+						Text(
+							text = dlnaStatusMessage.ifBlank { "局域网智能电视 · 盒子 · 音响直投" },
+							style = MaterialTheme.typography.labelSmall,
+							color = MaterialTheme.colorScheme.onSurfaceVariant,
+						)
+					}
+				}
+				IconButton(onClick = onDismiss) {
+					Icon(Icons.Rounded.Close, contentDescription = "关闭")
+				}
+			}
+
+			if (activeDlnaDevice != null) {
+				Surface(
+					shape = RoundedCornerShape(16.dp),
+					color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+					border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
+					modifier = Modifier.fillMaxWidth(),
+				) {
+					Column(
+						modifier = Modifier.padding(16.dp),
+						verticalArrangement = Arrangement.spacedBy(10.dp),
+					) {
+						Row(
+							modifier = Modifier.fillMaxWidth(),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.SpaceBetween,
+						) {
+							Row(
+								verticalAlignment = Alignment.CenterVertically,
+								horizontalArrangement = Arrangement.spacedBy(8.dp),
+							) {
+								Icon(Icons.Rounded.Tv, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+								Column {
+									Text(
+										text = activeDlnaDevice?.name ?: "已连接设备",
+										style = MaterialTheme.typography.titleSmall,
+										fontWeight = FontWeight.Bold,
+									)
+									Text(
+										text = when (dlnaPlaybackState) {
+											DlnaPlaybackState.CONNECTING -> "正在投屏连接中…"
+											DlnaPlaybackState.PLAYING -> "大屏正在播放中"
+											DlnaPlaybackState.PAUSED -> "大屏已暂停"
+											DlnaPlaybackState.ERROR -> "投屏异常"
+											else -> "已连接"
+										},
+										style = MaterialTheme.typography.labelSmall,
+										color = MaterialTheme.colorScheme.primary,
+									)
+								}
+							}
+
+							Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+								IconButton(
+									onClick = {
+										castScope.launch {
+											if (dlnaPlaybackState == DlnaPlaybackState.PLAYING) {
+												dlnaManager.pause()
+											} else {
+												dlnaManager.resume()
+											}
+										}
+									},
+									modifier = Modifier
+										.size(36.dp)
+										.background(MaterialTheme.colorScheme.primary, CircleShape),
+								) {
+									Icon(
+										imageVector = if (dlnaPlaybackState == DlnaPlaybackState.PLAYING) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+										contentDescription = "播放/暂停",
+										tint = MaterialTheme.colorScheme.onPrimary,
+										modifier = Modifier.size(20.dp),
+									)
+								}
+
+								IconButton(
+									onClick = {
+										castScope.launch { dlnaManager.stop() }
+									},
+									modifier = Modifier
+										.size(36.dp)
+										.background(MaterialTheme.colorScheme.errorContainer, CircleShape),
+								) {
+									Icon(
+										Icons.Rounded.Stop,
+										contentDescription = "退出投屏",
+										tint = MaterialTheme.colorScheme.onErrorContainer,
+										modifier = Modifier.size(20.dp),
+									)
+								}
+							}
+						}
+					}
+				}
+			}
+
+			Surface(
+				shape = RoundedCornerShape(16.dp),
+				color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+				border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+				modifier = Modifier.fillMaxWidth(),
+			) {
+				Column(
+					modifier = Modifier.padding(16.dp),
+					verticalArrangement = Arrangement.spacedBy(12.dp),
+				) {
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.SpaceBetween,
+					) {
+						Column {
+							Text("局域网设备 (DLNA 直投)", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+							Text("支持智能电视/电视盒子/投影仪/音箱", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+						}
+						TextButton(
+							onClick = { dlnaManager.searchDevices() },
+							enabled = !isDlnaSearching,
+						) {
+							Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+							Spacer(modifier = Modifier.width(4.dp))
+							Text(if (isDlnaSearching) "扫描中" else "刷新")
+						}
+					}
+
+					if (isDlnaSearching) {
+						LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+					}
+
+					if (dlnaDevices.isEmpty()) {
+						Column(
+							modifier = Modifier
+								.fillMaxWidth()
+								.padding(vertical = 12.dp),
+							horizontalAlignment = Alignment.CenterHorizontally,
+							verticalArrangement = Arrangement.spacedBy(6.dp),
+						) {
+							Text(
+								text = if (isDlnaSearching) "正在扫描局域网设备…" else "暂未发现局域网设备",
+								style = MaterialTheme.typography.bodySmall,
+								color = MaterialTheme.colorScheme.onSurfaceVariant,
+							)
+							if (!isDlnaSearching) {
+								Text(
+									text = "请确认接收设备已开机且已连接至同一 Wi-Fi",
+									style = MaterialTheme.typography.labelSmall,
+									color = MaterialTheme.colorScheme.outline,
+								)
+							}
+						}
+					} else {
+						Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+							dlnaDevices.forEach { device ->
+								val isCurrent = device.id == activeDlnaDevice?.id
+								Surface(
+									shape = RoundedCornerShape(12.dp),
+									color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface,
+									border = BorderStroke(1.dp, if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+									modifier = Modifier
+										.fillMaxWidth()
+										.clickable {
+											if (!streamUrl.isNullOrBlank()) {
+												castScope.launch {
+													onPauseLocal()
+													val res = dlnaManager.cast(device, streamUrl, mediaTitle)
+													res.onFailure { err ->
+														Toast.makeText(context, err.message ?: "投屏失败", Toast.LENGTH_SHORT).show()
+													}
+												}
+											} else {
+												Toast.makeText(context, unavailableMessage, Toast.LENGTH_SHORT).show()
+											}
+										},
+								) {
+									Row(
+										modifier = Modifier
+											.fillMaxWidth()
+											.padding(horizontal = 14.dp, vertical = 10.dp),
+										verticalAlignment = Alignment.CenterVertically,
+										horizontalArrangement = Arrangement.SpaceBetween,
+									) {
+										Row(
+											verticalAlignment = Alignment.CenterVertically,
+											horizontalArrangement = Arrangement.spacedBy(10.dp),
+										) {
+											Icon(
+												Icons.Rounded.Tv,
+												contentDescription = null,
+												tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+											)
+											Column {
+												Text(
+													text = device.name,
+													style = MaterialTheme.typography.bodyMedium,
+													fontWeight = FontWeight.Medium,
+												)
+												Text(
+													text = "${device.host} · DLNA 播放器",
+													style = MaterialTheme.typography.labelSmall,
+													color = MaterialTheme.colorScheme.onSurfaceVariant,
+												)
+											}
+										}
+										if (isCurrent) {
+											Text("已连接", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+										} else {
+											Text("点击投屏", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+private enum class AudioPlayMode(val label: String) {
+	SEQUENTIAL("顺序播放"),
+	LOOP_ONE("单曲循环"),
+	LOOP_ALL("列表循环"),
+}
+
+/**
+ * 内置音频播放器：复用与 VideoPlayer 一致的 ExoPlayer 缓存/鉴权/断点续播管线，
+ * 针对故事相册与常见音频格式提供专辑封面展示、列表连续播放、熄屏连播、倍速调节与 DLNA 投屏。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+fun AudioPlayer(
+	entry: DavEntry,
+	playlist: List<DavEntry> = listOf(entry),
+	urlOf: (String) -> String?,
+	onBack: () -> Unit,
+	onSaveToMusic: ((DavEntry, (Boolean, String) -> Unit) -> Unit)? = null,
+	onOpenExternal: ((DavEntry) -> Unit)? = null,
+) {
+	val context = LocalContext.current
+	val http = context.app.repo.http()
+	val nasDb = remember { NasDb.getInstance(context) }
+
+	val effectivePlaylist = remember(playlist, entry.path) {
+		if (playlist.any { it.path == entry.path }) playlist else listOf(entry) + playlist
+	}
+	var activeEntry by remember(entry.path) { mutableStateOf(entry) }
+	val currentIndex = remember(effectivePlaylist, activeEntry.path) {
+		effectivePlaylist.indexOfFirst { it.path == activeEntry.path }.coerceAtLeast(0)
+	}
+	val activeUrl = remember(activeEntry.path) { urlOf(activeEntry.path) }
+
+	var isPlaying by remember { mutableStateOf(false) }
+	var isBuffering by remember { mutableStateOf(true) }
+	var currentPosition by remember { mutableLongStateOf(0L) }
+	var bufferedPosition by remember { mutableLongStateOf(0L) }
+	var duration by remember { mutableLongStateOf(0L) }
+	var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
+	var playMode by remember { mutableStateOf(AudioPlayMode.SEQUENTIAL) }
+	var isSaving by remember { mutableStateOf(false) }
+	var showCastSheet by remember { mutableStateOf(false) }
+	var showPlaylistSheet by remember { mutableStateOf(false) }
+	var playbackError by remember(activeEntry.path) { mutableStateOf<String?>(null) }
+
+	var trackTitle by remember(activeEntry.path) { mutableStateOf<String?>(null) }
+	var trackArtist by remember(activeEntry.path) { mutableStateOf<String?>(null) }
+	var trackAlbum by remember(activeEntry.path) { mutableStateOf<String?>(null) }
+	var artworkBytes by remember(activeEntry.path) { mutableStateOf<ByteArray?>(null) }
+	val artworkBitmap: ImageBitmap? = remember(artworkBytes) {
+		artworkBytes?.let { bytes ->
+			runCatching {
+				BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+			}.getOrNull()
+		}
+	}
+
+	val savedProgress = remember(activeEntry.path) { nasDb.getVideoProgress(activeEntry.path) }
+	var showResumeTip by remember(activeEntry.path) { mutableStateOf(savedProgress > 3000L) }
+
+	BackHandler {
+		if (showPlaylistSheet) {
+			showPlaylistSheet = false
+		} else if (showCastSheet) {
+			showCastSheet = false
+		} else {
+			onBack()
+		}
+	}
+
+	val player = remember {
+		createConfiguredExoPlayer(context, http, handleAudioFocus = true)
+	}
+
+	val latestEntry by rememberUpdatedState(activeEntry)
+	val latestPlayMode by rememberUpdatedState(playMode)
+	val latestPlaylist by rememberUpdatedState(effectivePlaylist)
+	val latestIndex by rememberUpdatedState(currentIndex)
+
+	LaunchedEffect(activeEntry.path, activeUrl) {
+		val urlStr = activeUrl
+		if (urlStr.isNullOrBlank()) {
+			playbackError = "无法获取音频直链"
+			isBuffering = false
+			isPlaying = false
+			player.stop()
+			return@LaunchedEffect
+		}
+		playbackError = null
+		isBuffering = true
+		val resumeMs = nasDb.getVideoProgress(activeEntry.path)
+		currentPosition = resumeMs.coerceAtLeast(0L)
+		bufferedPosition = 0L
+		duration = 0L
+		player.playWhenReady = true
+		player.playbackParameters = PlaybackParameters(playbackSpeed)
+		player.setMediaItem(MediaItem.fromUri(urlStr))
+		if (resumeMs > 3000L) {
+			player.seekTo(resumeMs)
+		}
+		player.prepare()
+	}
+
+	DisposableEffect(activeEntry.path) {
+		val trackPath = activeEntry.path
+		onDispose {
+			nasDb.saveVideoProgress(trackPath, player.currentPosition, player.duration)
+		}
+	}
+
+	DisposableEffect(player) {
+		val listener = object : Player.Listener {
+			override fun onIsPlayingChanged(playing: Boolean) {
+				isPlaying = playing
+			}
+
+			override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+				mediaMetadata.title?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { trackTitle = it }
+				mediaMetadata.artist?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { trackArtist = it }
+				mediaMetadata.albumTitle?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { trackAlbum = it }
+				mediaMetadata.artworkData?.takeIf { it.isNotEmpty() }?.let { artworkBytes = it }
+			}
+
+			override fun onPlaybackStateChanged(state: Int) {
+				duration = player.duration.coerceAtLeast(0L)
+				isBuffering = state == Player.STATE_BUFFERING
+				if (state == Player.STATE_ENDED) {
+					val cur = latestEntry
+					val dur = player.duration.coerceAtLeast(0L)
+					if (dur > 0L) {
+						currentPosition = dur
+						nasDb.saveVideoProgress(cur.path, dur, dur)
+					}
+					when (latestPlayMode) {
+						AudioPlayMode.LOOP_ONE -> {
+							player.seekTo(0L)
+							player.play()
+						}
+						AudioPlayMode.SEQUENTIAL -> {
+							val list = latestPlaylist
+							val nextIdx = latestIndex + 1
+							if (list.size > 1 && nextIdx in list.indices) {
+								activeEntry = list[nextIdx]
+							} else {
+								isPlaying = false
+							}
+						}
+						AudioPlayMode.LOOP_ALL -> {
+							val list = latestPlaylist
+							if (list.size > 1) {
+								val nextIdx = (latestIndex + 1) % list.size
+								activeEntry = list[nextIdx]
+							} else {
+								player.seekTo(0L)
+								player.play()
+							}
+						}
+					}
+				}
+			}
+
+			override fun onPlayerError(error: PlaybackException) {
+				isBuffering = false
+				isPlaying = false
+				val extUpper = latestEntry.ext.uppercase().ifBlank { "AUDIO" }
+				playbackError = "内置解码器暂不支持或加载失败 ($extUpper)：${error.errorCodeName}"
+			}
+		}
+		player.addListener(listener)
+		onDispose {
+			nasDb.saveVideoProgress(latestEntry.path, player.currentPosition, player.duration)
+			player.removeListener(listener)
+			player.release()
+		}
+	}
+
+	LaunchedEffect(showResumeTip) {
+		if (showResumeTip) {
+			delay(3200)
+			showResumeTip = false
+		}
+	}
+
+	LaunchedEffect(player) {
+		while (true) {
+			delay(300)
+			if (player.playbackState == Player.STATE_ENDED) {
+				if (duration > 0L) currentPosition = duration
+			} else if (player.isPlaying || player.playbackState == Player.STATE_BUFFERING || player.playbackState == Player.STATE_READY) {
+				currentPosition = player.currentPosition.coerceAtLeast(0L)
+				bufferedPosition = player.bufferedPosition.coerceAtLeast(0L)
+				duration = player.duration.coerceAtLeast(0L)
+			}
+		}
+	}
+
+	LaunchedEffect(player) {
+		while (true) {
+			delay(3000)
+			if (player.isPlaying) {
+				nasDb.saveVideoProgress(latestEntry.path, player.currentPosition, player.duration)
+			}
+		}
+	}
+
+	val togglePlayPause: () -> Unit = {
+		if (player.isPlaying) {
+			player.pause()
+		} else {
+			if (playbackError != null) {
+				playbackError = null
+				player.prepare()
+			} else if (player.playbackState == Player.STATE_ENDED) {
+				player.seekTo(0L)
+			}
+			player.play()
+		}
+	}
+
+	val stepTrack: (Int) -> Unit = { delta ->
+		if (effectivePlaylist.size > 1) {
+			val targetIdx = ((currentIndex + delta) % effectivePlaylist.size + effectivePlaylist.size) % effectivePlaylist.size
+			activeEntry = effectivePlaylist[targetIdx]
+		}
+	}
+
+	val folderLabel = remember(activeEntry.path) {
+		activeEntry.path.substringBeforeLast('/', "").substringAfterLast('/').ifBlank { "音频播放" }
+	}
+	val displayTitle = remember(trackTitle, activeEntry.name) {
+		trackTitle ?: activeEntry.name.substringBeforeLast('.', activeEntry.name)
+	}
+	val displaySubtitle = remember(trackArtist, trackAlbum, folderLabel) {
+		listOfNotNull(trackArtist, trackAlbum).joinToString(" · ").ifBlank { folderLabel }
+	}
+
+	Box(
+		modifier = Modifier
+			.fillMaxSize()
+			.background(
+				Brush.verticalGradient(
+					colors = listOf(
+						Color(0xFF141824),
+						Color(0xFF0E1118),
+						MediaBackdrop,
+					),
+				),
+			)
+			.statusBarsPadding()
+			.navigationBarsPadding(),
+	) {
+		Column(
+			modifier = Modifier
+				.fillMaxSize()
+				.padding(horizontal = 20.dp, vertical = 10.dp),
+			horizontalAlignment = Alignment.CenterHorizontally,
+		) {
+			// 1. 顶部导航与操作栏
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.SpaceBetween,
+			) {
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					modifier = Modifier.weight(1f),
+				) {
+					IconButton(onClick = onBack) {
+						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = OnMediaBackdrop)
+					}
+					Column(modifier = Modifier.padding(end = 8.dp)) {
+						Text(
+							text = folderLabel,
+							color = OnMediaBackdrop,
+							fontSize = 15.sp,
+							fontWeight = FontWeight.Bold,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+						)
+						if (effectivePlaylist.size > 1) {
+							Text(
+								text = "第 ${currentIndex + 1} / ${effectivePlaylist.size} 首",
+								color = OnMediaBackdrop.copy(alpha = 0.65f),
+								fontSize = 11.sp,
+							)
+						}
+					}
+				}
+
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(2.dp),
+				) {
+					if (onSaveToMusic != null) {
+						IconButton(
+							onClick = {
+								if (isSaving) return@IconButton
+								isSaving = true
+								Toast.makeText(context, "正在保存到本地音乐目录…", Toast.LENGTH_SHORT).show()
+								onSaveToMusic(activeEntry) { ok, msg ->
+									isSaving = false
+									Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+								}
+							},
+						) {
+							Icon(Icons.Rounded.Download, contentDescription = "保存到本地音乐", tint = OnMediaBackdrop)
+						}
+					}
+					IconButton(onClick = { showCastSheet = true }) {
+						Icon(Icons.Rounded.Cast, contentDescription = "DLNA 投屏", tint = OnMediaBackdrop)
+					}
+					if (onOpenExternal != null) {
+						IconButton(onClick = { onOpenExternal(activeEntry) }) {
+							Icon(Icons.Rounded.OpenInNew, contentDescription = "其他应用播放", tint = OnMediaBackdrop)
+						}
+					}
+				}
+			}
+
+			Spacer(modifier = Modifier.weight(0.6f))
+
+			// 2. 中心专辑封面 / 故事卡片视觉区
+			Box(
+				modifier = Modifier
+					.sizeIn(maxWidth = 270.dp, maxHeight = 270.dp)
+					.fillMaxWidth(0.72f)
+					.aspectRatio(1f)
+					.clip(RoundedCornerShape(28.dp))
+					.background(
+						Brush.linearGradient(
+							colors = listOf(
+								Color(0xFF4338CA),
+								Color(0xFF7C3AED),
+								Color(0xFFDB2777),
+							),
+						),
+					),
+				contentAlignment = Alignment.Center,
+			) {
+				if (artworkBitmap != null) {
+					Image(
+						bitmap = artworkBitmap,
+						contentDescription = displayTitle,
+						contentScale = ContentScale.Crop,
+						modifier = Modifier.fillMaxSize(),
+					)
+				} else {
+					Column(
+						horizontalAlignment = Alignment.CenterHorizontally,
+						verticalArrangement = Arrangement.spacedBy(10.dp),
+					) {
+						Surface(
+							shape = CircleShape,
+							color = Color.White.copy(alpha = 0.16f),
+							modifier = Modifier.size(96.dp),
+						) {
+							Box(contentAlignment = Alignment.Center) {
+								Icon(
+									imageVector = Icons.Rounded.MusicNote,
+									contentDescription = null,
+									tint = Color.White,
+									modifier = Modifier.size(52.dp),
+								)
+							}
+						}
+					}
+				}
+
+				// 右上角格式徽章
+				if (activeEntry.ext.isNotBlank()) {
+					Surface(
+						shape = RoundedCornerShape(10.dp),
+						color = Color.Black.copy(alpha = 0.55f),
+						modifier = Modifier
+							.align(Alignment.TopEnd)
+							.padding(12.dp),
+					) {
+						Text(
+							text = activeEntry.ext.uppercase(),
+							color = Color.White,
+							fontSize = 11.sp,
+							fontWeight = FontWeight.Bold,
+							modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+						)
+					}
+				}
+
+				if (isBuffering && playbackError == null) {
+					Surface(
+						shape = CircleShape,
+						color = Color.Black.copy(alpha = 0.45f),
+						modifier = Modifier.size(48.dp),
+					) {
+						Box(contentAlignment = Alignment.Center) {
+							CircularProgressIndicator(
+								color = Color.White,
+								strokeWidth = 2.5.dp,
+								modifier = Modifier.size(26.dp),
+							)
+						}
+					}
+				}
+			}
+
+			Spacer(modifier = Modifier.height(24.dp))
+
+			// 3. 标题、来源与续播 / 错误提示
+			Text(
+				text = displayTitle,
+				color = OnMediaBackdrop,
+				fontSize = 20.sp,
+				fontWeight = FontWeight.Bold,
+				maxLines = 2,
+				overflow = TextOverflow.Ellipsis,
+				textAlign = TextAlign.Center,
+				modifier = Modifier.padding(horizontal = 8.dp),
+			)
+			Spacer(modifier = Modifier.height(6.dp))
+			Text(
+				text = buildString {
+					append(displaySubtitle)
+					if (activeEntry.size > 0L) {
+						append(" · ")
+						append(activeEntry.sizeHuman.ifBlank { formatSize(activeEntry.size) })
+					}
+				},
+				color = OnMediaBackdrop.copy(alpha = 0.7f),
+				fontSize = 13.sp,
+				maxLines = 1,
+				overflow = TextOverflow.Ellipsis,
+				textAlign = TextAlign.Center,
+			)
+
+			AnimatedVisibility(visible = showResumeTip && playbackError == null) {
+				Surface(
+					color = Color.White.copy(alpha = 0.12f),
+					shape = RoundedCornerShape(16.dp),
+					modifier = Modifier.padding(top = 12.dp),
+				) {
+					Text(
+						text = "已恢复至上次收听位置 ${formatTime(savedProgress)}",
+						color = OnMediaBackdrop.copy(alpha = 0.9f),
+						fontSize = 12.sp,
+						modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+					)
+				}
+			}
+
+			if (playbackError != null) {
+				Surface(
+					color = Color(0xFF7F1D1D).copy(alpha = 0.65f),
+					border = BorderStroke(1.dp, Color(0xFFFCA5A5).copy(alpha = 0.4f)),
+					shape = RoundedCornerShape(14.dp),
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(top = 14.dp),
+				) {
+					Column(
+						modifier = Modifier.padding(12.dp),
+						horizontalAlignment = Alignment.CenterHorizontally,
+						verticalArrangement = Arrangement.spacedBy(8.dp),
+					) {
+						Text(
+							text = playbackError ?: "播放失败",
+							color = Color.White,
+							fontSize = 12.sp,
+							textAlign = TextAlign.Center,
+						)
+						Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+							OutlinedButton(
+								onClick = {
+									playbackError = null
+									player.prepare()
+									player.play()
+								},
+								border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
+							) {
+								Text("重试", color = Color.White, fontSize = 12.sp)
+							}
+							if (onOpenExternal != null) {
+								Button(onClick = { onOpenExternal(activeEntry) }) {
+									Text("用其他应用打开", fontSize = 12.sp)
+								}
+							}
+						}
+					}
+				}
+			}
+
+			Spacer(modifier = Modifier.weight(1f))
+
+			// 4. 进度条（复用 VideoPlayer 同款 ModernVideoScrubber）
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(
+					text = formatTime(currentPosition),
+					color = OnMediaBackdrop,
+					fontSize = 12.sp,
+					fontWeight = FontWeight.SemiBold,
+				)
+				ModernVideoScrubber(
+					currentPosition = currentPosition,
+					bufferedPosition = bufferedPosition,
+					duration = duration,
+					onSeek = { target ->
+						player.seekTo(target)
+						currentPosition = target
+					},
+					modifier = Modifier
+						.weight(1f)
+						.padding(horizontal = 12.dp),
+				)
+				Text(
+					text = formatTime(duration),
+					color = OnMediaBackdrop.copy(alpha = 0.7f),
+					fontSize = 12.sp,
+					fontWeight = FontWeight.SemiBold,
+				)
+			}
+
+			Spacer(modifier = Modifier.height(14.dp))
+
+			// 5. 主播控按钮行（循环模式 / 上一首 / 快退10s / 播放暂停 / 快进10s / 下一首）
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.SpaceEvenly,
+			) {
+				IconButton(
+					onClick = {
+						val modes = AudioPlayMode.entries
+						playMode = modes[(modes.indexOf(playMode) + 1) % modes.size]
+						Toast.makeText(context, playMode.label, Toast.LENGTH_SHORT).show()
+					},
+				) {
+					Icon(
+						imageVector = if (playMode == AudioPlayMode.LOOP_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+						contentDescription = playMode.label,
+						tint = if (playMode == AudioPlayMode.SEQUENTIAL) OnMediaBackdrop.copy(alpha = 0.6f) else Color(0xFF38BDF8),
+					)
+				}
+
+				IconButton(
+					enabled = effectivePlaylist.size > 1,
+					onClick = { stepTrack(-1) },
+				) {
+					Icon(
+						Icons.Rounded.SkipPrevious,
+						contentDescription = "上一首",
+						tint = if (effectivePlaylist.size > 1) OnMediaBackdrop else OnMediaBackdrop.copy(alpha = 0.3f),
+						modifier = Modifier.size(30.dp),
+					)
+				}
+
+				IconButton(
+					onClick = {
+						val target = (player.currentPosition - 10_000L).coerceAtLeast(0L)
+						player.seekTo(target)
+						currentPosition = target
+					},
+				) {
+					Icon(Icons.Rounded.Replay10, contentDescription = "快退10秒", tint = OnMediaBackdrop, modifier = Modifier.size(28.dp))
+				}
+
+				Surface(
+					shape = CircleShape,
+					color = OnMediaBackdrop,
+					onClick = togglePlayPause,
+					modifier = Modifier.size(62.dp),
+				) {
+					Box(contentAlignment = Alignment.Center) {
+						Icon(
+							imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+							contentDescription = if (isPlaying) "暂停" else "播放",
+							tint = MediaBackdrop,
+							modifier = Modifier.size(34.dp),
+						)
+					}
+				}
+
+				IconButton(
+					onClick = {
+						val maxDur = if (duration > 0L) duration else Long.MAX_VALUE
+						val target = (player.currentPosition + 10_000L).coerceAtMost(maxDur)
+						player.seekTo(target)
+						currentPosition = target
+					},
+				) {
+					Icon(Icons.Rounded.Forward10, contentDescription = "快进10秒", tint = OnMediaBackdrop, modifier = Modifier.size(28.dp))
+				}
+
+				IconButton(
+					enabled = effectivePlaylist.size > 1,
+					onClick = { stepTrack(1) },
+				) {
+					Icon(
+						Icons.Rounded.SkipNext,
+						contentDescription = "下一首",
+						tint = if (effectivePlaylist.size > 1) OnMediaBackdrop else OnMediaBackdrop.copy(alpha = 0.3f),
+						modifier = Modifier.size(30.dp),
+					)
+				}
+			}
+
+			Spacer(modifier = Modifier.height(14.dp))
+
+			// 6. 次级控制行：倍速药丸、播放列表
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(bottom = 8.dp),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.Center,
+			) {
+				val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+				Surface(
+					shape = RoundedCornerShape(16.dp),
+					color = OnMediaBackdrop.copy(alpha = 0.16f),
+					onClick = {
+						val nextSpeed = speeds[(speeds.indexOf(playbackSpeed) + 1) % speeds.size]
+						playbackSpeed = nextSpeed
+						player.playbackParameters = PlaybackParameters(nextSpeed)
+					},
+				) {
+					Text(
+						text = "倍速 ${playbackSpeed}x",
+						color = OnMediaBackdrop,
+						fontSize = 12.sp,
+						fontWeight = FontWeight.SemiBold,
+						modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+					)
+				}
+
+				if (effectivePlaylist.size > 1) {
+					Spacer(modifier = Modifier.width(12.dp))
+					Surface(
+						shape = RoundedCornerShape(16.dp),
+						color = OnMediaBackdrop.copy(alpha = 0.16f),
+						onClick = { showPlaylistSheet = true },
+					) {
+						Row(
+							modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(5.dp),
+						) {
+							Icon(Icons.Rounded.QueueMusic, contentDescription = null, tint = OnMediaBackdrop, modifier = Modifier.size(16.dp))
+							Text(
+								text = "播放列表 (${effectivePlaylist.size})",
+								color = OnMediaBackdrop,
+								fontSize = 12.sp,
+								fontWeight = FontWeight.SemiBold,
+							)
+						}
+					}
+				}
+			}
+		}
+
+		if (showCastSheet) {
+			DlnaCastBottomSheet(
+				mediaTitle = activeEntry.name,
+				streamUrl = activeUrl,
+				unavailableMessage = "无法获取音频播放直链",
+				onPauseLocal = {
+					player.pause()
+					isPlaying = false
+				},
+				onDismiss = { showCastSheet = false },
+			)
+		}
+
+		if (showPlaylistSheet) {
+			ModalBottomSheet(
+				onDismissRequest = { showPlaylistSheet = false },
+				containerColor = MaterialTheme.colorScheme.surface,
+			) {
+				Column(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(horizontal = 20.dp)
+						.padding(bottom = 28.dp),
+				) {
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.SpaceBetween,
+					) {
+						Text(
+							text = "$folderLabel (${effectivePlaylist.size})",
+							style = MaterialTheme.typography.titleMedium,
+							fontWeight = FontWeight.Bold,
+						)
+						Text(
+							text = playMode.label,
+							style = MaterialTheme.typography.labelMedium,
+							color = MaterialTheme.colorScheme.primary,
+						)
+					}
+					Spacer(modifier = Modifier.height(10.dp))
+					LazyColumn(
+						modifier = Modifier
+							.fillMaxWidth()
+							.heightIn(max = 380.dp),
+						verticalArrangement = Arrangement.spacedBy(6.dp),
+					) {
+						itemsIndexed(effectivePlaylist, key = { _, item -> item.path }) { idx, item ->
+							val isCurrent = item.path == activeEntry.path
+							Surface(
+								shape = RoundedCornerShape(12.dp),
+								color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+								border = if (isCurrent) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+								modifier = Modifier
+									.fillMaxWidth()
+									.clip(RoundedCornerShape(12.dp))
+									.clickable {
+										activeEntry = item
+										showPlaylistSheet = false
+									},
+							) {
+								Row(
+									modifier = Modifier
+										.fillMaxWidth()
+										.padding(horizontal = 14.dp, vertical = 10.dp),
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.spacedBy(10.dp),
+								) {
+									Text(
+										text = "${idx + 1}",
+										style = MaterialTheme.typography.labelMedium,
+										fontWeight = FontWeight.Bold,
+										color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+									)
+									Column(modifier = Modifier.weight(1f)) {
+										Text(
+											text = item.name.substringBeforeLast('.', item.name),
+											style = MaterialTheme.typography.bodyMedium,
+											fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+											color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+											maxLines = 1,
+											overflow = TextOverflow.Ellipsis,
+										)
+										Text(
+											text = buildString {
+												append(item.ext.uppercase().ifBlank { "AUDIO" })
+												if (item.size > 0L) {
+													append(" · ")
+													append(item.sizeHuman.ifBlank { formatSize(item.size) })
+												}
+											},
+											style = MaterialTheme.typography.labelSmall,
+											color = MaterialTheme.colorScheme.onSurfaceVariant,
+										)
+									}
+									if (isCurrent) {
+										Icon(
+											imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+											contentDescription = null,
+											tint = MaterialTheme.colorScheme.primary,
+										)
+									}
+								}
+							}
 						}
 					}
 				}

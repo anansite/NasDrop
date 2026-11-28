@@ -1,6 +1,8 @@
 package com.nasdrop
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HomeViewerAlbumTest {
@@ -104,5 +106,37 @@ class HomeViewerAlbumTest {
 
 		assertEquals(listOf(m1, m2, m3).map { it.path }, viewerList.map { it.path })
 		assertEquals(2, startIdx)
+	}
+
+	@Test
+	fun davEntryRecognizesCommonAudioFormatsAndResolveAudioPlaylistUsesStoryAlbumOrder() {
+		val s1 = DavEntry(name = "爸爸的高台舞狮.m4a", path = "Photos/故事/爸爸的高台舞狮.m4a", isDir = false)
+		val s2 = DavEntry(name = "吃人参果的故事.mp3", path = "Photos/故事/吃人参果的故事.mp3", isDir = false)
+		val s3 = DavEntry(name = "小猫钓鱼.flac", path = "Photos/故事/小猫钓鱼.flac", isDir = false)
+		val imgCover = DavEntry(name = "cover.jpg", path = "Photos/故事/cover.jpg", isDir = false)
+		val otherAudio = DavEntry(name = "bgm.opus", path = "Music/bgm.opus", isDir = false)
+
+		assertTrue(s1.isAudio)
+		assertTrue(s2.isAudio)
+		assertTrue(s3.isAudio)
+		assertTrue(otherAudio.isAudio)
+		assertTrue(DavEntry(name = "memo.ogg", path = "memo.ogg", isDir = false).isAudio)
+		assertTrue(DavEntry(name = "voice.wav", path = "voice.wav", isDir = false).isAudio)
+		assertFalse(imgCover.isAudio)
+
+		val timelineGroups = listOf(
+			TimelineGroup(dateTitle = "故事", count = 4, items = listOf(imgCover, s1, s2, s3)),
+		)
+		val playlist = resolveAudioPlaylist(
+			entry = s2,
+			currentTab = MainTab.Photos,
+			activePhotoGroupId = null,
+			photoGroups = emptyList(),
+			photoTimelineGroups = timelineGroups,
+			filteredEntries = listOf(otherAudio),
+			allAudios = listOf(s1, s2, s3, otherAudio),
+		)
+
+		assertEquals(listOf(s1.path, s2.path, s3.path), playlist.map { it.path })
 	}
 }

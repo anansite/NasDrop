@@ -9,6 +9,7 @@ import okhttp3.mockwebserver.RecordedRequest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -171,5 +172,20 @@ class DlnaManagerTest {
 			proxy.close()
 			server.shutdown()
 		}
+	}
+
+	@Test
+	fun setUriXmlGeneratesAudioAndVideoDidlMetadataForCommonFormats() {
+		val m4aXml = DlnaManager.makeSetUriXml("http://192.168.1.10:8080/m/story.m4a", "爸爸的高台舞狮.m4a")
+		assertTrue(m4aXml.contains("object.item.audioItem.musicTrack"))
+		assertTrue(m4aXml.contains("http-get:*:audio/mp4:*"))
+
+		val flacXml = DlnaManager.makeSetUriXml("http://192.168.1.10:8080/m/lossless.flac", "lossless.flac")
+		assertTrue(flacXml.contains("object.item.audioItem.musicTrack"))
+		assertTrue(flacXml.contains("http-get:*:audio/flac:*"))
+
+		val mp4Xml = DlnaManager.makeSetUriXml("http://192.168.1.10:8080/m/clip.mp4", "clip.mp4")
+		assertTrue(mp4Xml.contains("object.item.videoItem"))
+		assertTrue(mp4Xml.contains("http-get:*:video/mp4:*"))
 	}
 }

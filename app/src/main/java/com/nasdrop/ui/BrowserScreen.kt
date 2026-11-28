@@ -272,6 +272,7 @@ fun BrowserScreen(
 	showUploadFlowDialogs: Boolean = true,
 	onOpenImage: (DavEntry) -> Unit = {},
 	onOpenVideo: (DavEntry) -> Unit = {},
+	onOpenAudio: (DavEntry) -> Unit = {},
 	onOpenSettings: () -> Unit = {},
 	onLogin: () -> Unit = {},
 	onConfirm: (String) -> Unit = {},
@@ -546,6 +547,7 @@ fun BrowserScreen(
 								onSelectMemoryGroup = { vm.activeMemoryYearGroup = it },
 								onOpenImage = onOpenImage,
 								onOpenVideo = onOpenVideo,
+								onOpenAudio = onOpenAudio,
 								urlOf = { vm.thumbnailUrlFor(it) },
 								directUrlOf = { vm.directUrlFor(it) },
 								onOpenSettings = onOpenSettings,
@@ -570,6 +572,8 @@ fun BrowserScreen(
 											onOpenImage(entry)
 										} else if (entry.isVideo) {
 											onOpenVideo(entry)
+										} else if (entry.isAudio) {
+											onOpenAudio(entry)
 										} else {
 											vm.openWithExternalViewer(context, entry)
 										}
@@ -591,6 +595,7 @@ fun BrowserScreen(
 								photoGroups = vm.photoGroups,
 								allAlbums = vm.allAlbumFolders,
 								allPhotos = vm.allPhotos,
+								allAudios = vm.allAudios,
 								memoryYearGroups = vm.memoryYearGroups,
 								selectedAlbumPath = vm.selectedAlbumPath,
 								showCollectionsInAlbum = vm.showCollectionsInAlbum,
@@ -621,6 +626,7 @@ fun BrowserScreen(
 								onLoadMore = { vm.loadMoreTimelineIfNeeded() },
 								onOpenImage = onOpenImage,
 								onOpenVideo = onOpenVideo,
+								onOpenAudio = onOpenAudio,
 							)
 						}
 
@@ -847,6 +853,7 @@ fun BrowserScreen(
 			},
 			onOpenImage = onOpenImage,
 			onOpenVideo = onOpenVideo,
+			onOpenAudio = onOpenAudio,
 			urlOf = { vm.thumbnailUrlFor(it) },
 			directUrlOf = { vm.directUrlFor(it) },
 		)
@@ -877,8 +884,8 @@ fun BrowserScreen(
 
 	val activeGroup = vm.activePhotoGroupId?.let { gid -> vm.photoGroups.firstOrNull { it.id == gid } }
 	if (activeGroup != null) {
-		val allAlbumMedia = remember(vm.allPhotos, vm.allVideos) {
-			(vm.allPhotos + vm.allVideos).distinctBy { it.path }.sortedByDescending { it.effectiveDate }
+		val allAlbumMedia = remember(vm.allPhotos, vm.allVideos, vm.allAudios) {
+			(vm.allPhotos + vm.allVideos + vm.allAudios).distinctBy { it.path }.sortedByDescending { it.effectiveDate }
 		}
 		val targetAlbumDir = remember(activeGroup.albumDir, activeGroup.items) {
 			activeGroup.albumDir.trim('/').ifBlank {
@@ -900,6 +907,7 @@ fun BrowserScreen(
 			onDismiss = { vm.activePhotoGroupId = null },
 			onOpenImage = onOpenImage,
 			onOpenVideo = onOpenVideo,
+			onOpenAudio = onOpenAudio,
 			onRenameOrEditMemo = { newTitle, newMemo ->
 				vm.updatePhotoGroup(activeGroup.id, title = newTitle, memo = newMemo)
 			},
@@ -3366,6 +3374,7 @@ private fun HomeScreenContent(
 	onSelectMemoryGroup: (com.nasdrop.MemoryYearGroup) -> Unit,
 	onOpenImage: (DavEntry) -> Unit,
 	onOpenVideo: (DavEntry) -> Unit,
+	onOpenAudio: (DavEntry) -> Unit = {},
 	urlOf: (String) -> String?,
 	directUrlOf: (String) -> String?,
 	onOpenSettings: () -> Unit = {},
@@ -3669,7 +3678,8 @@ private fun HomeScreenContent(
 											.clip(RoundedCornerShape(12.dp))
 											.background(MaterialTheme.colorScheme.surfaceVariant)
 											.clickable {
-												if (entry.isVideo) onOpenVideo(entry)
+												if (entry.isAudio) onOpenAudio(entry)
+												else if (entry.isVideo) onOpenVideo(entry)
 												else onOpenImage(entry)
 											},
 									) {
@@ -3819,6 +3829,7 @@ private fun PhotoTimelineContent(
 	photoGroups: List<PhotoGroup> = emptyList(),
 	allAlbums: List<DavEntry>,
 	allPhotos: List<DavEntry> = emptyList(),
+	allAudios: List<DavEntry> = emptyList(),
 	memoryYearGroups: List<com.nasdrop.MemoryYearGroup> = emptyList(),
 	selectedAlbumPath: String,
 	showCollectionsInAlbum: Boolean = true,
@@ -3849,6 +3860,7 @@ private fun PhotoTimelineContent(
 	onOpenPhotoGroup: (PhotoGroup) -> Unit = {},
 	onOpenImage: (DavEntry) -> Unit,
 	onOpenVideo: (DavEntry) -> Unit = {},
+	onOpenAudio: (DavEntry) -> Unit = {},
 ) {
 	val currentPhotos = remember(groups) { groups.flatMap { it.items } }
 	val (groupByFirstPath, collapsedNonFirstPaths) = remember(photoGroups, currentPhotos, selectedAlbumPath, showCollectionsInAlbum) {
@@ -4207,6 +4219,7 @@ private fun PhotoTimelineContent(
 			AlbumFoldersGrid(
 				allAlbums = allAlbums,
 				allPhotos = allPhotos,
+				allAudios = allAudios,
 				folderIcons = folderIcons,
 				isRefreshing = isRefreshing,
 				onRefresh = onRefresh,
@@ -4371,8 +4384,15 @@ private fun PhotoTimelineContent(
 											verticalAlignment = Alignment.CenterVertically,
 											horizontalArrangement = Arrangement.spacedBy(8.dp),
 										) {
+											val hasAudioInGroup = group.items.any { it.isAudio }
+											val hasVisualInGroup = group.items.any { !it.isAudio }
+											val countSuffix = when {
+												hasAudioInGroup && !hasVisualInGroup -> "个音频"
+												hasAudioInGroup -> "项"
+												else -> "张"
+											}
 											Text(group.dateTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-											Text("${group.count}张", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+											Text("${group.count}$countSuffix", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 										}
 										if (isMulti) {
 											val isAllGroupSelected = visibleItems.isNotEmpty() && visibleItems.all { selectedPaths.contains(it.path) }
@@ -4410,7 +4430,9 @@ private fun PhotoTimelineContent(
 													} else if (photoGroup != null) {
 														onOpenPhotoGroup(photoGroup)
 													} else {
-														if (item.isVideo) {
+														if (item.isAudio) {
+															onOpenAudio(item)
+														} else if (item.isVideo) {
 															onOpenVideo(item)
 														} else {
 															onOpenImage(item)
@@ -4426,36 +4448,43 @@ private fun PhotoTimelineContent(
 												},
 											),
 									) {
-										val thumbTarget = urlOf(item.path)
-										var failedThumbUrl by remember(thumbTarget ?: item.path) { mutableStateOf<String?>(null) }
-										val thumbFailed = thumbTarget != null && failedThumbUrl == thumbTarget
-										val actualData = if (!thumbFailed) thumbTarget else null
-										if (!actualData.isNullOrBlank()) {
-											val cacheKey = remember(item.path, actualData) { thumbCacheKey(item.path, actualData) }
-											AsyncImage(
-												model = ImageRequest.Builder(LocalContext.current)
-													.data(actualData)
-													.memoryCacheKey(cacheKey)
-													.diskCacheKey(cacheKey)
-													.size(240, 240)
-													.precision(coil.size.Precision.INEXACT)
-													.allowRgb565(true)
-													.crossfade(false)
-													.build(),
-												onError = {
-													failedThumbUrl = actualData
-													onThumbnailError?.invoke(item.path)
-												},
-												contentDescription = item.name,
-												contentScale = ContentScale.Crop,
+										if (item.isAudio) {
+											AudioStoryGridCard(
+												item = item,
 												modifier = Modifier.fillMaxSize(),
 											)
 										} else {
-											Box(
-												modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
-												contentAlignment = Alignment.Center,
-											) {
-												FileIcon(category = if (item.isVideo) FileCategory.Video else FileCategory.Image, isDir = false, size = 32.dp)
+											val thumbTarget = urlOf(item.path)
+											var failedThumbUrl by remember(thumbTarget ?: item.path) { mutableStateOf<String?>(null) }
+											val thumbFailed = thumbTarget != null && failedThumbUrl == thumbTarget
+											val actualData = if (!thumbFailed) thumbTarget else null
+											if (!actualData.isNullOrBlank()) {
+												val cacheKey = remember(item.path, actualData) { thumbCacheKey(item.path, actualData) }
+												AsyncImage(
+													model = ImageRequest.Builder(LocalContext.current)
+														.data(actualData)
+														.memoryCacheKey(cacheKey)
+														.diskCacheKey(cacheKey)
+														.size(240, 240)
+														.precision(coil.size.Precision.INEXACT)
+														.allowRgb565(true)
+														.crossfade(false)
+														.build(),
+													onError = {
+														failedThumbUrl = actualData
+														onThumbnailError?.invoke(item.path)
+													},
+													contentDescription = item.name,
+													contentScale = ContentScale.Crop,
+													modifier = Modifier.fillMaxSize(),
+												)
+											} else {
+												Box(
+													modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
+													contentAlignment = Alignment.Center,
+												) {
+													FileIcon(category = if (item.isVideo) FileCategory.Video else FileCategory.Image, isDir = false, size = 32.dp)
+												}
 											}
 										}
 
@@ -4607,6 +4636,7 @@ private fun PhotoTimelineContent(
 private fun AlbumFoldersGrid(
 	allAlbums: List<DavEntry>,
 	allPhotos: List<DavEntry>,
+	allAudios: List<DavEntry> = emptyList(),
 	folderIcons: Map<String, String>,
 	isRefreshing: Boolean,
 	onRefresh: () -> Unit,
@@ -4707,12 +4737,16 @@ private fun AlbumFoldersGrid(
 				val photoCount = remember(album.path, allPhotos) {
 					allPhotos.count { it.path.startsWith(album.path + "/") }
 				}
+				val audioCount = remember(album.path, allAudios) {
+					allAudios.count { it.path.startsWith(album.path + "/") }
+				}
 				val customKey = folderIcons[album.path]
 				val coverPhoto = remember(album.path, allPhotos, customKey) {
 					if (customKey.isNullOrBlank()) {
 						allPhotos.firstOrNull { it.path.startsWith(album.path.trim('/') + "/") }
 					} else null
 				}
+				val isAudioOnlyAlbum = photoCount == 0 && audioCount > 0
 				val isDragging = draggingAlbumPath == album.path
 				Card(
 					shape = RoundedCornerShape(14.dp),
@@ -4808,6 +4842,25 @@ private fun AlbumFoldersGrid(
 								directUrlOf = directUrlOf,
 								size = 42.dp,
 							)
+						} else if (isAudioOnlyAlbum && customKey.isNullOrBlank()) {
+							Box(
+								modifier = Modifier
+									.size(42.dp)
+									.clip(RoundedCornerShape(10.dp))
+									.background(
+										Brush.linearGradient(
+											colors = listOf(Color(0xFF4F46E5), Color(0xFF9333EA)),
+										),
+									),
+								contentAlignment = Alignment.Center,
+							) {
+								Icon(
+									Icons.Rounded.MusicNote,
+									contentDescription = "音频相册",
+									tint = Color.White,
+									modifier = Modifier.size(22.dp),
+								)
+							}
 						} else {
 							FileIconByEntry(
 								entry = album,
@@ -4831,8 +4884,13 @@ private fun AlbumFoldersGrid(
 								overflow = TextOverflow.Ellipsis,
 							)
 							Spacer(modifier = Modifier.height(2.dp))
+							val albumCountText = when {
+								photoCount > 0 && audioCount > 0 -> "$photoCount 张照片 · $audioCount 个音频"
+								isAudioOnlyAlbum -> "$audioCount 个音频"
+								else -> "$photoCount 张照片"
+							}
 							Text(
-								text = "$photoCount 张照片",
+								text = albumCountText,
 								fontSize = 11.5.sp,
 								color = MaterialTheme.colorScheme.onSurfaceVariant,
 								maxLines = 1,
@@ -4883,6 +4941,88 @@ private fun AlbumFoldersGrid(
 					}
 				}
 			}
+		}
+	}
+}
+
+@Composable
+private fun AudioStoryGridCard(
+	item: DavEntry,
+	modifier: Modifier = Modifier,
+) {
+	val title = remember(item.name) {
+		item.name.substringBeforeLast('.', item.name)
+	}
+	val badgeText = remember(item.ext) {
+		item.ext.uppercase().ifBlank { "AUDIO" }
+	}
+	Box(
+		modifier = modifier.background(
+			Brush.linearGradient(
+				colors = listOf(
+					Color(0xFF312E81),
+					Color(0xFF6D28D9),
+					Color(0xFFBE185D),
+				),
+			),
+		),
+	) {
+		if (badgeText.isNotBlank()) {
+			Surface(
+				shape = RoundedCornerShape(6.dp),
+				color = Color.Black.copy(alpha = 0.48f),
+				modifier = Modifier
+					.align(Alignment.TopStart)
+					.padding(5.dp),
+			) {
+				Text(
+					text = badgeText,
+					color = Color.White,
+					fontSize = 9.sp,
+					fontWeight = FontWeight.Bold,
+					modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp),
+				)
+			}
+		}
+
+		Surface(
+			shape = CircleShape,
+			color = Color.White.copy(alpha = 0.18f),
+			modifier = Modifier
+				.align(Alignment.Center)
+				.offset(y = (-8).dp)
+				.size(40.dp),
+		) {
+			Box(contentAlignment = Alignment.Center) {
+				Icon(
+					imageVector = Icons.Rounded.MusicNote,
+					contentDescription = "音频",
+					tint = Color.White,
+					modifier = Modifier.size(22.dp),
+				)
+			}
+		}
+
+		Box(
+			modifier = Modifier
+				.align(Alignment.BottomCenter)
+				.fillMaxWidth()
+				.background(
+					Brush.verticalGradient(
+						colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.82f)),
+					),
+				)
+				.padding(horizontal = 6.dp, vertical = 5.dp),
+		) {
+			Text(
+				text = title,
+				color = Color.White,
+				fontSize = 11.sp,
+				lineHeight = 14.sp,
+				fontWeight = FontWeight.Medium,
+				maxLines = 2,
+				overflow = TextOverflow.Ellipsis,
+			)
 		}
 	}
 }
@@ -8214,6 +8354,7 @@ private fun MemoryDetailModalSheet(
 	onSelectAlbum: (String) -> Unit,
 	onOpenImage: (DavEntry) -> Unit,
 	onOpenVideo: (DavEntry) -> Unit = {},
+	onOpenAudio: (DavEntry) -> Unit = {},
 	urlOf: (String) -> String?,
 	directUrlOf: ((String) -> String?)?,
 ) {
@@ -8335,7 +8476,9 @@ private fun MemoryDetailModalSheet(
 										.clip(RoundedCornerShape(8.dp))
 										.background(MaterialTheme.colorScheme.surfaceVariant)
 										.clickable {
-											if (item.isVideo) {
+											if (item.isAudio) {
+												onOpenAudio(item)
+											} else if (item.isVideo) {
 												onOpenVideo(item)
 											} else {
 												onOpenImage(item)
@@ -8453,6 +8596,7 @@ private fun PhotoGroupDetailSheet(
 	onDismiss: () -> Unit,
 	onOpenImage: (DavEntry) -> Unit,
 	onOpenVideo: (DavEntry) -> Unit,
+	onOpenAudio: (DavEntry) -> Unit = {},
 	onRenameOrEditMemo: (title: String, memo: String) -> Unit,
 	onReorderItems: (List<String>) -> Unit,
 	onRemoveItem: (String) -> Unit,
@@ -8480,6 +8624,7 @@ private fun PhotoGroupDetailSheet(
 	val currentOnRemoveItem by rememberUpdatedState(onRemoveItem)
 	val currentOnOpenImage by rememberUpdatedState(onOpenImage)
 	val currentOnOpenVideo by rememberUpdatedState(onOpenVideo)
+	val currentOnOpenAudio by rememberUpdatedState(onOpenAudio)
 	val gridState = rememberLazyGridState()
 	val density = LocalDensity.current
 	var draggedItemSize by remember { mutableStateOf(IntSize.Zero) }
@@ -8754,7 +8899,9 @@ private fun PhotoGroupDetailSheet(
 									// 短按：直接放大查看（保留全部正常照片操作）
 									val entry = currentPhotoMap[hitPath]
 									if (entry != null) {
-										if (entry.isVideo) currentOnOpenVideo(entry) else currentOnOpenImage(entry)
+										if (entry.isAudio) currentOnOpenAudio(entry)
+										else if (entry.isVideo) currentOnOpenVideo(entry)
+										else currentOnOpenImage(entry)
 									}
 								}
 							}
