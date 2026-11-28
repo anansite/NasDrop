@@ -172,5 +172,37 @@ class HomeViewerAlbumTest {
 			listOf("宫格视图", "列表视图", "紧凑列表", "卡片视图"),
 			PhotosViewMode.entries.map { it.label },
 		)
+		assertEquals(
+			listOf("宫格", "列表", "紧凑", "卡片"),
+			PhotosViewMode.entries.map { it.shortLabel },
+		)
+
+		val localMap = mapOf(
+			resolveAlbumViewModeKey("Photos/故事") to PhotosViewMode.Cards,
+			resolveAlbumViewModeKey("") to PhotosViewMode.Compact,
+		)
+		assertEquals(PhotosViewMode.Cards, resolveAlbumViewMode("Photos/故事", localMap))
+		assertEquals(PhotosViewMode.Compact, resolveAlbumViewMode("", localMap))
+		assertEquals(PhotosViewMode.TimelineGrid, resolveAlbumViewMode("Photos/默认相册", localMap))
+	}
+
+	@Test
+	fun backgroundAudioExitStopsWhenPausedOrIdleAndKeepsWhenPlayingOrBuffering() {
+		val entry = DavEntry(name = "story.mp3", path = "Photos/故事/story.mp3", isDir = false)
+		assertFalse(
+			BackgroundAudioController.shouldStopOnExit(
+				AudioPlaybackUiState(activeEntry = entry, isPlaying = true, isBuffering = false),
+			),
+		)
+		assertFalse(
+			BackgroundAudioController.shouldStopOnExit(
+				AudioPlaybackUiState(activeEntry = entry, isPlaying = false, isBuffering = true),
+			),
+		)
+		assertTrue(
+			BackgroundAudioController.shouldStopOnExit(
+				AudioPlaybackUiState(activeEntry = entry, isPlaying = false, isBuffering = false),
+			),
+		)
 	}
 }

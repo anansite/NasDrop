@@ -54,6 +54,7 @@ class Prefs(private val context: Context) {
 		val themePalette = stringPreferencesKey("theme_palette")
 		val viewMode = stringPreferencesKey("view_mode")
 		val photosViewMode = stringPreferencesKey("photos_view_mode")
+		val albumViewModes = stringPreferencesKey("album_view_modes")
 		val sortOrder = stringPreferencesKey("sort_order")
 		val albumOrder = stringPreferencesKey("album_order")
 		val mediaOrder = stringPreferencesKey("media_order")
@@ -129,6 +130,25 @@ class Prefs(private val context: Context) {
 	suspend fun getPhotosViewMode(): String? = context.dataStore.data.map { it[Keys.photosViewMode] }.first()
 	suspend fun setPhotosViewMode(mode: String) {
 		context.dataStore.edit { it[Keys.photosViewMode] = mode }
+	}
+	suspend fun getAlbumViewModes(): Map<String, String> {
+		val raw = context.dataStore.data.map { it[Keys.albumViewModes] }.first() ?: return emptyMap()
+		return runCatching {
+			val obj = org.json.JSONObject(raw)
+			buildMap {
+				val keys = obj.keys()
+				while (keys.hasNext()) {
+					val k = keys.next()
+					val v = obj.optString(k)
+					if (k.isNotBlank() && v.isNotBlank()) put(k, v)
+				}
+			}
+		}.getOrDefault(emptyMap())
+	}
+	suspend fun setAlbumViewModes(modes: Map<String, String>) {
+		val obj = org.json.JSONObject()
+		modes.forEach { (k, v) -> obj.put(k, v) }
+		context.dataStore.edit { it[Keys.albumViewModes] = obj.toString() }
 	}
 
 	suspend fun getSortOrder(): String? = context.dataStore.data.map { it[Keys.sortOrder] }.first()

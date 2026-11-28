@@ -64,12 +64,20 @@ enum class ViewMode {
 	Grid,    // 2列宫格大图
 }
 
-enum class PhotosViewMode(val label: String) {
-	TimelineGrid("宫格视图"), // 默认保持现状：3列时间轴宫格
-	Cards("列表视图"),        // 与文件夹列表对齐
-	Compact("紧凑列表"),      // 与文件夹紧凑列表对齐
-	Grid("卡片视图"),         // 与文件夹2列大卡片对齐
+enum class PhotosViewMode(val label: String, val shortLabel: String) {
+	TimelineGrid("宫格视图", "宫格"), // 默认保持现状：3列时间轴宫格
+	Cards("列表视图", "列表"),        // 与文件夹列表对齐
+	Compact("紧凑列表", "紧凑"),      // 与文件夹紧凑列表对齐
+	Grid("卡片视图", "卡片"),         // 与文件夹2列大卡片对齐
 }
+
+fun resolveAlbumViewModeKey(albumPath: String): String =
+	albumPath.trim('/').ifBlank { "__ALL__" }
+
+fun resolveAlbumViewMode(
+	albumPath: String,
+	albumViewModes: Map<String, PhotosViewMode>,
+): PhotosViewMode = albumViewModes[resolveAlbumViewModeKey(albumPath)] ?: PhotosViewMode.TimelineGrid
 
 enum class SortOrder(val label: String) {
 	UploadDesc("按上传时间 ↓"),
@@ -148,9 +156,13 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 	var viewMode by mutableStateOf(ViewMode.Cards)
 		private set
 
-	/** 相册视图模式：默认保持现状（3列时间轴宫格），支持切换为列表/紧凑列表/卡片视图 */
-	var photosViewMode by mutableStateOf(PhotosViewMode.TimelineGrid)
+	/** 按相册路径本地缓存的视图模式（仅保存在当前设备，未设置的相册默认保持 3 列时间轴宫格） */
+	var albumViewModes by mutableStateOf<Map<String, PhotosViewMode>>(emptyMap())
 		private set
+
+	/** 当前相册生效的视图模式（各相册独立记忆，默认保持现状） */
+	val photosViewMode: PhotosViewMode
+		get() = resolveAlbumViewMode(selectedAlbumPath, albumViewModes)
 
 	/** 持久化列表与网格滚动位置，跨 Route（看图/视频/设置）生命周期不丢失 */
 	val photoGridState = LazyGridState()
@@ -1589,10 +1601,24 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 				}
 			}
 			runCatching {
-				val savedPhotosView = app.prefs.getPhotosViewMode()
-				if (savedPhotosView != null) {
-					val pvm = PhotosViewMode.valueOf(savedPhotosView)
-					withContext(Dispatchers.Main) { photosViewMode = pvm }
+				val rawMap = app.prefs.getAlbumViewModes()
+				val parsed = buildMap {
+					rawMap.forEach { (k, v) ->
+						val mode = PhotosViewMode.entries.firstOrNull { it.name == v }
+						if (mode != null && mode != PhotosViewMode.TimelineGrid) {
+							put(k, mode)
+						}
+					}
+					if (isEmpty()) {
+						val legacy = app.prefs.getPhotosViewMode()
+						val legacyMode = PhotosViewMode.entries.firstOrNull { it.name == legacy }
+						if (legacyMode != null && legacyMode != PhotosViewMode.TimelineGrid) {
+							put(resolveAlbumViewModeKey(""), legacyMode)
+						}
+					}
+				}
+				if (parsed.isNotEmpty()) {
+					withContext(Dispatchers.Main) { albumViewModes = parsed }
 				}
 			}
 			runCatching {
@@ -1642,10 +1668,20 @@ class BrowserViewModel(private val app: NasDropApp) : ViewModel() {
 		toggleViewMode()
 	}
 
-	fun setPhotosView(mode: PhotosViewMode) {
-		if (photosViewMode != mode) {
-			photosViewMode = mode
-			viewModelScope.launch { app.prefs.setPhotosViewMode(mode.name) }
+	fun setPhotosView(mode: PhotosViewMode, albumPath: String = selectedAlbumPath) {
+		val key = resolveAlbumViewModeKey(albumPath)
+		val current = resolveAlbumViewMode(albumPath, albumViewModes)
+		if (current != mode) {
+			val next = albumViewModes.toMutableMap()
+			if (mode == PhotosViewMode.TimelineGrid) {
+				next.remove(key)
+			} else {
+				next[key] = mode
+			}
+			albumViewModes = next
+			viewModelScope.launch {
+				app.prefs.setAlbumViewModes(next.mapValues { it.value.name })
+			}
 		}
 	}
 

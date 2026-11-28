@@ -607,6 +607,7 @@ fun BrowserScreen(
 								compactListState = vm.photoCompactState,
 								cardGridState = vm.photoCardGridState,
 								photosViewMode = vm.photosViewMode,
+								onSelectPhotosViewMode = { vm.setPhotosView(it) },
 								groups = vm.photoTimelineGroups,
 								photoGroups = vm.photoGroups,
 								allAlbums = vm.allAlbumFolders,
@@ -3941,6 +3942,7 @@ private fun PhotoTimelineContent(
 	compactListState: LazyListState = rememberLazyListState(),
 	cardGridState: LazyGridState = rememberLazyGridState(),
 	photosViewMode: PhotosViewMode = PhotosViewMode.TimelineGrid,
+	onSelectPhotosViewMode: (PhotosViewMode) -> Unit = {},
 	groups: List<com.nasdrop.TimelineGroup>,
 	photoGroups: List<PhotoGroup> = emptyList(),
 	allAlbums: List<DavEntry>,
@@ -4370,19 +4372,46 @@ private fun PhotoTimelineContent(
 			)
 		} else {
 			if (selectedAlbumPath.isNotBlank()) {
-				val currentAlbum = allAlbums.firstOrNull { it.path == selectedAlbumPath }
 				Row(
 					modifier = Modifier
 						.fillMaxWidth()
-						.padding(horizontal = 16.dp, vertical = 2.dp),
+						.padding(horizontal = 12.dp, vertical = 3.dp),
 					verticalAlignment = Alignment.CenterVertically,
 				) {
-					Text(
-						"当前相册：${currentAlbum?.name ?: "自定义相册"}",
-						style = MaterialTheme.typography.labelMedium,
-						fontWeight = FontWeight.Bold,
-						color = MaterialTheme.colorScheme.primary,
-					)
+					Surface(
+						modifier = Modifier.height(26.dp),
+						shape = RoundedCornerShape(8.dp),
+						color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+						border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+					) {
+						Row(
+							modifier = Modifier.fillMaxHeight().padding(2.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(2.dp),
+						) {
+							PhotosViewMode.entries.forEach { mode ->
+								val selected = mode == photosViewMode
+								Surface(
+									modifier = Modifier.fillMaxHeight(),
+									shape = RoundedCornerShape(6.dp),
+									color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+									onClick = { onSelectPhotosViewMode(mode) },
+								) {
+									Box(
+										modifier = Modifier.fillMaxHeight().padding(horizontal = 8.dp),
+										contentAlignment = Alignment.Center,
+									) {
+										Text(
+											text = mode.shortLabel,
+											fontSize = 11.sp,
+											fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+											color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+										)
+									}
+								}
+							}
+						}
+					}
 					Spacer(Modifier.weight(1f))
 					Surface(
 						onClick = onToggleShowCollections,

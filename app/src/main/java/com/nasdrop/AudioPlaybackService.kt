@@ -416,6 +416,16 @@ object BackgroundAudioController {
 		AudioPlaybackService.stopIfRunning(appContext)
 	}
 
+	internal fun shouldStopOnExit(state: AudioPlaybackUiState): Boolean =
+		!state.isPlaying && !state.isBuffering
+
+	/** 退出全屏音频页时调用：仍在播放/缓冲则保持后台与悬浮条继续播放；暂停或非播放状态则停止并清理。 */
+	fun handleExitPlayerScreen() {
+		if (shouldStopOnExit(_state.value)) {
+			stopAndClear()
+		}
+	}
+
 	private fun syncForegroundNotification(ensureServiceStarted: Boolean = false) {
 		val ctx = appContext ?: return
 		val cur = _state.value

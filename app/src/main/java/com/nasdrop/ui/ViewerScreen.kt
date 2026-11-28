@@ -3679,13 +3679,18 @@ fun AudioPlayer(
 		}
 	}
 
+	val exitPlayerScreen = {
+		BackgroundAudioController.handleExitPlayerScreen()
+		onBack()
+	}
+
 	BackHandler {
 		if (showPlaylistSheet) {
 			showPlaylistSheet = false
 		} else if (showCastSheet) {
 			showCastSheet = false
 		} else {
-			onBack()
+			exitPlayerScreen()
 		}
 	}
 
@@ -3720,7 +3725,7 @@ fun AudioPlayer(
 				.padding(horizontal = 20.dp, vertical = 10.dp),
 			horizontalAlignment = Alignment.CenterHorizontally,
 		) {
-			// 1. 顶部导航与操作栏（返回保留后台播放；停止彻底结束）
+			// 1. 顶部导航与操作栏（播放中返回继续后台播放；暂停状态下返回直接结束）
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
@@ -3730,8 +3735,8 @@ fun AudioPlayer(
 					verticalAlignment = Alignment.CenterVertically,
 					modifier = Modifier.weight(1f),
 				) {
-					IconButton(onClick = onBack) {
-						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回（后台继续播放）", tint = OnMediaBackdrop)
+					IconButton(onClick = exitPlayerScreen) {
+						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = OnMediaBackdrop)
 					}
 					Column(modifier = Modifier.padding(end = 8.dp)) {
 						Text(
@@ -3756,14 +3761,6 @@ fun AudioPlayer(
 					verticalAlignment = Alignment.CenterVertically,
 					horizontalArrangement = Arrangement.spacedBy(2.dp),
 				) {
-					IconButton(
-						onClick = {
-							BackgroundAudioController.stopAndClear()
-							onBack()
-						},
-					) {
-						Icon(Icons.Rounded.Stop, contentDescription = "停止播放", tint = OnMediaBackdrop)
-					}
 					if (onSaveToMusic != null) {
 						IconButton(
 							onClick = {
@@ -4061,41 +4058,25 @@ fun AudioPlayer(
 
 			Spacer(modifier = Modifier.height(18.dp))
 
-			// 5. 纯净播控按键区：上一首 / 快退10s / 播放暂停 / 快进10s / 下一首
+			// 5. 纯净播控按键区：上一首 / 播放暂停 / 下一首
 			Row(
 				modifier = Modifier
 					.fillMaxWidth()
 					.padding(bottom = 16.dp),
 				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.SpaceEvenly,
+				horizontalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
 			) {
 				IconButton(
 					enabled = effectivePlaylist.size > 1,
 					onClick = { BackgroundAudioController.stepTrack(-1) },
-					modifier = Modifier.size(44.dp),
+					modifier = Modifier.size(48.dp),
 				) {
 					Icon(
 						Icons.Rounded.SkipPrevious,
 						contentDescription = "上一首",
 						tint = if (effectivePlaylist.size > 1) OnMediaBackdrop else OnMediaBackdrop.copy(alpha = 0.3f),
-						modifier = Modifier.size(32.dp),
+						modifier = Modifier.size(34.dp),
 					)
-				}
-
-				Surface(
-					shape = CircleShape,
-					color = OnMediaBackdrop.copy(alpha = 0.12f),
-					onClick = { BackgroundAudioController.seekBy(-10_000L) },
-					modifier = Modifier.size(46.dp),
-				) {
-					Box(contentAlignment = Alignment.Center) {
-						Icon(
-							Icons.Rounded.Replay10,
-							contentDescription = "快退10秒",
-							tint = OnMediaBackdrop,
-							modifier = Modifier.size(25.dp),
-						)
-					}
 				}
 
 				Surface(
@@ -4114,32 +4095,16 @@ fun AudioPlayer(
 					}
 				}
 
-				Surface(
-					shape = CircleShape,
-					color = OnMediaBackdrop.copy(alpha = 0.12f),
-					onClick = { BackgroundAudioController.seekBy(10_000L) },
-					modifier = Modifier.size(46.dp),
-				) {
-					Box(contentAlignment = Alignment.Center) {
-						Icon(
-							Icons.Rounded.Forward10,
-							contentDescription = "快进10秒",
-							tint = OnMediaBackdrop,
-							modifier = Modifier.size(25.dp),
-						)
-					}
-				}
-
 				IconButton(
 					enabled = effectivePlaylist.size > 1,
 					onClick = { BackgroundAudioController.stepTrack(1) },
-					modifier = Modifier.size(44.dp),
+					modifier = Modifier.size(48.dp),
 				) {
 					Icon(
 						Icons.Rounded.SkipNext,
 						contentDescription = "下一首",
 						tint = if (effectivePlaylist.size > 1) OnMediaBackdrop else OnMediaBackdrop.copy(alpha = 0.3f),
-						modifier = Modifier.size(32.dp),
+						modifier = Modifier.size(34.dp),
 					)
 				}
 			}
