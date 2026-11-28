@@ -116,6 +116,7 @@ import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Sync
@@ -182,6 +183,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.nasdrop.AudioPlaybackUiState
+import com.nasdrop.BackgroundAudioController
 import com.nasdrop.BrowserViewModel
 import com.nasdrop.DavEntry
 import com.nasdrop.FileCategory
@@ -277,6 +280,7 @@ fun BrowserScreen(
 	onOpenImage: (DavEntry) -> Unit = {},
 	onOpenVideo: (DavEntry) -> Unit = {},
 	onOpenAudio: (DavEntry) -> Unit = {},
+	onOpenCurrentAudio: () -> Unit = {},
 	onOpenSettings: () -> Unit = {},
 	onLogin: () -> Unit = {},
 	onConfirm: (String) -> Unit = {},
@@ -284,6 +288,8 @@ fun BrowserScreen(
 ) {
 	val context = LocalContext.current
 	val routeInfo by vm.routeInfo.collectAsState()
+	val bgAudioState by BackgroundAudioController.state.collectAsState()
+	val hasMiniAudio = mode == BrowserMode.Browse && !vm.isMultiSelectMode && bgAudioState.activeEntry != null
 
 	// 一次性操作提示（移动/重命名/删除/新建的真实结果）。
 	// 旧版把失败信息写进 vm.error，而 error 从未被渲染——用户看到的只是"点了没反应"。
@@ -727,7 +733,7 @@ fun BrowserScreen(
 					exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
 					modifier = Modifier
 						.align(Alignment.BottomCenter)
-						.padding(bottom = 84.dp),
+						.padding(bottom = if (hasMiniAudio) 150.dp else 84.dp),
 				) {
 					Surface(
 						shape = RoundedCornerShape(24.dp),
@@ -832,15 +838,33 @@ fun BrowserScreen(
 					onCancel = { vm.exitMultiSelect() },
 				)
 			} else {
-				CommercialNavigationBar(
-					currentTab = vm.currentTab,
-					onTabSelect = { tab ->
-						vm.currentTab = tab
-						if (tab == MainTab.Home || tab == MainTab.Photos || tab == MainTab.Media) {
-							vm.ensureMediaScanned()
+				Column(modifier = Modifier.fillMaxWidth()) {
+					androidx.compose.animation.AnimatedVisibility(
+						visible = hasMiniAudio,
+						enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+						exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+					) {
+						bgAudioState.activeEntry?.let { playingEntry ->
+							AudioMiniPlayerBar(
+								state = bgAudioState,
+								entry = playingEntry,
+								onExpand = onOpenCurrentAudio,
+								onTogglePlayPause = { BackgroundAudioController.togglePlayPause() },
+								onNext = { BackgroundAudioController.stepTrack(1) },
+								onStop = { BackgroundAudioController.stopAndClear() },
+							)
 						}
-					},
-				)
+					}
+					CommercialNavigationBar(
+						currentTab = vm.currentTab,
+						onTabSelect = { tab ->
+							vm.currentTab = tab
+							if (tab == MainTab.Home || tab == MainTab.Photos || tab == MainTab.Media) {
+								vm.ensureMediaScanned()
+							}
+						},
+					)
+				}
 			}
 		}
 	}
@@ -5708,6 +5732,135 @@ private fun AlbumFolderDropdownMenu(
 				onClick = { onDismiss(); onDeleteAlbum(album) },
 				leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
 			)
+		}
+	}
+}
+
+@Composable
+private fun AudioMiniPlayerBar(
+	state: AudioPlaybackUiState,
+	entry: DavEntry,
+	onExpand: () -> Unit,
+	onTogglePlayPause: () -> Unit,
+	onNext: () -> Unit,
+	onStop: () -> Unit,
+) {
+	val title = state.trackTitle ?: entry.name.substringBeforeLast('.', entry.name)
+	val folder = entry.path.substringBeforeLast('/', "").substringAfterLast('/').ifBlank { "音频" }
+	val progressFraction = if (state.duration > 0L) {
+		(state.currentPosition.toFloat() / state.duration.toFloat()).coerceIn(0f, 1f)
+	} else 0f
+
+	fun fmt(ms: Long): String {
+		val total = (ms.coerceAtLeast(0L)) / 1000L
+		return String.format(Locale.ROOT, "%02d:%02d", total / 60L, total % 60L)
+	}
+
+	Surface(
+		modifier = Modifier
+			.fillMaxWidth()
+			.padding(horizontal = 12.dp, vertical = 4.dp)
+			.clip(RoundedCornerShape(16.dp))
+			.clickable(onClick = onExpand),
+		shape = RoundedCornerShape(16.dp),
+		color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.96f),
+		tonalElevation = 6.dp,
+		shadowElevation = 8.dp,
+		border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+	) {
+		Column(modifier = Modifier.fillMaxWidth()) {
+			if (state.duration > 0L) {
+				Box(
+					modifier = Modifier
+						.fillMaxWidth()
+						.height(2.dp)
+						.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+				) {
+					Box(
+						modifier = Modifier
+							.fillMaxWidth(progressFraction)
+							.fillMaxHeight()
+							.background(MaterialTheme.colorScheme.primary),
+					)
+				}
+			}
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(start = 10.dp, end = 6.dp, top = 7.dp, bottom = 7.dp),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(10.dp),
+			) {
+				Box(
+					modifier = Modifier
+						.size(36.dp)
+						.clip(CircleShape)
+						.background(
+							Brush.linearGradient(
+								colors = listOf(Color(0xFF4338CA), Color(0xFFDB2777)),
+							),
+						),
+					contentAlignment = Alignment.Center,
+				) {
+					Icon(
+						imageVector = Icons.Rounded.MusicNote,
+						contentDescription = null,
+						tint = Color.White,
+						modifier = Modifier.size(18.dp),
+					)
+				}
+				Column(modifier = Modifier.weight(1f)) {
+					Text(
+						text = title,
+						fontSize = 13.sp,
+						fontWeight = FontWeight.SemiBold,
+						color = MaterialTheme.colorScheme.onSurface,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
+					val timeInfo = if (state.duration > 0L) "${fmt(state.currentPosition)} / ${fmt(state.duration)}" else if (state.isBuffering) "缓冲中…" else "后台播放中"
+					Text(
+						text = "$folder · $timeInfo",
+						fontSize = 11.sp,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+					)
+				}
+				IconButton(
+					onClick = onTogglePlayPause,
+					modifier = Modifier.size(36.dp),
+				) {
+					Icon(
+						imageVector = if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+						contentDescription = if (state.isPlaying) "暂停" else "播放",
+						tint = MaterialTheme.colorScheme.primary,
+					)
+				}
+				if (state.playlist.size > 1) {
+					IconButton(
+						onClick = onNext,
+						modifier = Modifier.size(34.dp),
+					) {
+						Icon(
+							imageVector = Icons.Rounded.SkipNext,
+							contentDescription = "下一首",
+							tint = MaterialTheme.colorScheme.onSurfaceVariant,
+						)
+					}
+				}
+				IconButton(
+					onClick = onStop,
+					modifier = Modifier.size(34.dp),
+				) {
+					Icon(
+						imageVector = Icons.Rounded.Close,
+						contentDescription = "停止并关闭音频播放",
+						tint = MaterialTheme.colorScheme.onSurfaceVariant,
+						modifier = Modifier.size(18.dp),
+					)
+				}
+			}
 		}
 	}
 }

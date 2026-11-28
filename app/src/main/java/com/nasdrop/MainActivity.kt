@@ -48,6 +48,7 @@ private sealed interface Route {
 class MainActivity : ComponentActivity() {
 	private var uploadDirectory by mutableStateOf<String?>(null)
 	private var transferRequest by mutableIntStateOf(0)
+	private var openAudioRequest by mutableIntStateOf(0)
 
 	override fun onCreate(savedInstanceState: Bundle?) {
 		super.onCreate(savedInstanceState)
@@ -67,8 +68,10 @@ class MainActivity : ComponentActivity() {
 	private fun handleUploadIntent(intent: Intent) {
 		uploadDirectory = intent.getStringExtra(EXTRA_UPLOAD_DIR)
 		if (intent.getBooleanExtra(EXTRA_SHOW_TRANSFERS, false)) transferRequest++
+		if (intent.getBooleanExtra(EXTRA_OPEN_AUDIO, false)) openAudioRequest++
 		intent.removeExtra(EXTRA_UPLOAD_DIR)
 		intent.removeExtra(EXTRA_SHOW_TRANSFERS)
+		intent.removeExtra(EXTRA_OPEN_AUDIO)
 	}
 
 	@Composable
@@ -91,6 +94,15 @@ class MainActivity : ComponentActivity() {
 			}
 			LaunchedEffect(transferRequest) {
 				if (transferRequest > 0) route = Route.Browser
+			}
+			LaunchedEffect(openAudioRequest) {
+				if (openAudioRequest > 0) {
+					val st = BackgroundAudioController.state.value
+					val curEntry = st.activeEntry
+					if (curEntry != null) {
+						route = Route.Audio(curEntry, st.playlist.ifEmpty { listOf(curEntry) })
+					}
+				}
 			}
 
 			// 上传进度通知需要这个权限；拒绝也不影响功能，只是看不到通知栏进度
@@ -162,7 +174,18 @@ class MainActivity : ComponentActivity() {
 						route = Route.Images(album, index)
 					},
 					onOpenVideo = { entry -> route = Route.Video(entry) },
-					onOpenAudio = { entry -> route = Route.Audio(entry, vm.audioPlaylistFor(entry)) },
+					onOpenAudio = { entry ->
+						val list = vm.audioPlaylistFor(entry)
+						BackgroundAudioController.openOrPlay(context, entry, list) { p -> vm.directUrlFor(p) }
+						route = Route.Audio(entry, list)
+					},
+					onOpenCurrentAudio = {
+						val st = BackgroundAudioController.state.value
+						val cur = st.activeEntry
+						if (cur != null) {
+							route = Route.Audio(cur, st.playlist.ifEmpty { listOf(cur) })
+						}
+					},
 					onOpenSettings = { vm.currentTab = MainTab.Settings },
 					onLogin = login,
 					transferRequest = transferRequest,
@@ -247,5 +270,6 @@ class MainActivity : ComponentActivity() {
 	companion object {
 		const val EXTRA_UPLOAD_DIR = "upload_dir"
 		const val EXTRA_SHOW_TRANSFERS = "show_transfers"
+		const val EXTRA_OPEN_AUDIO = "open_audio_player"
 	}
 }

@@ -199,6 +199,8 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
+import com.nasdrop.AudioPlayMode
+import com.nasdrop.BackgroundAudioController
 import com.nasdrop.MediaExifHelper
 import com.nasdrop.MediaExifData
 import com.nasdrop.NasDb
@@ -207,6 +209,7 @@ import com.nasdrop.DlnaDevice
 import com.nasdrop.DlnaManager
 import com.nasdrop.DlnaPlaybackState
 import com.nasdrop.app
+import com.nasdrop.createConfiguredExoPlayer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -1750,8 +1753,9 @@ fun VideoPlayer(
 		setImmersiveFullscreen(activity, isLandscape)
 	}
 
-	// 退出播放器时自动恢复系统方向与系统栏显示
+	// 退出播放器时自动恢复系统方向与系统栏显示，进入视频前暂停后台音频避免混音
 	DisposableEffect(Unit) {
+		BackgroundAudioController.pauseIfPlaying()
 		onDispose {
 			setImmersiveFullscreen(activity, false)
 			activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -3334,45 +3338,6 @@ private fun CompanionMemoCapsule(
 	}
 }
 
-@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-private fun createConfiguredExoPlayer(
-	context: Context,
-	http: okhttp3.OkHttpClient,
-	handleAudioFocus: Boolean = false,
-): ExoPlayer {
-	val factory = DefaultMediaSourceFactory(context)
-		.setDataSourceFactory(VideoCacheManager.createDataSourceFactory(context, http))
-	val loadControl = DefaultLoadControl.Builder()
-		.setBufferDurationsMs(
-			15_000,   // minBufferMs (15s)
-			60_000,   // maxBufferMs (60s)
-			1_500,    // bufferForPlaybackMs (1.5s 安全起播)
-			3_000,    // bufferForPlaybackAfterRebufferMs (3s 稳定恢复)
-		)
-		.setBackBuffer(15_000, true)
-		.setPrioritizeTimeOverSizeThresholds(true)
-		.build()
-
-	val renderersFactory = DefaultRenderersFactory(context)
-		.setEnableDecoderFallback(true)
-
-	return ExoPlayer.Builder(context, renderersFactory)
-		.setMediaSourceFactory(factory)
-		.setLoadControl(loadControl)
-		.apply {
-			if (handleAudioFocus) {
-				setAudioAttributes(
-					AudioAttributes.Builder()
-						.setUsage(C.USAGE_MEDIA)
-						.setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-						.build(),
-					true,
-				)
-			}
-		}
-		.build()
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DlnaCastBottomSheet(
@@ -3653,18 +3618,11 @@ private fun DlnaCastBottomSheet(
 	}
 }
 
-private enum class AudioPlayMode(val label: String) {
-	SEQUENTIAL("顺序播放"),
-	LOOP_ONE("单曲循环"),
-	LOOP_ALL("列表循环"),
-}
-
 /**
- * 内置音频播放器：复用与 VideoPlayer 一致的 ExoPlayer 缓存/鉴权/断点续播管线，
- * 针对故事相册与常见音频格式提供专辑封面展示、列表连续播放、熄屏连播、倍速调节与 DLNA 投屏。
+ * 内置音频播放器：绑定至 [BackgroundAudioController] 进程级后台播放器，
+ * 点击返回可保持后台及熄屏持续播放，除非手动点击「停止」或清空播放栏。
  */
 @OptIn(ExperimentalMaterial3Api::class)
-@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun AudioPlayer(
 	entry: DavEntry,
@@ -3675,44 +3633,51 @@ fun AudioPlayer(
 	onOpenExternal: ((DavEntry) -> Unit)? = null,
 ) {
 	val context = LocalContext.current
-	val http = context.app.repo.http()
-	val nasDb = remember { NasDb.getInstance(context) }
+	val audioState by BackgroundAudioController.state.collectAsState()
 
-	val effectivePlaylist = remember(playlist, entry.path) {
+	LaunchedEffect(entry.path) {
+		val curPath = BackgroundAudioController.state.value.activeEntry?.path
+		if (curPath != entry.path) {
+			BackgroundAudioController.openOrPlay(context, entry, playlist, urlOf)
+		}
+	}
+
+	val effectivePlaylist = audioState.playlist.ifEmpty {
 		if (playlist.any { it.path == entry.path }) playlist else listOf(entry) + playlist
 	}
-	var activeEntry by remember(entry.path) { mutableStateOf(entry) }
-	val currentIndex = remember(effectivePlaylist, activeEntry.path) {
-		effectivePlaylist.indexOfFirst { it.path == activeEntry.path }.coerceAtLeast(0)
-	}
-	val activeUrl = remember(activeEntry.path) { urlOf(activeEntry.path) }
+	val activeEntry = audioState.activeEntry ?: entry
+	val currentIndex = audioState.currentIndex.coerceIn(0, (effectivePlaylist.size - 1).coerceAtLeast(0))
+	val activeUrl = audioState.activeUrl ?: urlOf(activeEntry.path)
 
-	var isPlaying by remember { mutableStateOf(false) }
-	var isBuffering by remember { mutableStateOf(true) }
-	var currentPosition by remember { mutableLongStateOf(0L) }
-	var bufferedPosition by remember { mutableLongStateOf(0L) }
-	var duration by remember { mutableLongStateOf(0L) }
-	var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
-	var playMode by remember { mutableStateOf(AudioPlayMode.SEQUENTIAL) }
+	val isPlaying = audioState.isPlaying
+	val isBuffering = audioState.isBuffering
+	val currentPosition = audioState.currentPosition
+	val bufferedPosition = audioState.bufferedPosition
+	val duration = audioState.duration
+	val playbackSpeed = audioState.playbackSpeed
+	val playMode = audioState.playMode
+	val playbackError = audioState.playbackError
+	val savedProgress = audioState.resumeSavedMs
+
 	var isSaving by remember { mutableStateOf(false) }
 	var showCastSheet by remember { mutableStateOf(false) }
 	var showPlaylistSheet by remember { mutableStateOf(false) }
-	var playbackError by remember(activeEntry.path) { mutableStateOf<String?>(null) }
+	var showResumeTip by remember(activeEntry.path, savedProgress) { mutableStateOf(savedProgress > 3000L) }
 
-	var trackTitle by remember(activeEntry.path) { mutableStateOf<String?>(null) }
-	var trackArtist by remember(activeEntry.path) { mutableStateOf<String?>(null) }
-	var trackAlbum by remember(activeEntry.path) { mutableStateOf<String?>(null) }
-	var artworkBytes by remember(activeEntry.path) { mutableStateOf<ByteArray?>(null) }
-	val artworkBitmap: ImageBitmap? = remember(artworkBytes) {
-		artworkBytes?.let { bytes ->
+	val artworkBitmap: ImageBitmap? = remember(audioState.artworkBytes) {
+		audioState.artworkBytes?.let { bytes ->
 			runCatching {
 				BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
 			}.getOrNull()
 		}
 	}
 
-	val savedProgress = remember(activeEntry.path) { nasDb.getVideoProgress(activeEntry.path) }
-	var showResumeTip by remember(activeEntry.path) { mutableStateOf(savedProgress > 3000L) }
+	LaunchedEffect(showResumeTip) {
+		if (showResumeTip) {
+			delay(3200)
+			showResumeTip = false
+		}
+	}
 
 	BackHandler {
 		if (showPlaylistSheet) {
@@ -3724,170 +3689,14 @@ fun AudioPlayer(
 		}
 	}
 
-	val player = remember {
-		createConfiguredExoPlayer(context, http, handleAudioFocus = true)
-	}
-
-	val latestEntry by rememberUpdatedState(activeEntry)
-	val latestPlayMode by rememberUpdatedState(playMode)
-	val latestPlaylist by rememberUpdatedState(effectivePlaylist)
-	val latestIndex by rememberUpdatedState(currentIndex)
-
-	LaunchedEffect(activeEntry.path, activeUrl) {
-		val urlStr = activeUrl
-		if (urlStr.isNullOrBlank()) {
-			playbackError = "无法获取音频直链"
-			isBuffering = false
-			isPlaying = false
-			player.stop()
-			return@LaunchedEffect
-		}
-		playbackError = null
-		isBuffering = true
-		val resumeMs = nasDb.getVideoProgress(activeEntry.path)
-		currentPosition = resumeMs.coerceAtLeast(0L)
-		bufferedPosition = 0L
-		duration = 0L
-		player.playWhenReady = true
-		player.playbackParameters = PlaybackParameters(playbackSpeed)
-		player.setMediaItem(MediaItem.fromUri(urlStr))
-		if (resumeMs > 3000L) {
-			player.seekTo(resumeMs)
-		}
-		player.prepare()
-	}
-
-	DisposableEffect(activeEntry.path) {
-		val trackPath = activeEntry.path
-		onDispose {
-			nasDb.saveVideoProgress(trackPath, player.currentPosition, player.duration)
-		}
-	}
-
-	DisposableEffect(player) {
-		val listener = object : Player.Listener {
-			override fun onIsPlayingChanged(playing: Boolean) {
-				isPlaying = playing
-			}
-
-			override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
-				mediaMetadata.title?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { trackTitle = it }
-				mediaMetadata.artist?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { trackArtist = it }
-				mediaMetadata.albumTitle?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { trackAlbum = it }
-				mediaMetadata.artworkData?.takeIf { it.isNotEmpty() }?.let { artworkBytes = it }
-			}
-
-			override fun onPlaybackStateChanged(state: Int) {
-				duration = player.duration.coerceAtLeast(0L)
-				isBuffering = state == Player.STATE_BUFFERING
-				if (state == Player.STATE_ENDED) {
-					val cur = latestEntry
-					val dur = player.duration.coerceAtLeast(0L)
-					if (dur > 0L) {
-						currentPosition = dur
-						nasDb.saveVideoProgress(cur.path, dur, dur)
-					}
-					when (latestPlayMode) {
-						AudioPlayMode.LOOP_ONE -> {
-							player.seekTo(0L)
-							player.play()
-						}
-						AudioPlayMode.SEQUENTIAL -> {
-							val list = latestPlaylist
-							val nextIdx = latestIndex + 1
-							if (list.size > 1 && nextIdx in list.indices) {
-								activeEntry = list[nextIdx]
-							} else {
-								isPlaying = false
-							}
-						}
-						AudioPlayMode.LOOP_ALL -> {
-							val list = latestPlaylist
-							if (list.size > 1) {
-								val nextIdx = (latestIndex + 1) % list.size
-								activeEntry = list[nextIdx]
-							} else {
-								player.seekTo(0L)
-								player.play()
-							}
-						}
-					}
-				}
-			}
-
-			override fun onPlayerError(error: PlaybackException) {
-				isBuffering = false
-				isPlaying = false
-				val extUpper = latestEntry.ext.uppercase().ifBlank { "AUDIO" }
-				playbackError = "内置解码器暂不支持或加载失败 ($extUpper)：${error.errorCodeName}"
-			}
-		}
-		player.addListener(listener)
-		onDispose {
-			nasDb.saveVideoProgress(latestEntry.path, player.currentPosition, player.duration)
-			player.removeListener(listener)
-			player.release()
-		}
-	}
-
-	LaunchedEffect(showResumeTip) {
-		if (showResumeTip) {
-			delay(3200)
-			showResumeTip = false
-		}
-	}
-
-	LaunchedEffect(player) {
-		while (true) {
-			delay(300)
-			if (player.playbackState == Player.STATE_ENDED) {
-				if (duration > 0L) currentPosition = duration
-			} else if (player.isPlaying || player.playbackState == Player.STATE_BUFFERING || player.playbackState == Player.STATE_READY) {
-				currentPosition = player.currentPosition.coerceAtLeast(0L)
-				bufferedPosition = player.bufferedPosition.coerceAtLeast(0L)
-				duration = player.duration.coerceAtLeast(0L)
-			}
-		}
-	}
-
-	LaunchedEffect(player) {
-		while (true) {
-			delay(3000)
-			if (player.isPlaying) {
-				nasDb.saveVideoProgress(latestEntry.path, player.currentPosition, player.duration)
-			}
-		}
-	}
-
-	val togglePlayPause: () -> Unit = {
-		if (player.isPlaying) {
-			player.pause()
-		} else {
-			if (playbackError != null) {
-				playbackError = null
-				player.prepare()
-			} else if (player.playbackState == Player.STATE_ENDED) {
-				player.seekTo(0L)
-			}
-			player.play()
-		}
-	}
-
-	val stepTrack: (Int) -> Unit = { delta ->
-		if (effectivePlaylist.size > 1) {
-			val targetIdx = ((currentIndex + delta) % effectivePlaylist.size + effectivePlaylist.size) % effectivePlaylist.size
-			activeEntry = effectivePlaylist[targetIdx]
-		}
-	}
-
 	val folderLabel = remember(activeEntry.path) {
 		activeEntry.path.substringBeforeLast('/', "").substringAfterLast('/').ifBlank { "音频播放" }
 	}
-	val displayTitle = remember(trackTitle, activeEntry.name) {
-		trackTitle ?: activeEntry.name.substringBeforeLast('.', activeEntry.name)
+	val displayTitle = remember(audioState.trackTitle, activeEntry.name) {
+		audioState.trackTitle ?: activeEntry.name.substringBeforeLast('.', activeEntry.name)
 	}
-	val displaySubtitle = remember(trackArtist, trackAlbum, folderLabel) {
-		listOfNotNull(trackArtist, trackAlbum).joinToString(" · ").ifBlank { folderLabel }
+	val displaySubtitle = remember(audioState.trackArtist, audioState.trackAlbum, folderLabel) {
+		listOfNotNull(audioState.trackArtist, audioState.trackAlbum).joinToString(" · ").ifBlank { folderLabel }
 	}
 
 	Box(
@@ -3911,7 +3720,7 @@ fun AudioPlayer(
 				.padding(horizontal = 20.dp, vertical = 10.dp),
 			horizontalAlignment = Alignment.CenterHorizontally,
 		) {
-			// 1. 顶部导航与操作栏
+			// 1. 顶部导航与操作栏（返回保留后台播放；停止彻底结束）
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
@@ -3922,7 +3731,7 @@ fun AudioPlayer(
 					modifier = Modifier.weight(1f),
 				) {
 					IconButton(onClick = onBack) {
-						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = OnMediaBackdrop)
+						Icon(Icons.Rounded.ArrowBack, contentDescription = "返回（后台继续播放）", tint = OnMediaBackdrop)
 					}
 					Column(modifier = Modifier.padding(end = 8.dp)) {
 						Text(
@@ -3947,6 +3756,14 @@ fun AudioPlayer(
 					verticalAlignment = Alignment.CenterVertically,
 					horizontalArrangement = Arrangement.spacedBy(2.dp),
 				) {
+					IconButton(
+						onClick = {
+							BackgroundAudioController.stopAndClear()
+							onBack()
+						},
+					) {
+						Icon(Icons.Rounded.Stop, contentDescription = "停止播放", tint = OnMediaBackdrop)
+					}
 					if (onSaveToMusic != null) {
 						IconButton(
 							onClick = {
@@ -4001,28 +3818,22 @@ fun AudioPlayer(
 						modifier = Modifier.fillMaxSize(),
 					)
 				} else {
-					Column(
-						horizontalAlignment = Alignment.CenterHorizontally,
-						verticalArrangement = Arrangement.spacedBy(10.dp),
+					Surface(
+						shape = CircleShape,
+						color = Color.White.copy(alpha = 0.16f),
+						modifier = Modifier.size(96.dp),
 					) {
-						Surface(
-							shape = CircleShape,
-							color = Color.White.copy(alpha = 0.16f),
-							modifier = Modifier.size(96.dp),
-						) {
-							Box(contentAlignment = Alignment.Center) {
-								Icon(
-									imageVector = Icons.Rounded.MusicNote,
-									contentDescription = null,
-									tint = Color.White,
-									modifier = Modifier.size(52.dp),
-								)
-							}
+						Box(contentAlignment = Alignment.Center) {
+							Icon(
+								imageVector = Icons.Rounded.MusicNote,
+								contentDescription = null,
+								tint = Color.White,
+								modifier = Modifier.size(52.dp),
+							)
 						}
 					}
 				}
 
-				// 右上角格式徽章
 				if (activeEntry.ext.isNotBlank()) {
 					Surface(
 						shape = RoundedCornerShape(10.dp),
@@ -4117,18 +3928,14 @@ fun AudioPlayer(
 						verticalArrangement = Arrangement.spacedBy(8.dp),
 					) {
 						Text(
-							text = playbackError ?: "播放失败",
+							text = playbackError,
 							color = Color.White,
 							fontSize = 12.sp,
 							textAlign = TextAlign.Center,
 						)
 						Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
 							OutlinedButton(
-								onClick = {
-									playbackError = null
-									player.prepare()
-									player.play()
-								},
+								onClick = { BackgroundAudioController.retryCurrent() },
 								border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
 							) {
 								Text("重试", color = Color.White, fontSize = 12.sp)
@@ -4145,7 +3952,7 @@ fun AudioPlayer(
 
 			Spacer(modifier = Modifier.weight(1f))
 
-			// 4. 进度条（复用 VideoPlayer 同款 ModernVideoScrubber）
+			// 4. 进度条
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
@@ -4160,10 +3967,7 @@ fun AudioPlayer(
 					currentPosition = currentPosition,
 					bufferedPosition = bufferedPosition,
 					duration = duration,
-					onSeek = { target ->
-						player.seekTo(target)
-						currentPosition = target
-					},
+					onSeek = { target -> BackgroundAudioController.seekTo(target) },
 					modifier = Modifier
 						.weight(1f)
 						.padding(horizontal = 12.dp),
@@ -4178,7 +3982,7 @@ fun AudioPlayer(
 
 			Spacer(modifier = Modifier.height(14.dp))
 
-			// 5. 主播控按钮行（循环模式 / 上一首 / 快退10s / 播放暂停 / 快进10s / 下一首）
+			// 5. 主播控按钮行
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
@@ -4186,9 +3990,8 @@ fun AudioPlayer(
 			) {
 				IconButton(
 					onClick = {
-						val modes = AudioPlayMode.entries
-						playMode = modes[(modes.indexOf(playMode) + 1) % modes.size]
-						Toast.makeText(context, playMode.label, Toast.LENGTH_SHORT).show()
+						val nextMode = BackgroundAudioController.cyclePlayMode()
+						Toast.makeText(context, nextMode.label, Toast.LENGTH_SHORT).show()
 					},
 				) {
 					Icon(
@@ -4200,7 +4003,7 @@ fun AudioPlayer(
 
 				IconButton(
 					enabled = effectivePlaylist.size > 1,
-					onClick = { stepTrack(-1) },
+					onClick = { BackgroundAudioController.stepTrack(-1) },
 				) {
 					Icon(
 						Icons.Rounded.SkipPrevious,
@@ -4210,20 +4013,14 @@ fun AudioPlayer(
 					)
 				}
 
-				IconButton(
-					onClick = {
-						val target = (player.currentPosition - 10_000L).coerceAtLeast(0L)
-						player.seekTo(target)
-						currentPosition = target
-					},
-				) {
+				IconButton(onClick = { BackgroundAudioController.seekBy(-10_000L) }) {
 					Icon(Icons.Rounded.Replay10, contentDescription = "快退10秒", tint = OnMediaBackdrop, modifier = Modifier.size(28.dp))
 				}
 
 				Surface(
 					shape = CircleShape,
 					color = OnMediaBackdrop,
-					onClick = togglePlayPause,
+					onClick = { BackgroundAudioController.togglePlayPause() },
 					modifier = Modifier.size(62.dp),
 				) {
 					Box(contentAlignment = Alignment.Center) {
@@ -4236,20 +4033,13 @@ fun AudioPlayer(
 					}
 				}
 
-				IconButton(
-					onClick = {
-						val maxDur = if (duration > 0L) duration else Long.MAX_VALUE
-						val target = (player.currentPosition + 10_000L).coerceAtMost(maxDur)
-						player.seekTo(target)
-						currentPosition = target
-					},
-				) {
+				IconButton(onClick = { BackgroundAudioController.seekBy(10_000L) }) {
 					Icon(Icons.Rounded.Forward10, contentDescription = "快进10秒", tint = OnMediaBackdrop, modifier = Modifier.size(28.dp))
 				}
 
 				IconButton(
 					enabled = effectivePlaylist.size > 1,
-					onClick = { stepTrack(1) },
+					onClick = { BackgroundAudioController.stepTrack(1) },
 				) {
 					Icon(
 						Icons.Rounded.SkipNext,
@@ -4270,15 +4060,10 @@ fun AudioPlayer(
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.Center,
 			) {
-				val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 				Surface(
 					shape = RoundedCornerShape(16.dp),
 					color = OnMediaBackdrop.copy(alpha = 0.16f),
-					onClick = {
-						val nextSpeed = speeds[(speeds.indexOf(playbackSpeed) + 1) % speeds.size]
-						playbackSpeed = nextSpeed
-						player.playbackParameters = PlaybackParameters(nextSpeed)
-					},
+					onClick = { BackgroundAudioController.cycleSpeed() },
 				) {
 					Text(
 						text = "倍速 ${playbackSpeed}x",
@@ -4319,10 +4104,7 @@ fun AudioPlayer(
 				mediaTitle = activeEntry.name,
 				streamUrl = activeUrl,
 				unavailableMessage = "无法获取音频播放直链",
-				onPauseLocal = {
-					player.pause()
-					isPlaying = false
-				},
+				onPauseLocal = { BackgroundAudioController.pauseIfPlaying() },
 				onDismiss = { showCastSheet = false },
 			)
 		}
@@ -4371,7 +4153,7 @@ fun AudioPlayer(
 									.fillMaxWidth()
 									.clip(RoundedCornerShape(12.dp))
 									.clickable {
-										activeEntry = item
+										BackgroundAudioController.switchToIndex(idx)
 										showPlaylistSheet = false
 									},
 							) {
