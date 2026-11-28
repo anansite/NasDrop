@@ -94,12 +94,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -112,7 +114,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlinx.coroutines.isActive
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -3776,9 +3782,6 @@ fun AudioPlayer(
 							Icon(Icons.Rounded.Download, contentDescription = "保存到本地音乐", tint = OnMediaBackdrop)
 						}
 					}
-					IconButton(onClick = { showCastSheet = true }) {
-						Icon(Icons.Rounded.Cast, contentDescription = "DLNA 投屏", tint = OnMediaBackdrop)
-					}
 					if (onOpenExternal != null) {
 						IconButton(onClick = { onOpenExternal(activeEntry) }) {
 							Icon(Icons.Rounded.OpenInNew, contentDescription = "其他应用播放", tint = OnMediaBackdrop)
@@ -3787,64 +3790,144 @@ fun AudioPlayer(
 				}
 			}
 
-			Spacer(modifier = Modifier.weight(0.6f))
+			Spacer(modifier = Modifier.weight(0.55f))
 
-			// 2. 中心专辑封面 / 故事卡片视觉区
-			Box(
-				modifier = Modifier
-					.sizeIn(maxWidth = 270.dp, maxHeight = 270.dp)
-					.fillMaxWidth(0.72f)
-					.aspectRatio(1f)
-					.clip(RoundedCornerShape(28.dp))
-					.background(
-						Brush.linearGradient(
-							colors = listOf(
-								Color(0xFF4338CA),
-								Color(0xFF7C3AED),
-								Color(0xFFDB2777),
-							),
-						),
-					),
-				contentAlignment = Alignment.Center,
-			) {
-				if (artworkBitmap != null) {
-					Image(
-						bitmap = artworkBitmap,
-						contentDescription = displayTitle,
-						contentScale = ContentScale.Crop,
-						modifier = Modifier.fillMaxSize(),
-					)
-				} else {
-					Surface(
-						shape = CircleShape,
-						color = Color.White.copy(alpha = 0.16f),
-						modifier = Modifier.size(96.dp),
-					) {
-						Box(contentAlignment = Alignment.Center) {
-							Icon(
-								imageVector = Icons.Rounded.MusicNote,
-								contentDescription = null,
-								tint = Color.White,
-								modifier = Modifier.size(52.dp),
-							)
+			// 2. 动态唱片与声波视觉舞台（播放时平滑旋转唱片+呼吸光环+律动音频柱，暂停时原地定格）
+			var discAngle by remember { mutableFloatStateOf(0f) }
+			var wavePhase by remember { mutableFloatStateOf(0f) }
+			LaunchedEffect(isPlaying) {
+				if (isPlaying) {
+					var lastNs = withFrameNanos { it }
+					while (isActive) {
+						withFrameNanos { now ->
+							val dt = ((now - lastNs) / 1_000_000_000f).coerceIn(0f, 0.05f)
+							lastNs = now
+							discAngle = (discAngle + dt * 22f) % 360f
+							wavePhase = (wavePhase + dt * 5.6f) % (2f * PI.toFloat())
 						}
 					}
 				}
+			}
+			val discScale by animateFloatAsState(
+				targetValue = if (isPlaying) 1.0f else 0.94f,
+				animationSpec = spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessLow),
+				label = "discScale",
+			)
+			val activeGlowAlpha by animateFloatAsState(
+				targetValue = if (isPlaying) 1f else 0.35f,
+				animationSpec = spring(stiffness = Spring.StiffnessLow),
+				label = "glowAlpha",
+			)
+			val breathFactor = if (isPlaying) 0.5f + 0.5f * sin(wavePhase * 0.45f) else 0f
 
-				if (activeEntry.ext.isNotBlank()) {
-					Surface(
-						shape = RoundedCornerShape(10.dp),
-						color = Color.Black.copy(alpha = 0.55f),
+			Box(
+				modifier = Modifier
+					.sizeIn(maxWidth = 286.dp, maxHeight = 286.dp)
+					.fillMaxWidth(0.76f)
+					.aspectRatio(1f),
+				contentAlignment = Alignment.Center,
+			) {
+				// 柔和呼吸极光外晕
+				Box(
+					modifier = Modifier
+						.fillMaxSize(0.94f + 0.06f * breathFactor)
+						.blur(32.dp)
+						.clip(CircleShape)
+						.background(
+							Brush.radialGradient(
+								colors = listOf(
+									Color(0xFF7C3AED).copy(alpha = (0.48f + 0.18f * breathFactor) * activeGlowAlpha),
+									Color(0xFFDB2777).copy(alpha = (0.30f + 0.12f * breathFactor) * activeGlowAlpha),
+									Color.Transparent,
+								),
+							),
+						),
+				)
+
+				// 旋转黑胶与内圈专辑封绘
+				Box(
+					modifier = Modifier
+						.fillMaxSize(0.84f)
+						.graphicsLayer {
+							rotationZ = discAngle
+							scaleX = discScale
+							scaleY = discScale
+						}
+						.clip(CircleShape),
+					contentAlignment = Alignment.Center,
+				) {
+					Canvas(modifier = Modifier.fillMaxSize()) {
+						val r = size.minDimension / 2f
+						// 黑胶底盘与高光渐变
+						drawCircle(
+							brush = Brush.sweepGradient(
+								colors = listOf(
+									Color(0xFF171A26),
+									Color(0xFF282D42),
+									Color(0xFF141722),
+									Color(0xFF2B3046),
+									Color(0xFF171A26),
+								),
+							),
+							radius = r,
+						)
+						// 同心细腻黑胶纹路
+						val grooveFractions = floatArrayOf(0.94f, 0.88f, 0.82f, 0.76f, 0.70f, 0.64f)
+						grooveFractions.forEach { frac ->
+							drawCircle(
+								color = Color.White.copy(alpha = 0.075f),
+								radius = r * frac,
+								style = Stroke(width = 1.2f),
+							)
+						}
+						// 外圈轮廓微光
+						drawCircle(
+							color = Color.White.copy(alpha = 0.18f),
+							radius = r - 1f,
+							style = Stroke(width = 2f),
+						)
+					}
+
+					// 内圈圆盘封绘
+					Box(
 						modifier = Modifier
-							.align(Alignment.TopEnd)
-							.padding(12.dp),
+							.fillMaxSize(0.58f)
+							.clip(CircleShape)
+							.background(
+								Brush.linearGradient(
+									colors = listOf(
+										Color(0xFF4338CA),
+										Color(0xFF7C3AED),
+										Color(0xFFDB2777),
+									),
+								),
+							),
+						contentAlignment = Alignment.Center,
 					) {
-						Text(
-							text = activeEntry.ext.uppercase(),
-							color = Color.White,
-							fontSize = 11.sp,
-							fontWeight = FontWeight.Bold,
-							modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+						if (artworkBitmap != null) {
+							Image(
+								bitmap = artworkBitmap,
+								contentDescription = displayTitle,
+								contentScale = ContentScale.Crop,
+								modifier = Modifier.fillMaxSize(),
+							)
+						} else {
+							Icon(
+								imageVector = Icons.Rounded.MusicNote,
+								contentDescription = null,
+								tint = Color.White.copy(alpha = 0.92f),
+								modifier = Modifier.size(44.dp),
+							)
+						}
+						// 中心黑胶主轴孔点缀
+						Box(
+							modifier = Modifier
+								.size(18.dp)
+								.clip(CircleShape)
+								.background(Color(0xFF0E1118))
+								.padding(4.dp)
+								.clip(CircleShape)
+								.background(Color.White.copy(alpha = 0.25f)),
 						)
 					}
 				}
@@ -3852,14 +3935,63 @@ fun AudioPlayer(
 				if (isBuffering && playbackError == null) {
 					Surface(
 						shape = CircleShape,
-						color = Color.Black.copy(alpha = 0.45f),
-						modifier = Modifier.size(48.dp),
+						color = Color.Black.copy(alpha = 0.55f),
+						modifier = Modifier.size(50.dp),
 					) {
 						Box(contentAlignment = Alignment.Center) {
 							CircularProgressIndicator(
 								color = Color.White,
 								strokeWidth = 2.5.dp,
 								modifier = Modifier.size(26.dp),
+							)
+						}
+					}
+				}
+
+				// 底部悬浮动态声波律动 + 音频格式胶囊
+				Surface(
+					shape = RoundedCornerShape(16.dp),
+					color = Color(0xFF0B0E17).copy(alpha = 0.78f),
+					border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.16f)),
+					modifier = Modifier.align(Alignment.BottomCenter),
+				) {
+					Row(
+						modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(8.dp),
+					) {
+						Canvas(modifier = Modifier.size(width = 24.dp, height = 14.dp)) {
+							val barCount = 5
+							val barWidth = 2.6.dp.toPx()
+							val gap = (size.width - barCount * barWidth) / (barCount - 1)
+							val idleHeights = floatArrayOf(0.32f, 0.58f, 0.82f, 0.50f, 0.36f)
+							for (i in 0 until barCount) {
+								val ratio = if (isPlaying) {
+									val osc = abs(sin(wavePhase + i * 0.95f))
+									0.26f + 0.74f * osc
+								} else {
+									idleHeights[i]
+								}
+								val h = (size.height * ratio).coerceAtLeast(3f)
+								val x = i * (barWidth + gap)
+								val y = (size.height - h) / 2f
+								drawRoundRect(
+									brush = Brush.verticalGradient(
+										colors = listOf(Color(0xFF38BDF8), Color(0xFFA855F7)),
+									),
+									topLeft = Offset(x, y),
+									size = GeometrySize(barWidth, h),
+									cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
+								)
+							}
+						}
+						if (activeEntry.ext.isNotBlank()) {
+							Text(
+								text = activeEntry.ext.uppercase(),
+								color = Color.White.copy(alpha = 0.92f),
+								fontSize = 10.5.sp,
+								fontWeight = FontWeight.Bold,
+								letterSpacing = 0.6.sp,
 							)
 						}
 					}
@@ -3896,30 +4028,6 @@ fun AudioPlayer(
 			)
 
 			Spacer(modifier = Modifier.weight(1f))
-
-			// 倍速快捷胶囊置于进度条上方，让出简洁舒展的中心视觉区
-			Row(
-				modifier = Modifier
-					.fillMaxWidth()
-					.padding(bottom = 12.dp),
-				horizontalArrangement = Arrangement.Center,
-				verticalAlignment = Alignment.CenterVertically,
-			) {
-				Surface(
-					shape = RoundedCornerShape(16.dp),
-					color = OnMediaBackdrop.copy(alpha = 0.10f),
-					border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.14f)),
-					onClick = { BackgroundAudioController.cycleSpeed() },
-				) {
-					Text(
-						text = "倍速 ${playbackSpeed}x",
-						color = if (playbackSpeed == 1.0f) OnMediaBackdrop.copy(alpha = 0.85f) else Color(0xFF38BDF8),
-						fontSize = 11.5.sp,
-						fontWeight = FontWeight.SemiBold,
-						modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-					)
-				}
-			}
 
 			AnimatedVisibility(visible = showResumeTip && playbackError == null) {
 				Surface(
@@ -4003,11 +4111,9 @@ fun AudioPlayer(
 
 			Spacer(modifier = Modifier.height(18.dp))
 
-			// 5. 现代播放器统一底栏：循环/顺序模式 · 上一首 · 播放/暂停 · 下一首 · 播放列表
+			// 5. 现代播放器统一底部控制台：主控行（循环 · 上一首 · 播放/暂停 · 下一首 · 列表）+ 底部拓展工具行（倍速 · DLNA 投屏）
 			Row(
-				modifier = Modifier
-					.fillMaxWidth()
-					.padding(bottom = 18.dp),
+				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.SpaceBetween,
 			) {
@@ -4079,6 +4185,57 @@ fun AudioPlayer(
 						tint = if (effectivePlaylist.isNotEmpty()) OnMediaBackdrop.copy(alpha = 0.88f) else OnMediaBackdrop.copy(alpha = 0.3f),
 						modifier = Modifier.size(24.dp),
 					)
+				}
+			}
+
+			Spacer(modifier = Modifier.height(14.dp))
+
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(bottom = 14.dp),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
+			) {
+				Surface(
+					shape = RoundedCornerShape(16.dp),
+					color = OnMediaBackdrop.copy(alpha = 0.10f),
+					border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.14f)),
+					onClick = { BackgroundAudioController.cycleSpeed() },
+				) {
+					Text(
+						text = "倍速 ${playbackSpeed}x",
+						color = if (playbackSpeed == 1.0f) OnMediaBackdrop.copy(alpha = 0.88f) else Color(0xFF38BDF8),
+						fontSize = 11.5.sp,
+						fontWeight = FontWeight.SemiBold,
+						modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+					)
+				}
+
+				Surface(
+					shape = RoundedCornerShape(16.dp),
+					color = OnMediaBackdrop.copy(alpha = 0.10f),
+					border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.14f)),
+					onClick = { showCastSheet = true },
+				) {
+					Row(
+						modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(5.dp),
+					) {
+						Icon(
+							imageVector = Icons.Rounded.Cast,
+							contentDescription = "DLNA 投屏",
+							tint = OnMediaBackdrop.copy(alpha = 0.88f),
+							modifier = Modifier.size(14.dp),
+						)
+						Text(
+							text = "DLNA 投屏",
+							color = OnMediaBackdrop.copy(alpha = 0.88f),
+							fontSize = 11.5.sp,
+							fontWeight = FontWeight.Medium,
+						)
+					}
 				}
 			}
 		}
